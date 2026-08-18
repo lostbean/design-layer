@@ -1,0 +1,20 @@
+name: check
+
+# nix flake check runs everything this repo has to prove: the formatter check,
+# the gate's own fixture-based self-tests (the correctness proof this repo
+# relies on in place of a dogfooded design layer — see README.md), and the
+# projector's determinism check. One job, one command, matching exactly what
+# a contributor runs locally.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  flake-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix flake check

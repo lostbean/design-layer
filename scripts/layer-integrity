@@ -1002,46 +1002,20 @@ def check_homing(files: list, schema: Schema, report: Report) -> None:
             )
 
 
-# --- Check 9: every named enforcement mechanism resolves -----------------------
+# --- The script= attribute is recorded, never resolved ---------------------
 #
-# An invariant that declares `enforcement=mechanism` must name the thing that
-# enforces it (`script=...`), and the projected library already refuses a
-# mechanism with no name. What it cannot see is whether the NAME still refers
-# to anything: a script that is renamed or deleted leaves the attr pointing at
-# nothing, the document still renders, and the invariant now claims a guarantee
-# no code provides. That is the worst failure mode in the layer — not a broken
-# link a reader notices, but a silent false claim of enforcement.
+# An invariant's `script=` names the mechanism that upholds it. The name is
+# parsed and kept, but its EXISTENCE is deliberately not checked.
 #
-# A name resolves two legitimate ways, because the layer names both kinds of
-# mechanism:
+# The gate runs from a bundle, so the enforcer legitimately lives outside the
+# tree being checked: a host has no scripts/ of its own, and a name that
+# resolves in the framework would resolve nowhere in a host. Requiring local
+# resolution would fail correct designs.
 #
-#   - a check script in the repo's scripts/ — `script=layer-integrity`
-#   - an external program the gate invokes  — `script=typst`
-#
-# The external form is resolved on PATH. A name that resolves NEITHER way is a
-# violation. Resolution is by existence only: whether the named mechanism
-# actually enforces the sentence is a human's judgement, not a check's.
-
-
-def resolve_mechanism(name: str, repo: Repo) -> bool:
-    """True when the named mechanism exists as a repo script or on PATH."""
-    if os.path.exists(os.path.join(repo.root, "scripts", name)):
-        return True
-    return shutil.which(name) is not None
-
-
-def check_script_refs(docs: list, repo: Repo, report: Report) -> None:
-    for idx in docs:
-        for lineno, name in idx.script_refs:
-            if resolve_mechanism(name, repo):
-                continue
-            report.violation(
-                f"{idx.rel}:{lineno}",
-                f"script={name} names no mechanism that exists",
-                "no scripts/%s in this repo and no %s on PATH — an invariant "
-                "claiming mechanism enforcement must name something real "
-                "(schema design_doc.block_fields.statement_footer)" % (name, name),
-            )
+# The honesty rule this check was credited with lives in the projected library,
+# which fails the render when a block declares enforcement=mechanism and names
+# no script at all. That rule is schema-enforced, fails closed, and is portable.
+# What retires here is only the name lookup, never the requirement to name.
 
 
 # --- Staleness advisory (schema layer_layout.staleness_advisory) --------------
@@ -1222,7 +1196,6 @@ def main(argv: list) -> int:
         schema,
         report,
     )
-    check_script_refs(design_docs, repo, report)
 
     staleness_advisory(
         repo,

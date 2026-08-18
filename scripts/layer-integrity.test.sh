@@ -694,24 +694,24 @@ EOF
 assert_exit 1 "dangling mermaid click target is a violation" -- "$CHECK" "$SZ2"
 assert_contains "../gone/design.md" "click-target violation names the destination"
 
-# --- Scenario (aa): a script= attr naming nothing -> exit 1 -------------------
-# An invariant declaring enforcement=mechanism must name the mechanism, and the
-# projected library already refuses a mechanism with no name. What it cannot
-# see is a name that refers to nothing: a renamed or deleted script leaves the
-# attr dangling, the document still renders, and the invariant claims a
-# guarantee no code provides. Three shapes, one per resolution route.
+# --- Scenario (aa): a script= attr is recorded, never resolved ----------------
+# The gate runs from a bundle, so an invariant's enforcer legitimately lives
+# outside the tree being checked: a host has no scripts/ of its own. Resolving
+# the name locally would fail correct designs, so the name is parsed and kept
+# but never looked up. The honesty rule that survives is the projected
+# library's: enforcement=mechanism naming NO script fails the render.
 SAA="$TMP/aa"
 build_single "$SAA"
 cat >>"$SAA/docs/design/design.md" <<'EOF'
 
-:::invariant {title="Enforced by a ghost" enforcement=mechanism script=no-such-script}
-Nothing enforces this.
+:::invariant {title="Enforced from the bundle" enforcement=mechanism script=no-such-script}
+The enforcer lives outside this tree.
 :::
 EOF
-assert_exit 1 "script= naming nothing is a violation" -- "$CHECK" "$SAA"
-assert_contains "no-such-script" "the violation names the missing mechanism"
+assert_exit 0 "script= naming a nonexistent local script is not a violation" -- "$CHECK" "$SAA"
 
-# A name that IS a repo script resolves.
+# A name that IS a local repo script is equally legal — the two cases must look
+# the same, because the checker no longer distinguishes them.
 SAB="$TMP/ab"
 build_single "$SAB"
 mkdir -p "$SAB/scripts"
@@ -722,19 +722,7 @@ cat >>"$SAB/docs/design/design.md" <<'EOF'
 A script in scripts/ enforces this.
 :::
 EOF
-assert_exit 0 "script= naming a repo script resolves" -- "$CHECK" "$SAB"
-
-# A name that is an external program on PATH resolves too — the layer names
-# both kinds of mechanism, so both must be legal.
-SAC="$TMP/ac"
-build_single "$SAC"
-cat >>"$SAC/docs/design/design.md" <<'EOF'
-
-:::invariant {title="Enforced by a program on PATH" enforcement=mechanism script=sh}
-An external program enforces this.
-:::
-EOF
-assert_exit 0 "script= naming a program on PATH resolves" -- "$CHECK" "$SAC"
+assert_exit 0 "script= naming a local repo script is legal" -- "$CHECK" "$SAB"
 
 # --- Scenario (perf): a run finishes well under a wall-clock ceiling ----------
 # The parse-once invariant: the checker reads each layer file ONCE into an

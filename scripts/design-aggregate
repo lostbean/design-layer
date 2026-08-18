@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+"""design-aggregate — compile the whole design layer into ONE navigable PDF.
+
+The per-context `design.md` files stay the unit of authoring, review, and
+ownership. That is a claim about the SOURCE, and it is the reason the layer is
+N files: making the source one file would make every write a write to the same
+artifact, so two agents could not reconcile two contexts at once.
+
+It does not transfer to the OUTPUT, which nobody hand-writes. So the sources
+stay separate and the render unifies: this script compiles them into one
+document with a table of contents, the contexts as chapters, and every glossary
+gathered into one alphabetised section.
+
+THIS IS THE LAYER'S RENDERED DOCUMENT, not one artifact among several. A
+context's design.md renders into it as a chapter and emits no sibling PDF of its
+own. The one exception is the reference gallery under .design-reference/, which
+keeps its own render: it is the vocabulary reference an adopting repo reads, and
+its byte-compared render is the tripwire that fails when a renderer change
+alters how a block draws.
+
+Inside one document a citation of a CONTEXT term is an INTRA-document reference,
+so the compiler resolves it and a missing term fails the build with a source
+location. That is a convenience, NOT the layer's vocabulary check — a claim to
+the contrary was tested and withdrawn: layer-integrity already reports a
+dangling term anchor by file and reason, across separate files, which is where
+that check belongs.
+
+Usage:
+  design-aggregate <layer-root> <out.pdf>            build the document
+  design-aggregate <layer-root> <out.pdf> --check    regenerate and compare
+
+  <layer-root> is the directory holding the root design.md and the per-context
+  subdirectories (conventionally docs/design).
+
+Exit: 0 clean, 1 the aggregate failed to compile or is stale, 2 error.
+"""
+
+import importlib.machinery
+import importlib.util
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+# the router owns the markdown->typst inline conversion; the aggregate reuses
+# it rather than keeping a second copy that could drift.
+_spec = importlib.util.spec_from_loader(
+    "md_to_typst",
+    importlib.machinery.SourceFileLoader("md_to_typst",
+                                         os.path.join(HERE, "md-to-typst")))
+_router = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_router)
+inline = _router.inline
+prose = _router.prose
+
+# the renderer-warning rule has ONE home, in the gate; the aggregate composes it
+# rather than keeping a second copy that could drift.
+_gspec = importlib.util.spec_from_loader(
+    "design_render",
+    importlib.machinery.SourceFileLoader("design_render",
+                                         os.path.join(HERE, "design-render")))
+_gate = importlib.util.module_from_spec(_gspec)
+_gspec.loader.exec_module(_gate)
+warns = _gate.warns
+
+TERM_RE = re.compile(r"^###\s+(?P<title>.+?)\s*\{#(?P<slug>term-[a-z0-9-]+)\}\s*$")
+H1_RE = re.compile(r"^#\s+(.*)$")
+
+# ---------------------------------------------------------------------------
+# internal links — a relative path is a FILE reference, and this is one document
+# ---------------------------------------------------------------------------
+# The layer's links are authored as relative markdown paths, which is correct on
+# the source side: `CONTEXT.md#term-pending-ledger` resolves in a diff, on a
+# forge, and in an editor. Inside ONE rendered document those paths have no
+# meaning — a PDF viewer treats them as external URIs and offers to open another
+# application, so every cross-reference in the layer's 200+ term citations dead-
+# ends. The aggregate therefore rewrites a destination that HAS an internal
+# target into a Typst label reference, and leaves the rest alone.
+#
+# Four destination shapes carry an internal target:
+#   CONTEXT.md#term-x          a glossary term      -> <term-x>
+#   ../<ctx>/CONTEXT.md#term-x another context's    -> <term-x>   (one glossary)
+#   <ctx>/design.md            a chapter            -> <ctx-...>
+#   design.md#NN-heading       a section            -> <sec-...>
+# An ADR link stays external: the ADRs are not part of this document, so there is
+# nothing to jump to and a live external link is the honest result.
+# The SOURCE-side rewrite. A prose link stays ordinary markdown all the way to
+# cmarker, so its destination is resolved HERE, in the authored text, before any
+# conversion runs: `[t](CONTEXT.md#term-x)` becomes `[t](@term-x)`. A `@`-prefixed
+# destination is still a plain markdown link, so cmarker pairs surrounding
+# emphasis normally — which injecting a Typst call into the text does not, because
+# a raw-typst span makes cmarker escape every `**` after it.
+# The projected library's `show link:` rule turns an `@name` destination into a
+# real label reference at render time.
+MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def rewrite_md_links(md, stem, known_labels):
+    """Rewrite authored markdown destinations to @label where one exists."""
+    def sub(m):
+        label = resolve_dest(m.group(2), stem, known_labels)
+        if label is None:
+            return m.group(0)
+        return "[%s](@%s)" % (m.group(1), label)
+    return MD_LINK_RE.sub(sub, md)
+
+
+def resolve_dest(dest, stem, known_labels):
+    """Map an authored relative destination to an internal label, or None."""
+    anchor = None
+    if "#" in dest:
+        path, anchor = dest.split("#", 1)
+    else:
+        path = dest
+    # a term or ADR anchor names its target directly, wherever it was cited from
+    if anchor and anchor.startswith("term-"):
+        return anchor if anchor in known_labels else None
+    if anchor and anchor.startswith("adr-"):
+        return None            # ADRs are not in this document
+    # a bare in-page anchor: `#00-foundation` names a section of the CITING
+    # chapter, so it resolves against that chapter's own scoped labels.
+    if not path and anchor:
+        cand = "sec-%s-%s" % (stem, anchor.lstrip("#"))
+        return cand if cand in known_labels else None
+    # a design.md path names a chapter; with an anchor it names a section there,
+    # and the section belongs to the chapter the PATH points at, not the citer.
+    base = os.path.basename(path)
+    if base == "design.md":
+        d = os.path.dirname(path.rstrip("/"))
+        parent = os.path.basename(d)
+        if parent not in ("", ".", ".."):
+            target_stem = parent          # `../lifecycle/design.md`
+        elif d in ("..", "../"):
+            target_stem = "root"          # `../design.md` — up out of a context
+        elif d == "":
+            # a bare `design.md`, cited from inside a context's own folder
+            # (a CONTEXT.md pointing at its sibling document): the target is the
+            # CITING context, not the root.
+            target_stem = stem
+        else:
+            target_stem = "root"
+        if anchor:
+            cand = "sec-%s-%s" % (target_stem, anchor)
+            return cand if cand in known_labels else None
+        target = "ctx-" + target_stem
+        return target if target in known_labels else None
+    return None
+
+
+def read_frontmatter(path):
+    fm = {}
+    text = open(path, encoding="utf-8").read()
+    if text.startswith("---\n"):
+        end = text.index("\n---\n", 3)
+        for line in text[4:end].split("\n"):
+            if ":" in line:
+                k, v = line.split(":", 1)
+                fm[k.strip()] = v.strip()
+    return fm
+
+
+def contexts_of(root):
+    """The root document plus each context directory, in a stable order."""
+    found = []
+    root_doc = os.path.join(root, "design.md")
+    if os.path.exists(root_doc):
+        found.append((None, root_doc))
+    for name in sorted(os.listdir(root)):
+        d = os.path.join(root, name)
+        if name.startswith(".") or not os.path.isdir(d):
+            continue
+        doc = os.path.join(d, "design.md")
+        if os.path.exists(doc):
+            found.append((name, doc))
+    return found
+
+
+def glossary_terms(root):
+    """Every term the layer declares, with its owning context.
+
+    Both glossary homes are read. A multi-context layer puts each glossary at
+    <root>/<context>/CONTEXT.md; a SINGLE-context layer puts its one glossary
+    at <root>/CONTEXT.md, which the schema declares in
+    layer_layout.single_context.files. Walking only the subdirectories dropped
+    that one silently — the smallest layer, which is the shape a first adopter
+    creates, rendered with no glossary at all and exit 0.
+    """
+    homes = []
+    root_ctx = os.path.join(root, "CONTEXT.md")
+    if os.path.exists(root_ctx):
+        homes.append((os.path.basename(os.path.dirname(os.path.abspath(root)))
+                      or "design", root_ctx))
+    for name in sorted(os.listdir(root)):
+        ctx = os.path.join(root, name, "CONTEXT.md")
+        if name.startswith(".") or not os.path.exists(ctx):
+            continue
+        homes.append((name, ctx))
+
+    terms = []
+    for name, ctx in homes:
+        body, cur = [], None
+        for line in open(ctx, encoding="utf-8").read().split("\n"):
+            m = TERM_RE.match(line)
+            if m:
+                cur = {"title": m.group("title"), "slug": m.group("slug"),
+                       "context": name, "body": []}
+                terms.append(cur)
+                continue
+            if cur is not None:
+                if line.startswith("#"):
+                    cur = None
+                else:
+                    cur["body"].append(line)
+    return terms
+
+
+def main():
+    args = [a for a in sys.argv[1:] if a != "--check"]
+    check = "--check" in sys.argv[1:]
+    if len(args) != 2:
+        sys.stderr.write("usage: design-aggregate <layer-root> <out.pdf> [--check]\n")
+        return 2
+    root, out_pdf = args
+    if not os.path.isdir(root):
+        sys.stderr.write("design-aggregate: error: no layer root at %s\n" % root)
+        return 2
+
+    # $DESIGN_LIB_DIR wins so the projected library can live outside the layer
+    # — in a read-only bundle, say — with the layer-root copy as the fallback.
+    lib_dir = os.environ.get("DESIGN_LIB_DIR") or os.path.join(root, ".render")
+    lib = os.path.join(lib_dir, "designlib.typ")
+    if not os.path.exists(lib):
+        sys.stderr.write("design-aggregate: error: no projected library at %s "
+                         "(run render-project, or set DESIGN_LIB_DIR)\n" % lib)
+        return 2
+
+    docs = contexts_of(root)
+    if not docs:
+        sys.stderr.write("design-aggregate: error: no design.md under %s\n" % root)
+        return 2
+
+    # The scratch directory for the generated Typst stays under the LAYER ROOT,
+    # never beside the library: $DESIGN_LIB_DIR may point at a read-only store,
+    # and the renderer refuses a source file outside its project root anyway.
+    gen_dir = os.path.join(root, ".render")
+    os.makedirs(gen_dir, exist_ok=True)
+    # the library is imported by a path RELATIVE to the generated .typ, which
+    # sits in gen_dir: an absolute path is resolved against the renderer's
+    # project root, not the filesystem, so it would not be found.
+    rel_lib = os.path.relpath(os.path.abspath(lib), os.path.abspath(gen_dir))
+    parts, cleanup = [], []
+
+    # The label set is computed from the AUTHORED sources, before any
+    # conversion, because the link rewrite now happens on the markdown itself.
+    # Sections are labelled `sec-<stem>-<slug>`, matching the scoping applied to
+    # the generated Typst below — every context carries a "00 Foundation", so an
+    # unscoped label would be defined five times and Typst rejects a duplicate.
+    known = {"ctx-" + ("root" if n is None else n) for n, _d in docs}
+    known |= {t["slug"] for t in glossary_terms(root)}
+    for name, doc in docs:
+        stem = "root" if name is None else name
+        for m in re.finditer(r"^#{1,6}\s+(.*)$",
+                             open(doc, encoding="utf-8").read(), re.M):
+            known.add("sec-%s-%s" % (stem, _router.slug(m.group(1).strip())))
+
+    # each context's design document, converted through the same router the
+    # per-context render uses, so the aggregate and the parts cannot diverge.
+    for name, doc in docs:
+        stem = "root" if name is None else name
+        gen = os.path.join(gen_dir, "_agg_%s.typ" % stem)
+        # resolve the destinations FIRST, in the markdown, then convert
+        src_md = rewrite_md_links(open(doc, encoding="utf-8").read(), stem, known)
+        md_tmp = os.path.join(gen_dir, "_agg_%s.md" % stem)
+        with open(md_tmp, "w", encoding="utf-8") as f:
+            f.write(src_md)
+        cleanup.append(md_tmp)
+        rc = subprocess.call([sys.executable, os.path.join(HERE, "md-to-typst"),
+                              md_tmp, gen, "--lib", rel_lib])
+        if rc != 0:
+            return 2
+        cleanup.append(gen)
+        # strip the per-document shell: the aggregate supplies one shell for
+        # the whole layer, and a nested page-setup would fight it.
+        src = open(gen, encoding="utf-8").read()
+        src = re.sub(r'^#import "[^"]*": \*\n', "", src, count=1)
+        src = re.sub(r"^#show: design_doc\.with\((?:.|\n)*?^\)\n", "", src,
+                     count=1, flags=re.M)
+        # A section label is unique only WITHIN its document — every context has
+        # a "00 Foundation" — so inside one document it must carry its chapter.
+        # Typst rejects a duplicate label outright, so this is a build error, not
+        # a cosmetic clash.
+        src = re.sub(r"<sec-([^>]+)>", r"<sec-%s-\1>" % stem, src)
+        fm = read_frontmatter(doc)
+        title = fm.get("hero_title") or (stem + " context")
+        # the chapter front page shows what the chapter contains, read from the
+        # authored spine rather than from a hand-kept list.
+        index = [_router.strip_spine_number(m.group(1))
+                 for m in re.finditer(r"^##\s+(.+?)\s*$",
+                                      open(doc, encoding="utf-8").read(), re.M)]
+        parts.append((title, stem, src, fm.get("lede"), fm.get("accent"), index))
+
+    terms = glossary_terms(root)
+
+    # ---- assemble one document --------------------------------------------
+    L = ['#import "%s": *' % rel_lib, ""]
+    L.append("#show: aggregate_doc.with(")
+    L.append('  title: [Design layer],')
+    L.append('  subtitle: [the whole layer, as one document],')
+    L.append(")")
+    L.append("")
+    for title, stem, src, lede, accent, index in parts:
+        # the front page first, then the heading it announces: the heading stays
+        # the renderer's (numbered, in the outline), the page is the separation.
+        #
+        # The lede and the section titles are authored markdown — they carry
+        # bold, links, and code spans — so they go through the router and are
+        # emitted as CONTENT blocks. Passing them as quoted strings would print
+        # the raw markup on the page, which is the corruption class the router's
+        # own span discipline exists to prevent.
+        L.append("#chapter_page(%s, lede: %s, accent: %s, index: %s, kind: %s)"
+                 % ("[" + inline(title) + "]",
+                    "[" + inline(lede) + "]" if lede else "none",
+                    _typ_str(accent) if accent else "none",
+                    "(" + ", ".join("[" + inline(s) + "]" for s in index)
+                    + ("," if len(index) == 1 else "") + ")",
+                    _typ_str("root design" if stem == "root" else "context")))
+        L.append("#pagebreak()")
+        L.append("= %s <ctx-%s>" % (inline(title), stem))
+        L.append(src)
+    if terms:
+        L.append("= Glossary <glossary>")
+        L.append("Every term the layer declares, with the context that owns it.")
+        L.append("")
+        for t in sorted(terms, key=lambda x: x["title"].lower()):
+            # The term heading stays a real heading — it keeps its label, so
+            # every #term- citation still jumps here, and it keeps its place in
+            # the numbering. It is only kept OUT OF THE OUTLINE: 81 of the
+            # document's 121 outline entries were term names, so the table of
+            # contents was two pages of glossary with the design's own 40
+            # sections buried inside it. The Glossary chapter itself stays
+            # listed, which is what a reader navigates to.
+            L.append('#heading(level: 2, outlined: false)[%s] %s'
+                     % (inline(t["title"]), "<%s>" % t["slug"]))
+            L.append("#context_owner(%s)" % _typ_str(t["context"]))
+            # A glossary body cites its siblings the same way a design document
+            # does — mostly as a BARE `#term-x` anchor, since inside one
+            # CONTEXT.md the file is implied — so it needs the same rewrite. It
+            # was missed at first, which left the glossary's own cross-references
+            # dead while the design documents' worked.
+            # a term's definition is a prose run; its destinations are resolved
+            # in the markdown, exactly as a design document's are.
+            body = rewrite_md_links("\n".join(t["body"]).strip(),
+                                    t["context"], known)
+            L.append(prose(body))
+            L.append("")
+
+    agg = os.path.join(gen_dir, "_aggregate.typ")
+    open(agg, "w", encoding="utf-8").write("\n".join(L) + "\n")
+    cleanup.append(agg)
+
+    typst = os.environ.get("TYPST", "typst")
+    # Under --check the fresh render goes to a temp file and the committed
+    # document is left alone, so a stale artifact is REPORTED rather than
+    # silently repaired.
+    tmpdir = tempfile.mkdtemp(prefix="design-aggregate.") if check else None
+    target = os.path.join(tmpdir, "fresh.pdf") if check else os.path.abspath(out_pdf)
+    # A PDF embeds a creation timestamp, so two renders of one source would
+    # differ in bytes for no reason a reader can see. Pinning the timestamp is
+    # what makes the freshness check a plain byte-compare. This render happened
+    # to be reproducible without the pin — Typst omits the field here — but that
+    # is undocumented behavior, and a gate resting on it is resting on an
+    # accident, the same shape as a read-only package cache standing in for an
+    # offline contract.
+    env = dict(os.environ, SOURCE_DATE_EPOCH="0")
+    try:
+        proc = subprocess.run(
+            [typst, "compile", agg, target,
+             # the renderer refuses any source outside its project root, and
+             # the library may sit outside the layer under $DESIGN_LIB_DIR, so
+             # the root must span both the layer and the library.
+             "--root", os.path.commonpath(
+                 [os.path.abspath(os.path.join(root, "..", "..")),
+                  os.path.abspath(lib)])],
+            capture_output=True, text=True, env=env)
+    finally:
+        for f in cleanup:
+            if os.path.exists(f):
+                os.remove(f)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        return 1
+    if warns(proc.stderr, out_pdf, report=sys.stderr.write):
+        return 1
+
+    if check:
+        if not os.path.exists(out_pdf):
+            sys.stderr.write("design-aggregate: %s is missing (the layer has "
+                             "no rendered document)\n" % out_pdf)
+            return 1
+        with open(out_pdf, "rb") as f:
+            committed = f.read()
+        with open(target, "rb") as f:
+            fresh = f.read()
+        if committed != fresh:
+            sys.stderr.write("design-aggregate: %s is stale (does not match a "
+                             "fresh render)\n" % out_pdf)
+            return 1
+        sys.stdout.write("design-aggregate: %s is fresh (%d context(s), %d "
+                         "term(s))\n" % (out_pdf, len(parts), len(terms)))
+        return 0
+
+    sys.stdout.write("design-aggregate: wrote %s (%d context(s), %d term(s))\n"
+                     % (out_pdf, len(parts), len(terms)))
+    return 0
+
+
+def _typ_str(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+if __name__ == "__main__":
+    sys.exit(main())

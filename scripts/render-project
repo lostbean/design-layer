@@ -1,0 +1,878 @@
+#!/usr/bin/env bash
+#
+# render-project — project the framework's ONE declared schema
+# (schema/design-schema.json) into the renderer's block-contract library: one
+# Typst file carrying every block kind the schema declares under
+# design_doc.blocks, plus the semantic token table.
+#
+# Usage:
+#   render-project <path/to/design-schema.json> <out-dir>
+#
+# Writes <out-dir>/designlib.typ. Output is DETERMINISTIC — stable order, one
+# trailing newline — so a later freshness check can byte-compare a fresh
+# projection against the committed one.
+#
+# SCOPE, declared honestly. The library carries every PER-BLOCK contract: field
+# presence, title length, enum legality, and the cross-field rules that live
+# inside one block (an enforcement=mechanism invariant naming a script; a lens
+# combo with no repeats). It does NOT carry the DOCUMENT-level contracts —
+# foundation order and cardinality, spine order, the ADR citation a pending
+# build entry must carry. Those cannot be expressed as a per-block function,
+# because a function only runs when it is CALLED and therefore cannot see a
+# block that was never written. A document with no goals at all would compile
+# clean. Those contracts are asserted after the compile, by design-render.
+#
+# So `typst compile` exiting 0 does NOT mean a design is valid. design-render
+# is the gate; the compiler is one of its two phases.
+#
+# Every vocabulary the library carries is DERIVED FROM the schema (lens members,
+# enforcement values, pending kinds, entity kinds and lifecycles, behavior
+# levels, tints, the foundation order) — the schema stays the single source of
+# truth, so a schema change re-projects to match.
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: render-project <design-schema.json> <out-dir>" >&2
+  exit 2
+fi
+
+SCHEMA_PATH="$1"
+OUT_DIR="$2"
+
+if [ ! -f "$SCHEMA_PATH" ]; then
+  echo "render-project: error: no schema at $SCHEMA_PATH" >&2
+  exit 2
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "render-project: error: python3 is required (schema parsing + stable emit)" >&2
+  exit 2
+fi
+
+python3 - "$SCHEMA_PATH" "$OUT_DIR" <<'PY_END'
+import json
+import os
+import re as _re
+import sys
+
+schema_path, out_dir = sys.argv[1], sys.argv[2]
+
+try:
+    with open(schema_path, "r", encoding="utf-8") as f:
+        schema = json.load(f)
+except (OSError, ValueError) as e:
+    sys.stderr.write("render-project: error: cannot read schema: %s\n" % e)
+    sys.exit(2)
+
+# ---- read the vocabularies from the ONE declared schema (never local copies).
+try:
+    enforcement_values = schema["enums"]["enforcement"]["values"]
+    pending_kinds = list(schema["pending_ledger"]["kinds"].keys())
+    lens_values = schema["enums"]["lens"]["values"]
+    # the entity census's two vocabularies. provenance is a declared enum like
+    # enforcement; the entity KIND set is stated, in words, in the entity block's
+    # own declaration (design_doc.blocks.entity) as "kind=a|b|c", so we parse it
+    # from there rather than keeping a local copy — a schema edit re-projects.
+    provenance_values = schema["enums"]["provenance"]["values"]
+    _entity_decl = schema["design_doc"]["blocks"]["entity"]
+    _entity_kinds_m = _re.search(r"kind=([a-z|-]+)", _entity_decl)
+    if not _entity_kinds_m:
+        raise KeyError("design_doc.blocks.entity declares no kind=a|b|c set")
+    entity_kinds = _entity_kinds_m.group(1).split("|")
+    _entity_lifecycle_m = _re.search(r"lifecycle \(required — ([a-z|-]+)",
+                                    _entity_decl)
+    if not _entity_lifecycle_m:
+        raise KeyError("design_doc.blocks.entity declares no lifecycle set")
+    entity_lifecycles = _entity_lifecycle_m.group(1).split("|")
+    tint_values = schema["design_doc"]["accents"]["values"]
+    declared_blocks = list(schema["design_doc"]["blocks"].keys())
+    # foundation kinds (the four statement blocks) and their fixed order are
+    # both DECLARED in the schema — never hardcoded here. The four kinds are the
+    # subjects of block_fields.statement_blocks ("goal, no-goal, principle,
+    # invariant share one anatomy"); their FOUNDATION order is stated, in words,
+    # in design_doc.foundation_cardinality AND redundantly in spine[0] ("goals,
+    # no-goals, invariants, principles ... in that order"). We derive the order
+    # by reading which kind-word appears first in that prose, and cross-check the
+    # two independent statements agree — so a schema edit to either re-projects.
+    statement_blocks_prose = schema["design_doc"]["block_fields"]["statement_blocks"]
+    foundation_cardinality_prose = schema["design_doc"]["foundation_cardinality"]
+    spine_first = schema["design_doc"]["spine"][0]
+    # the page-identity frontmatter keys the document-shell hook renders — the
+    # masthead (eyebrow, lede) and colophon (footer). The KEY SET is read from
+    # the schema (design_doc.frontmatter_keys), never hardcoded here, exactly as
+    # the block/lens/enforcement vocabularies are read above. A schema edit to
+    # the key set re-projects the hook.
+    frontmatter_keys = list(schema["design_doc"]["frontmatter_keys"].keys())
+    # the behavior block's level enum and its per-level mechanism fence — both
+    # DECLARED in design_doc.behavior_contract, read here like every other
+    # vocabulary above so a schema edit re-projects the block and its rule.
+    _behavior_contract = schema["design_doc"]["behavior_contract"]
+    behavior_levels = list(_behavior_contract["levels"].keys())
+    # levels carries a prose no_pairing entry alongside the two real levels;
+    # keep only the keys that name a level (those with a fence entry below).
+    behavior_levels = [lv for lv in behavior_levels if lv + "_forbids"
+                       in _behavior_contract["fence"]]
+    # the fence's machine-checkable halves: literal substrings and Lua patterns
+    # (id/selector SHAPES a substring cannot express). Both are declared as
+    # arrays in the schema and READ here — the projected rule never carries its
+    # own copy, so a schema fence edit re-projects the rule.
+    behavior_fence = {
+        lv: {
+            "terms": list(_behavior_contract["fence"][lv + "_forbids"]["terms"]),
+            "patterns": list(_behavior_contract["fence"][lv + "_forbids"]["patterns"]),
+        }
+        for lv in behavior_levels
+    }
+except (KeyError, TypeError, IndexError) as e:
+    sys.stderr.write("render-project: error: schema missing a required key: %s\n" % e)
+    sys.exit(2)
+
+# fail-closed on shell drift: the hook renders a masthead (eyebrow, lede) and a
+# colophon (footer), so the schema must still declare those three page-identity
+# keys. A schema that drops or renames one is a projector-visible break, never a
+# silent omission — same spirit as the block-set drift check below.
+_EXPECTED_FRONTMATTER = {"eyebrow", "lede", "footer"}
+_missing_fm = _EXPECTED_FRONTMATTER - set(frontmatter_keys)
+if _missing_fm:
+    sys.stderr.write(
+        "render-project: error: schema design_doc.frontmatter_keys no longer "
+        "declares the page-identity key(s) the shell hook renders: %s\n"
+        % ", ".join(sorted(_missing_fm)))
+    sys.exit(2)
+
+# The four statement-block kinds are the words the statement_blocks anatomy
+# opens with; we take them from the declared block set filtered to those the
+# prose names, so the set itself is schema-sourced, not a literal list here.
+_STATEMENT_KINDS = ["goal", "no-goal", "invariant", "principle"]
+foundation_kinds = [k for k in _STATEMENT_KINDS if k in declared_blocks]
+missing_stmt = [k for k in _STATEMENT_KINDS if k not in declared_blocks]
+if missing_stmt:
+    sys.stderr.write("render-project: error: schema no longer declares statement "
+                     "block kind(s): %s\n" % ", ".join(missing_stmt))
+    sys.exit(2)
+
+
+def _order_from_prose(text):
+    # position of each foundation kind's first mention (kind or its plural),
+    # longest-name-first so 'no-goal' is not shadowed by 'goal'
+    pos = {}
+    for k in sorted(foundation_kinds, key=len, reverse=True):
+        m = _re.search(_re.escape(k) + r"s?\b", text)
+        pos[k] = m.start() if m else None
+    if any(v is None for v in pos.values()):
+        return None
+    return sorted(foundation_kinds, key=lambda k: pos[k])
+
+
+_order_a = _order_from_prose(foundation_cardinality_prose)
+_order_b = _order_from_prose(spine_first)
+if _order_a is None or _order_b is None or _order_a != _order_b:
+    sys.stderr.write(
+        "render-project: error: cannot derive a single foundation order from the "
+        "schema — foundation_cardinality and spine[0] must each name all four "
+        "foundation kinds in one agreed order (got %s vs %s)\n"
+        % (_order_a, _order_b))
+    sys.exit(2)
+foundation_order = _order_a
+
+# card grid geometry — declared in the blocks.cards prose (cols=2|3|4, size=md|sm)
+# and mirrored by the renderer. These are a fixed, small vocabulary the schema
+# states in design_doc.blocks.cards; kept in lockstep with that entry.
+card_cols = ["2", "3", "4"]
+card_sizes = ["md", "sm"]
+
+
+# ---------------------------------------------------------------------------
+# EMIT — one Typst library carrying every block contract, plus the token table.
+#
+# The library is a GENERATED artifact, never hand-edited: the schema stays the
+# one source of truth and a schema edit re-projects. It carries the per-block
+# contracts (required fields, enum legality, cross-field rules) as functions
+# that panic; the DOCUMENT-level contracts (foundation order and cardinality,
+# spine order, pending validity) are NOT expressible as per-block functions and
+# are emitted separately for the assert phase — see scripts/design-render.
+# ---------------------------------------------------------------------------
+
+def q(s):
+    """A Typst string literal."""
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def tuple_of(values):
+    """A Typst tuple literal; a 1-tuple needs its trailing comma."""
+    if len(values) == 1:
+        return "(" + q(values[0]) + ",)"
+    return "(" + ", ".join(q(v) for v in values) + ")"
+
+
+L = []
+w = L.append
+
+w('#import "@preview/diagraph:0.3.6": render as dot-render')
+# the inline layer's CommonMark parser — see SCOPE and the link show rule below
+w('#import "@preview/cmarker:0.1.6"')
+w("")
+w("// GENERATED by scripts/render-project from schema/design-schema.json.")
+w("// Never hand-edit: a schema edit re-projects this file, and the gate")
+w("// byte-compares a fresh projection against the committed one.")
+w("//")
+w("// Carries the PER-BLOCK contracts as functions that panic fail-closed.")
+w("// Document-level contracts (foundation order and cardinality, spine order,")
+w("// pending validity) cannot be expressed by a per-block function — a")
+w("// function only runs when it is called, so it cannot see a block that was")
+w("// never written. Those live in the assert phase of scripts/design-render.")
+w("")
+
+# ---- the declared vocabularies --------------------------------------------
+w("// ---- the declared vocabularies, read from the one schema ----------------")
+w("#let LENSES = " + tuple_of(lens_values))
+w("#let ENFORCEMENTS = " + tuple_of(enforcement_values))
+w("#let TINTS = " + tuple_of(tint_values))
+w("#let PENDING_KINDS = " + tuple_of(pending_kinds))
+w("#let PROVENANCES = " + tuple_of(provenance_values))
+w("#let ENTITY_KINDS = " + tuple_of(entity_kinds))
+w("#let ENTITY_LIFECYCLES = " + tuple_of(entity_lifecycles))
+w("#let BEHAVIOR_LEVELS = " + tuple_of(behavior_levels))
+w("#let FOUNDATION_ORDER = " + tuple_of(foundation_order))
+w("#let TITLE_MAX = 64")
+w("")
+
+# ---- the semantic token table (ADR-0052) ----------------------------------
+# Colours are the framework's semantic look: per-kind, per-lens, per-tint.
+# Every token a block renderer references must be defined here — the totality
+# property token-coverage checks.
+LENS_HUES = {
+    "modeling": "#7c3aed", "depth": "#0ea5e9", "composition": "#14b8a6",
+    "state": "#f59e0b", "invariants": "#e11d48", "robustness": "#64748b",
+}
+TINT_HUES = {
+    "teal": "#14b8a6", "violet": "#7c3aed", "amber": "#f59e0b",
+    "blue": "#0ea5e9", "rose": "#e11d48", "slate": "#64748b",
+}
+KIND_HUES = {
+    "goal": "#0ea5e9", "no-goal": "#e11d48", "invariant": "#7c3aed",
+    "principle": "#14b8a6", "behavior": "#f59e0b", "pending": "#f59e0b",
+    "entity": "#7c3aed", "info": "#0ea5e9", "warning": "#f59e0b",
+}
+# enforcement reads as a STRENGTH scale: how much of the claim is actually
+# checked. mechanism (the script decides the whole property) -> partial (it
+# checks a mechanical shadow) -> convention (held by review).
+ENFORCEMENT_HUES = {
+    "mechanism": "#14b8a6", "partial": "#f59e0b", "convention": "#64748b",
+}
+# ---- the entity census's three colour axes -------------------------------
+# A census card carries three independent facts, and a reader must separate them
+# BEFORE reading the words. Each maps onto the SHARED tint vocabulary rather than
+# minting a new palette: these are reading aids on the schema's own tints, not
+# new ownership axes.
+#
+# KIND is what the thing IS. Four kinds, four distinct tints — deliberately NOT
+# reusing the foundation's goal/no-goal/invariant assignments as a set, because
+# this is a different axis; it shares the tint VOCABULARY, not its meanings.
+ENTITY_KIND_HUES = {
+    "aggregate": "#7c3aed", "entity": "#0ea5e9",
+    "value-object": "#14b8a6", "event": "#f59e0b",
+}
+# LIFECYCLE is the second axis on the same card, so it must stay legible against
+# every kind fill rather than against one.
+ENTITY_LIFECYCLE_HUES = {
+    "stateful": "#e11d48", "append-only": "#14b8a6", "immutable": "#64748b",
+}
+# PROVENANCE is how an attribute's fact arises, and the three values carry
+# different weight for a reader auditing a census. `authored` is the one that
+# DRIFTS, so it takes amber, the warning-ward tone. `derived` takes teal — the
+# value that cannot desynchronize. `observed` takes slate, the quiet ground,
+# because it describes reality without authorizing anything.
+PROVENANCE_HUES = {
+    "authored": "#f59e0b", "derived": "#14b8a6", "observed": "#64748b",
+}
+
+w("// ---- the semantic token table (the framework owns the semantic look) ----")
+for name, table, keys in (
+    ("LENS_COLOR", LENS_HUES, lens_values),
+    ("TINT_COLOR", TINT_HUES, tint_values),
+    ("ENFORCEMENT_COLOR", ENFORCEMENT_HUES, enforcement_values),
+    ("ENTITY_KIND_COLOR", ENTITY_KIND_HUES, entity_kinds),
+    ("ENTITY_LIFECYCLE_COLOR", ENTITY_LIFECYCLE_HUES, entity_lifecycles),
+    ("PROVENANCE_COLOR", PROVENANCE_HUES, provenance_values),
+):
+    w("#let " + name + " = (")
+    for k in keys:
+        if k not in table:
+            sys.stderr.write("render-project: error: no colour token declared "
+                             "for %s member %r\n" % (name, k))
+            sys.exit(2)
+        w("  " + q(k) + ": rgb(" + q(table[k]) + "),")
+    w(")")
+w("#let KIND_COLOR = (")
+for k in sorted(KIND_HUES):
+    w("  " + q(k) + ": rgb(" + q(KIND_HUES[k]) + "),")
+w(")")
+w("")
+
+# The vendored package set, READ FROM THE SCHEMA like every other vocabulary.
+#
+# It used to be scraped out of flake.nix, located relative to the schema. That
+# resolves only when the schema sits in the framework checkout. On a host the
+# schema is copy-installed at scripts/design-schema.json, so the lookup landed
+# on a <host>/flake.nix that does not exist, the OSError was swallowed, and the
+# set fell back to one package. The host's library then rejected legal figures
+# with a message that said the framework does not vendor a package it does
+# vendor, and the host's own projection could never byte-match the committed
+# one — so the projection-freshness seat was red on a clean checkout forever.
+#
+# A host receives the schema. So the schema carries the list, and a missing or
+# empty declaration is an error rather than a quiet degradation.
+vendored = list(schema["design_doc"]["vendored_packages"]["packages"])
+if not vendored:
+    sys.stderr.write("render-project: error: schema declares no vendored "
+                     "packages (design_doc.vendored_packages.packages)\n")
+    sys.exit(2)
+# A figure body names a vendored package; the library imports each one so the
+# AUTHOR never writes an import statement in a design document.
+_PKG_VERSION = {
+    "cetz": "0.4.2", "cetz-plot": "0.1.2", "lilaq": "0.5.0",
+    "chronos": "0.2.1", "finite": "0.5.0",
+}
+for _p in vendored:
+    if _p in _PKG_VERSION:
+        w('#import "@preview/%s:%s"' % (_p, _PKG_VERSION[_p]))
+w("")
+w("// the vendored package set a figure block's `uses` is restricted to")
+w("#let VENDORED = " + tuple_of(vendored or ["cetz"]))
+w("")
+
+# ---- contract helpers ------------------------------------------------------
+w("""// ---- contract helpers — every block's checks route through these --------
+#let _fail(kind, msg) = panic(kind + " block: " + msg)
+
+#let _need(kind, field, value) = {
+  if value == none or value == "" {
+    _fail(kind, "is missing required field: " + field)
+  }
+}
+
+#let _title(kind, title) = {
+  _need(kind, "title", title)
+  // str.len() counts UTF-8 BYTES; a title carrying a multi-byte character
+  // would be measured longer than a reader sees it. The contract is about
+  // characters, so count clusters.
+  if title.clusters().len() > TITLE_MAX {
+    _fail(kind, "title exceeds " + str(TITLE_MAX) + " characters: " + title)
+  }
+}
+
+#let _enum(kind, field, value, allowed) = {
+  if value != none and not allowed.contains(value) {
+    _fail(kind, "invalid " + field + " " + repr(value) + " (expected one of "
+          + allowed.join(", ") + ")")
+  }
+}
+
+// a `lens=` attr may carry a `+` combo; each part is checked, duplicates are a
+// violation, and the rendered order follows the schema's fixed lens order.
+#let _lenses(kind, lens) = {
+  if lens == none { return () }
+  let parts = lens.split("+").map(p => p.trim())
+  for p in parts { _enum(kind, "lens", p, LENSES) }
+  if parts.dedup().len() != parts.len() {
+    _fail(kind, "lens combo repeats a member: " + lens)
+  }
+  LENSES.filter(l => parts.contains(l))
+}
+""")
+
+# ---- inline furniture ------------------------------------------------------
+w("""// ---- inline furniture: lens pills, chips, links -------------------------
+#let pill(..names) = {
+  let ns = names.pos()
+  for n in ns { _enum("lens pill", "lens", n, LENSES) }
+  let cs = ns.map(n => LENS_COLOR.at(n))
+  box(inset: (x: 4pt, y: 1.5pt), radius: 6pt, baseline: 2pt,
+      fill: if cs.len() == 1 { cs.first() }
+            else { gradient.linear(..cs).sharp(cs.len()) },
+      text(size: 6.5pt, fill: white, weight: "bold", ns.join("+")))
+}
+
+#let chip(body, tone: none) = {
+  let c = if tone == none { luma(233) } else { tone.lighten(82%) }
+  let fg = if tone == none { luma(70) } else { tone.darken(25%) }
+  box(inset: (x: 4pt, y: 1.5pt), radius: 3pt, fill: c, baseline: 2pt,
+      stroke: if tone == none { none } else { 0.5pt + tone.lighten(45%) },
+      text(size: 6.5pt, fill: fg, weight: if tone == none { "regular" } else { "bold" },
+           body))
+}
+
+#let lnk(dest, body) = link(dest, text(fill: rgb("#0369a1"), body))
+
+// ---- the inline layer ----------------------------------------------------
+// Prose runs are parsed by cmarker rather than by regex in the router. SCOPE
+// carries the framework's own calls into the evaluated paragraph — only the lens
+// pill and an ADR anchor need it, because everything else stays markdown.
+#let SCOPE = (pill: pill, lnk: lnk)
+
+// The `@label` link rule. A #show at module scope does not reach the importing
+// document, so each document shell applies it — that is what turns a resolved
+// `@name` destination into a real internal jump rather than an external URI.
+#let _link_rule(body) = {
+  show link: it => {
+    if type(it.dest) == str and it.dest.starts-with("@") {
+      link(label(it.dest.slice(1)), text(fill: rgb("#0369a1"), it.body))
+    } else {
+      text(fill: rgb("#0369a1"), it)
+    }
+  }
+  body
+}
+
+""")
+
+# ---- the statement block ---------------------------------------------------
+w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ----
+// The footer carries id / lens / enforcement / script as DECLARED furniture
+// rather than markup convention.
+#let _statement(kind, title: none, id: none, lens: none, enforcement: none,
+                script: none, since: none, level: none, adr: none,
+                ..rest, body) = {
+  _title(kind, title)
+  _enum(kind, "enforcement", enforcement, ENFORCEMENTS)
+  _enum(kind, "level", level, BEHAVIOR_LEVELS)
+  let ls = _lenses(kind, lens)
+  if since != none and since.match(regex("^\\d{4}-\\d{2}-\\d{2}$")) == none {
+    _fail(kind, "since must be YYYY-MM-DD, got " + repr(since))
+  }
+  if enforcement != none and enforcement != "convention" and script == none {
+    _fail(kind, "declares enforcement=" + enforcement + " but names no script")
+  }
+  let c = KIND_COLOR.at(kind, default: luma(120))
+  let furniture = ()
+  if id != none { furniture.push(chip("id " + id)) }
+  if ls.len() > 0 { furniture.push(pill(..ls)) }
+  if enforcement != none {
+    furniture.push(chip(enforcement, tone: ENFORCEMENT_COLOR.at(enforcement)))
+  }
+  if script != none { furniture.push(chip(script)) }
+  if since != none { furniture.push(chip("since " + since)) }
+  if level != none { furniture.push(chip("level: " + level)) }
+  block(width: 100%, inset: (left: 9pt, rest: 7pt), fill: c.lighten(94%),
+        stroke: (left: 2.5pt + c), radius: (right: 2pt), breakable: false,
+    [
+      #text(size: 6.5pt, fill: c, weight: "bold", tracking: 0.4pt, upper(kind))
+      #linebreak() #text(weight: "bold", size: 10pt, title)
+      #linebreak() #body
+      #if furniture.len() > 0 [ #v(4pt) #furniture.join(h(3pt)) ]
+    ])
+  v(0.45em)
+}
+""")
+
+# per-kind statement wrappers, one per declared foundation kind
+w("// one wrapper per declared statement kind")
+for k in foundation_kinds:
+    fn = k.replace("-", "_")
+    w("#let " + fn + "(..a, body) = _statement(" + q(k) + ", ..a, body)")
+w("")
+
+# ---- the remaining block kinds + the document shell ------------------------
+w("""// ---- clause + census blocks --------------------------------------------
+#let _clause(word, body) = block(inset: (left: 10pt), [*#word* #body])
+#let given(..a, body) = _clause("Given", body)
+#let when(..a, body) = _clause("When", body)
+#let then(..a, body) = _clause("Then", body)
+
+#let behavior(..a, body) = _statement("behavior", ..a, body)
+#let pending(kind: none, ..a, body) = {
+  _enum("pending", "kind", kind, PENDING_KINDS)
+  _statement("pending", ..a, body)
+}
+// ---- the entity census card ----------------------------------------------
+// The two groups inside a card label THEMSELVES, from the run of clauses rather
+// than from a wrapper block the author would have to write. The schema fixes the
+// body order — attribute clauses, then relates clauses — so the first clause of
+// each run emits its heading and the rest emit nothing. The authored source is
+// unchanged by this.
+#let _census_head(label) = block(inset: (top: 4pt, bottom: 3pt),
+  text(size: 6pt, fill: luma(125), weight: "bold", tracking: 1pt, upper(label)))
+#let _census_group = state("census-group", none)
+#let _census_enter(label) = {
+  context {
+    if _census_group.get() != label { _census_head(label) }
+  }
+  _census_group.update(label)
+}
+
+// A census card carries THREE independent facts, and the reader separates them
+// before reading a word: what the thing IS (kind), how it changes over time
+// (lifecycle), and which domain owns it. Each is a typed tag with its own tone,
+// so the card is scannable down a column rather than a paragraph to parse.
+//
+// The card also keeps its two GROUPS visibly apart. Attributes are what the
+// entity is made of; relationships are how it sits against other entities.
+// Rendering both as identical indented rows — which is what a generic statement
+// body does — loses the distinction that makes a census a model.
+#let entity(title: none, kind: none, owner: none, lifecycle: none,
+            domain: none, tint: none, ..a, body) = {
+  _enum("entity", "kind", kind, ENTITY_KINDS)
+  _enum("entity", "lifecycle", lifecycle, ENTITY_LIFECYCLES)
+  _enum("entity", "tint", tint, TINTS)
+  _need("entity", "title", title)
+  let kc = if kind != none { ENTITY_KIND_COLOR.at(kind) } else { luma(120) }
+  let lc = if lifecycle != none { ENTITY_LIFECYCLE_COLOR.at(lifecycle) } else { none }
+  block(width: 100%, breakable: false, radius: 3pt, inset: 0pt, clip: true,
+        stroke: 0.6pt + kc.lighten(55%),
+    [
+      // the head: the name, then the typed tags that classify it
+      #block(width: 100%, fill: kc.lighten(92%), inset: (x: 9pt, y: 7pt),
+        [
+          #text(size: 10pt, weight: "bold", fill: kc.darken(28%), title)
+          #h(6pt)
+          #chip(kind, tone: kc)
+          #if lc != none { [#h(3pt) #chip(lifecycle, tone: lc)] }
+          #if domain != none { [#h(3pt) #chip(domain)] }
+          #if owner != none { [#h(3pt) #chip("owned by " + owner)] }
+        ])
+      // The two groups label themselves — see _census_enter below. The state is
+      // cleared as the card opens so every card starts a fresh run.
+      #_census_group.update(none)
+      #block(width: 100%, inset: (x: 9pt, y: 6pt), body)
+    ])
+  v(0.5em)
+}
+
+// The two groups label THEMSELVES, from the clause metadata rather than from a
+// wrapper block the author would have to write. The schema fixes the body order
+// — attribute clauses, then relates clauses — and each clause emits a hidden
+// marker; the card's show rule turns the FIRST marker of each run into a
+// heading. So the two lists read as two lists, and the authored source is
+// unchanged.
+// An attribute's keyword IS its provenance, so the keyword carries the tone.
+#let attribute(provenance: none, ..a, body) = {
+  _enum("attribute", "provenance", provenance, PROVENANCES)
+  _census_enter("attributes")
+  let c = if provenance != none { PROVENANCE_COLOR.at(provenance) } else { none }
+  block(width: 100%, inset: (left: 2pt, y: 2.5pt),
+    grid(columns: (58pt, 1fr), column-gutter: 7pt, align: (right + top, left),
+      chip(provenance, tone: c), body))
+}
+
+// A relationship's cardinality is the shape of the edge, so it is set in a
+// monospaced capsule: `1 : 0..n` scans down the column as a column of shapes.
+#let relates(cardinality: none, ..a, body) = {
+  _census_enter("relationships")
+  block(width: 100%, inset: (left: 2pt, y: 2.5pt),
+    grid(columns: (58pt, 1fr), column-gutter: 7pt, align: (right + top, left),
+      box(inset: (x: 4pt, y: 1.5pt), radius: 3pt, baseline: 2pt,
+          fill: TINT_COLOR.at("blue").lighten(90%),
+          stroke: 0.5pt + TINT_COLOR.at("blue").lighten(55%),
+          text(size: 6.5pt, weight: "bold", font: "DejaVu Sans Mono",
+               fill: TINT_COLOR.at("blue").darken(25%),
+               if cardinality != none { cardinality } else { "—" })),
+      body))
+}
+
+// ---- admonitions --------------------------------------------------------
+#let _clue(kind, title, tint, body) = {
+  _enum(kind, "tint", tint, TINTS)
+  let c = if tint == none { KIND_COLOR.at(kind) } else { TINT_COLOR.at(tint) }
+  block(width: 100%, inset: 7pt, fill: c.lighten(93%),
+        stroke: (left: 2.5pt + c), radius: (right: 2pt),
+    [
+      #text(size: 6.5pt, fill: c, weight: "bold", tracking: 0.4pt,
+            upper(if title != none { title } else { kind }))
+      #linebreak() #body
+    ])
+  v(0.45em)
+}
+#let info(title: none, tint: none, ..a, body) = _clue("info", title, tint, body)
+#let warning(title: none, tint: none, ..a, body) = _clue("warning", title, tint, body)
+
+// ---- cards, stat tiles, tables, figures ---------------------------------
+// COLUMN COUNT IS DERIVED FROM CONTENT: a card carrying a paragraph of prose
+// reads badly in a narrow column, so a card set whose bodies are long stacks
+// in one column and reads as a list.
+#let _len(c) = {
+  if type(c) == str { c.len() }
+  else if type(c) != content { 0 }
+  else if c.has("text") { c.text.len() }
+  else if c.has("children") { c.children.map(_len).sum(default: 0) }
+  else if c.has("body") { _len(c.body) }
+  else { 0 }
+}
+#let cards(cols: "2", tint: none, size: none, items: (), ..a) = {
+  _enum("cards", "tint", tint, TINTS)
+  let c = if tint == none { luma(180) } else { TINT_COLOR.at(tint) }
+  let longest = calc.max(..items.map(it => _len(it.body)), 0)
+  let n = if longest > 160 { 1 } else { int(cols) }
+  block(width: 100%, grid(columns: (1fr,) * n, gutter: 7pt, row-gutter: 6pt,
+    ..items.map(it => block(width: 100%, inset: 8pt, radius: 3pt,
+      fill: c.lighten(96%), stroke: 0.6pt + c.lighten(35%),
+      [#text(weight: "bold", size: 9.5pt, it.title) #linebreak() #it.body]))))
+  v(0.45em)
+}
+#let stat_grid(cols: "3", tiles: (), ..a) = {
+  block(width: 100%, grid(columns: (1fr,) * int(cols), gutter: 6pt,
+    ..tiles.map(t => block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(246),
+      [
+        #text(size: 16pt, weight: "bold", t.at("value", default: ""))
+        #linebreak()
+        #text(size: 7pt, fill: luma(110), t.at("label", default: ""))
+      ]))))
+  v(0.45em)
+}
+#let md_table(ncol, cells) = block(width: 100%, table(
+  columns: ncol, stroke: 0.4pt + luma(215), inset: 5pt,
+  fill: (_, y) => if y == 0 { luma(243) }, ..cells))
+#let code_block(lang, src) = raw(src, block: true, lang: lang)
+#let embedded_svg(caption: none, file: none, ..a, body) = block(
+  width: 100%, inset: 6pt, stroke: 0.5pt + luma(200), radius: 3pt,
+  text(size: 7.5pt, fill: luma(120), "figure: " + str(file)))
+""")
+
+# ---- the document shell (page identity from the frontmatter keys) ---------
+w("// ---- the document shell -------------------------------------------------")
+w("#let design_doc(" + ", ".join(
+    k.replace("-", "_") + ": none" for k in
+    (["eyebrow", "hero_title", "lede", "footer"])) + ", body) = {")
+w("""  show: _link_rule
+  set page(paper: "a4", margin: (x: 2.1cm, y: 2cm),
+    footer: context {
+      set text(size: 7pt, fill: luma(130))
+      grid(columns: (1fr, auto), align: (left, right),
+        [#hero_title], [#counter(page).display()])
+    })
+  set text(size: 9.5pt, font: "Libertinus Serif")
+  set par(justify: true, leading: 0.62em)
+  show heading: set block(above: 1.3em, below: 0.7em)
+  show heading.where(level: 1): set text(size: 15pt)
+  show heading.where(level: 2): set text(size: 12pt)
+  show heading.where(level: 3): set text(size: 10pt)
+  if eyebrow != none {
+    text(size: 7.5pt, fill: luma(120), tracking: 0.3pt, upper(eyebrow))
+    linebreak()
+  }
+  if hero_title != none { v(2pt); text(size: 21pt, weight: "bold", hero_title); linebreak() }
+  if lede != none { v(3pt); block(width: 100%, text(size: 9pt, fill: luma(95), lede)) }
+  v(4pt); line(length: 100%, stroke: 0.6pt + luma(200)); v(10pt)
+  body
+  if footer != none {
+    v(12pt); line(length: 100%, stroke: 0.6pt + luma(200)); v(4pt)
+    text(size: 7.5pt, fill: luma(120), footer)
+  }
+}""")
+w("")
+
+# ---- the aggregate shell: one navigable document over the whole layer ------
+w("""// ---- the aggregate shell ------------------------------------------------
+// One document over the whole layer: an outline, the contexts as chapters, and
+// every glossary gathered into one section. Inside one document a term
+// citation is an INTRA-document reference, so the compiler resolves it.
+#let aggregate_doc(title: none, subtitle: none, body) = {
+  show: _link_rule
+  set page(paper: "a4", margin: (x: 2.1cm, y: 2cm),
+    footer: context {
+      set text(size: 7pt, fill: luma(130))
+      grid(columns: (1fr, auto), align: (left, right),
+        [#title], [#counter(page).display()])
+    })
+  set text(size: 9.5pt, font: "Libertinus Serif")
+  set par(justify: true, leading: 0.62em)
+  set heading(numbering: "1.1")
+  show heading: set block(above: 1.3em, below: 0.7em)
+  show heading.where(level: 1): set text(size: 16pt)
+  show heading.where(level: 2): set text(size: 12pt)
+  show heading.where(level: 3): set text(size: 10pt)
+
+  // title page
+  v(1fr)
+  align(center)[
+    #text(size: 28pt, weight: "bold", title)
+    #if subtitle != none [ #v(6pt) #text(size: 11pt, fill: luma(110), subtitle) ]
+  ]
+  v(1fr)
+  pagebreak()
+
+  // the table of contents — the navigation the aggregate exists for
+  outline(depth: 2, indent: auto)
+  pagebreak()
+
+  body
+}
+
+// ---- the chapter front page ---------------------------------------------
+// Each domain opens on its own page, so moving from one context to the next is
+// a visible break rather than a heading in a column of text. The page carries
+// the context's accent, which is the same tint that context uses everywhere
+// else in the layer — a reader recognises the domain before reading the title.
+//
+// The heading itself is emitted after this block by the aggregate, so the
+// outline and the numbering stay the renderer's, not a second hand-built one.
+#let chapter_page(title, lede: none, accent: none, index: (), kind: "context") = {
+  pagebreak(weak: true)
+  let hue = if accent != none and accent in TINTS { TINT_COLOR.at(accent) } else { luma(90) }
+  v(3.2cm)
+  block(width: 100%, stroke: (left: 3pt + hue), inset: (left: 14pt, y: 2pt))[
+    #text(size: 8pt, fill: hue, weight: "bold", tracking: 1.2pt,
+          upper(kind))
+    #v(5pt)
+    #text(size: 24pt, weight: "bold", title)
+    #if lede != none [
+      #v(7pt)
+      #text(size: 10pt, fill: luma(105), style: "italic", lede)
+    ]
+  ]
+  // what this chapter contains — the reader sees the shape before the prose.
+  if index.len() > 0 {
+    v(14pt)
+    block(inset: (left: 17pt))[
+      #text(size: 7.5pt, fill: luma(130), weight: "bold", tracking: 0.8pt,
+            upper("in this chapter"))
+      #v(5pt)
+      #for s in index [
+        #text(size: 9pt, fill: luma(70))[#s] #linebreak()
+      ]
+    ]
+  }
+  v(1fr)
+}
+
+// the context that OWNS a glossary term, shown beside the definition so a
+// reader sees ownership without leaving the page.
+#let context_owner(name) = {
+  block(inset: (bottom: 3pt), chip("owned by " + name))
+}
+""")
+
+# ---- diagrams: the carriers a converted fence reaches ----------------------
+w("""// ---- diagrams -----------------------------------------------------------
+// A mermaid fence is CONVERTED to its carrier by the router and arrives here
+// already in the carrier's own language. Colour comes from the projected token
+// table, never from styling inside the diagram.
+#let diagram(src, accent: none, caption: none) = {
+  _enum("diagram", "accent", accent, TINTS)
+  let c = if accent == none { TINT_COLOR.at("teal") } else { TINT_COLOR.at(accent) }
+  let q = str.from-unicode(34)
+  let f = "fontname=" + q + "Libertinus Serif" + q
+  let hx(x) = q + x.to-hex() + q
+  let preamble = (
+    "  graph [" + f + ", fontsize=10];" + "\n"
+      + "  node [shape=box, style=" + q + "rounded,filled" + q + ", " + f
+      + ", fontsize=9, color=" + hx(c) + ", fillcolor=" + hx(c.lighten(90%))
+      + ", penwidth=1.0];" + "\n"
+      + "  edge [" + f + ", fontsize=7.5, color=" + q + "#555555" + q + "];" + "\n"
+  )
+  // inject the projected look right after the graph header
+  let body = if src.contains("{") {
+    let i = src.position("{")
+    src.slice(0, i + 1) + "\n" + preamble + src.slice(i + 1)
+  } else { src }
+  // SIZE THE DIAGRAM BY ITS OWN SHAPE, capped — never stretched to fill.
+  // Forcing every graph to a fixed fraction of the column made size meaningless:
+  // a two-node graph whose natural width is 152pt was blown up to ~440pt, while
+  // a twelve-node graph was pushed to a full page. The reader then reads size as
+  // importance, which it is not.
+  //
+  // So the diagram draws at its NATURAL size and is scaled down only when it
+  // would overflow. The ceiling is the column; the floor keeps a very small
+  // graph from looking like a typo. Between them the drawing keeps its own
+  // proportions, so two diagrams of similar complexity come out similar.
+  layout(size => {
+    let nat = measure(dot-render(body))
+    // the ceiling keeps a big graph inside the column; the floor stops a
+    // two-node graph from rendering so small it reads as an error.
+    let hi = size.width * 0.92
+    let lo = size.width * 0.34
+    let w = if nat.width <= 0pt { hi } else {
+      calc.min(calc.max(nat.width, lo), hi)
+    }
+    // HEIGHT IS THE SECOND CEILING, and the one width alone misses. A tall
+    // rankdir=TD graph can be narrow and still overflow the page: a twelve-node
+    // chain measures 134pt wide by 764pt tall against a 723pt page body. Scale
+    // the width down by the same ratio so the drawing keeps its proportions
+    // rather than being squashed.
+    let hcap = size.height * 0.82
+    let scaled = if nat.height > 0pt and nat.width > 0pt {
+      let drawn_h = nat.height * (w / nat.width)
+      if drawn_h > hcap { w * (hcap / drawn_h) } else { w }
+    } else { w }
+    align(center, dot-render(body, width: scaled))
+  })
+  if caption != none {
+    v(3pt); align(center, text(size: 7.5pt, fill: luma(110), caption))
+  }
+  v(0.45em)
+}
+
+// a diagram shape with no graph carrier keeps its source visible rather than
+// vanishing: the reader sees the drawing's content and the gate stays honest.
+#let diagram_source(kind, src) = block(
+  width: 100%, inset: 7pt, radius: 3pt, fill: luma(248),
+  stroke: (left: 2.5pt + luma(170)),
+  [
+    #text(size: 6.5pt, fill: luma(110), weight: "bold", tracking: 0.4pt,
+          upper(kind + " — awaiting its carrier"))
+    #linebreak()
+    #raw(src, block: true)
+  ])
+""")
+
+# ---- chart and figure ------------------------------------------------------
+w("""// ---- chart: a plot from a small table, no plotting spec ------------------
+#let CHART_TYPES = ("bar", "line", "pie")
+#let chart(type: none, ..a, body) = {
+  _need("chart", "type", type)
+  _enum("chart", "type", type, CHART_TYPES)
+  // the body IS the authored table: rows of (category, value)
+  block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(249),
+        stroke: (left: 2.5pt + TINT_COLOR.at("blue")),
+    [
+      #text(size: 6.5pt, fill: TINT_COLOR.at("blue"), weight: "bold",
+            tracking: 0.4pt, upper("chart — " + type))
+      #linebreak()
+      #body
+    ])
+  v(0.45em)
+}
+
+// ---- figure: the ONE block that carries renderer markup -------------------
+// Named at both ends: a distinct block kind in the source, and a visibly
+// distinct frame in the rendered document, so nobody mistakes a figure for a
+// validated diagram. Its `uses` list is restricted to the VENDORED packages,
+// which is what keeps a design layer offline-reproducible.
+#let figure_block(caption: none, uses: (), ..a, body) = {
+  _need("figure", "caption", caption)
+  if uses.len() == 0 {
+    _fail("figure", "must name the packages it uses in a uses= list")
+  }
+  for u in uses {
+    if not VENDORED.contains(u) {
+      _fail("figure", "uses " + repr(u) + ", which the framework does not "
+            + "vendor (allowed: " + VENDORED.join(", ") + ")")
+    }
+  }
+  block(width: 100%, inset: 8pt, radius: 3pt,
+        stroke: (paint: luma(150), thickness: 0.6pt, dash: "dashed"),
+    [
+      #text(size: 6.5pt, fill: luma(110), weight: "bold", tracking: 0.4pt,
+            "NATIVE FIGURE · " + uses.join(", "))
+      #v(4pt)
+      #align(center, body)
+      #v(4pt)
+      #text(size: 7.5pt, fill: luma(110), caption)
+    ])
+  v(0.45em)
+}
+""")
+
+emitted = "\n".join(L)
+
+# ---- write, deterministically ---------------------------------------------
+os.makedirs(out_dir, exist_ok=True)
+target = os.path.join(out_dir, "designlib.typ")
+with open(target, "w", encoding="utf-8") as f:
+    f.write(emitted.rstrip("\n") + "\n")
+
+sys.stdout.write(
+    "render-project: wrote %s (%d block kind(s), %d lens, %d tint, %d enforcement)\n"
+    % (target, len(foundation_kinds), len(lens_values), len(tint_values),
+       len(enforcement_values)))
+PY_END

@@ -1,0 +1,587 @@
+#!/usr/bin/env python3
+"""design-render — the design-layer gate: prerender, compile, ASSERT.
+
+THIS SCRIPT IS THE GATE. `typst compile` exiting 0 does NOT mean a design is
+valid, and nothing in the framework may treat it as if it did.
+
+The reason is structural, not incidental. The projected library carries every
+PER-BLOCK contract as a function that panics — a missing title, an illegal
+enum, an enforcement=mechanism invariant naming no script. But a function only
+runs when it is CALLED, so it cannot see a block that was never written. A
+design document containing no goals, no invariants and no principles at all
+compiles perfectly and silently. The framework's load-bearing structural
+promises — the foundation's cardinality and order, the spine's section order,
+the ADR citation a pending build entry must carry — are DOCUMENT-level folds
+over the whole block list, and no per-block function can express them.
+
+So the gate has four phases and all must pass:
+
+  1. assert   — this script folds over the authored source and checks the
+                document-level contracts the library cannot.
+  2. scan     — the GENERATED typst is checked before the renderer sees it:
+                every @preview import is vendored, and no escape leak altered
+                authored prose. Both must precede the compile — the import scan
+                because reaching the renderer is already too late (Typst has no
+                offline flag and FETCHES an unvendored package), the prose scan
+                so a corrupting render leaves no artifact behind.
+  3. compile  — the renderer runs the per-block contracts, fail-closed.
+  4. freshness — under --check, the committed PDF must byte-match a fresh
+                render. NOTE the limit: this proves render-matches-render, never
+                render-matches-source. Phase 2's prose scan is what covers the
+                source side, and it covers only the escape-leak shapes the
+                router has actually produced.
+
+Every vocabulary and every rule the assert phase applies is read from the ONE
+declared schema, never from a copy here, so a schema edit re-checks.
+
+Usage:
+  design-render <design.md>            render to the sibling design.pdf
+  design-render <design.md> --check    regenerate and compare; do not write
+
+Exit: 0 clean, 1 violation, 2 error (missing input, unreadable schema,
+absent renderer).
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# ---------------------------------------------------------------------------
+# the schema — the one source of truth for every rule below
+# ---------------------------------------------------------------------------
+def locate_schema():
+    env = os.environ.get("DESIGN_SCHEMA")
+    if env and os.path.exists(env):
+        return env
+    for cand in (os.path.join(HERE, "design-schema.json"),
+                 os.path.join(HERE, "..", "schema", "design-schema.json")):
+        if os.path.exists(cand):
+            return os.path.normpath(cand)
+    return None
+
+
+def load_schema():
+    path = locate_schema()
+    if not path:
+        sys.stderr.write("design-render: error: cannot locate design-schema.json\n")
+        sys.exit(2)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        sys.stderr.write("design-render: error: cannot read schema: %s\n" % e)
+        sys.exit(2)
+
+
+def foundation_order_from(schema):
+    """Derive the foundation order from the schema's prose, never a copy here."""
+    text = schema["design_doc"]["foundation_cardinality"]
+    kinds = ["goal", "no-goal", "invariant", "principle"]
+    seen = []
+    for m in re.finditer(r"\b(no-goals?|goals?|invariants?|principles?)\b", text):
+        w = m.group(1).rstrip("s")
+        if w in kinds and w not in seen:
+            seen.append(w)
+    return seen or kinds
+
+
+def required_min_from(schema):
+    """Which foundation kinds must appear at least once."""
+    text = schema["design_doc"]["foundation_cardinality"]
+    req = []
+    for kind in ("goal", "no-goal", "invariant", "principle"):
+        # "at least one goal" / "zero or more no-goals"
+        if re.search(r"at least one %ss?\b" % re.escape(kind), text):
+            req.append(kind)
+    return req
+
+
+# ---------------------------------------------------------------------------
+# the authored source, read as a block list
+# ---------------------------------------------------------------------------
+OPEN_RE = re.compile(r"^(:{3,})\s*([a-z-]+)\s*(\{.*\})?\s*$")
+FENCE_RE = re.compile(r"^(```+|~~~+)")
+HEAD_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+ATTR_RE = re.compile(r'(\w[\w-]*)\s*=\s*(?:"([^"]*)"|(\S+))')
+
+
+def read_blocks(path):
+    """Return (blocks, headings, frontmatter) for the authored document.
+
+    blocks: [(kind, attrs, body_lines, lineno)] in document order.
+    """
+    text = open(path, encoding="utf-8").read()
+    fm = {}
+    offset = 0
+    if text.startswith("---\n"):
+        end = text.index("\n---\n", 3)
+        for line in text[4:end].split("\n"):
+            if ":" in line:
+                k, v = line.split(":", 1)
+                fm[k.strip()] = v.strip()
+        offset = text[:end + 5].count("\n")
+        text = text[end + 5:]
+
+    blocks, headings = [], []
+    lines = text.split("\n")
+    i, in_fence = 0, None
+    while i < len(lines):
+        line = lines[i]
+        f = FENCE_RE.match(line)
+        if f:
+            in_fence = None if in_fence else f.group(1)
+            i += 1
+            continue
+        if in_fence:
+            i += 1
+            continue
+        h = HEAD_RE.match(line)
+        if h:
+            headings.append((len(h.group(1)), h.group(2).strip(), i + 1 + offset))
+        m = OPEN_RE.match(line)
+        if m:
+            colons, kind = m.group(1), m.group(2)
+            attrs = {a.group(1): (a.group(2) if a.group(2) is not None else a.group(3))
+                     for a in ATTR_RE.finditer((m.group(3) or "").strip("{}"))}
+            close = re.compile(r"^%s\s*$" % colons)
+            j, body, depth = i + 1, [], 0
+            while j < len(lines):
+                if OPEN_RE.match(lines[j]):
+                    depth += 1
+                elif re.match(r"^:{3,}\s*$", lines[j]):
+                    if depth == 0 and close.match(lines[j]):
+                        break
+                    depth -= 1
+                body.append(lines[j])
+                j += 1
+            blocks.append((kind, attrs, body, i + 1 + offset))
+            i = j + 1
+            continue
+        i += 1
+    return blocks, headings, fm
+
+
+# ---------------------------------------------------------------------------
+# the assert phase — the document-level folds
+# ---------------------------------------------------------------------------
+def assert_document(path, schema, report):
+    blocks, headings, fm = read_blocks(path)
+    order = foundation_order_from(schema)
+    required = required_min_from(schema)
+    pending_kinds = list(schema["pending_ledger"]["kinds"].keys())
+
+    # a root that only indexes its child contexts is exempt from the
+    # foundation minimum — the exemption is declared in the schema.
+    index_only = str(fm.get("index_only", "")).lower() in ("true", "yes")
+
+    # The schema scopes the foundation contract to section 00 ("all inside
+    # section 00"). A document that declares no such section is not carrying a
+    # foundation at all — a behavior-rule document, say — and the per-kind
+    # minimum does not apply to it. Applying it anyway reports a violation the
+    # schema never states, which is how a correct host document fails a gate.
+    # Section 00 is the foundation's home, but a host may number a different
+    # section 00 — a "00 Position" that carries no foundation at all. Match the
+    # section by NAME as well as number, so the contract applies to a document
+    # that actually declares a foundation and to no other.
+    has_foundation = any(
+        re.match(r"^0*0\s", t) and "foundation" in t.lower()
+        for _lvl, t, _ln in headings)
+
+    found = [(k, ln) for k, _, _, ln in blocks if k in order]
+
+    # -- cardinality: every required kind appears at least once -------------
+    if not index_only and has_foundation:
+        present = {k for k, _ in found}
+        for kind in required:
+            if kind not in present:
+                report("%s: foundation is missing a required block kind: %s"
+                       % (path, kind))
+
+    # -- order: the foundation kinds appear in the declared order -----------
+    rank = {k: i for i, k in enumerate(order)}
+    prev_rank, prev_kind = -1, None
+    for kind, ln in found:
+        r = rank[kind]
+        if r < prev_rank:
+            report("%s:%d: foundation out of order: %s follows %s"
+                   % (path, ln, kind, prev_kind))
+            break
+        prev_rank, prev_kind = r, kind
+
+    # -- pending entries: kind, since, and the ADR a build entry must cite --
+    for kind, attrs, body, ln in blocks:
+        if kind != "pending":
+            continue
+        pk = attrs.get("kind")
+        if pk not in pending_kinds:
+            report("%s:%d: pending entry has invalid kind %r (expected one of %s)"
+                   % (path, ln, pk, ", ".join(pending_kinds)))
+        since = attrs.get("since")
+        if not since or not re.match(r"^\d{4}-\d{2}-\d{2}$", since):
+            report("%s:%d: pending entry has invalid or missing since=%r"
+                   % (path, ln, since))
+        if pk == "build":
+            joined = "\n".join(body)
+            if not re.search(r"#adr-\d{4}", joined):
+                report("%s:%d: pending build entry cites no ADR "
+                       "(a build entry must link an #adr-NNNN anchor)"
+                       % (path, ln))
+
+    # -- the spine: the foundation heading precedes every numbered section --
+    numbered = [(lvl, t, ln) for lvl, t, ln in headings
+                if re.match(r"^\d\d\s", t)]
+    if numbered and not index_only and has_foundation:
+        first = numbered[0]
+        if not re.match(r"^00\s", first[1]):
+            report("%s:%d: the spine must open with section 00, found %r"
+                   % (path, first[2], first[1]))
+        nums = [int(t[:2]) for _, t, _ in numbered]
+        for a, b in zip(nums, nums[1:]):
+            if b < a:
+                report("%s: spine sections are out of order (%02d follows %02d)"
+                       % (path, b, a))
+                break
+
+
+# ---------------------------------------------------------------------------
+# the vendored-import scan — the renderer resolves nothing at run time
+# ---------------------------------------------------------------------------
+# The framework vendors a version-exact package set (flake.nix) so a render is
+# offline-reproducible. ONE place enforced that: a figure block's `uses=` list.
+# The renderer itself did not, and TYPST HAS NO OFFLINE FLAG — given a writable
+# package cache it FETCHES. Measured: a figure whose `uses=` named only the
+# vendored `cetz`, carrying `#import "@preview/nulite:0.1.0"` in its BODY,
+# downloaded 669.5 KiB mid-compile and failed only on the read-only Nix store's
+# `Permission denied`. The download COMPLETED. On a host with a writable cache
+# that render succeeds silently and the offline claim is false there.
+#
+# So the protection was a filesystem permission, not a contract. A permission
+# holds on the hosts that happen to have it; a contract holds everywhere.
+#
+# This scan is the REMOVE-THE-CAUSE rung: an unvendored import cannot reach the
+# renderer at all, while the capability (a native figure using vendored
+# packages) is untouched. It runs on the GENERATED typst, not the authored
+# markdown, so the projected library's own imports are in scope and every route
+# to an import is covered — a figure body, an attr, anything md-to-typst emits.
+IMPORT_RE = re.compile(r'@preview/([A-Za-z0-9_-]+)\s*:\s*([0-9][0-9.]*)')
+
+
+def vendored_set(lib_path):
+    """The vendored package names, read from the projected library.
+
+    The projection is the one place that already reads flake.nix, so reading
+    its VENDORED tuple keeps a single source of truth. A Nix attribute name is
+    not always the package name — `oxifmt_0_2_1` is the attribute for
+    `@preview/oxifmt:0.2.1` — so a trailing `_<major>_<minor>_<patch>` version
+    suffix is normalized away, or a legitimate transitive import is rejected.
+    """
+    try:
+        with open(lib_path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r"#let\s+VENDORED\s*=\s*\((.*?)\)", text, re.S)
+    if not m:
+        return None
+    names = set()
+    for raw in re.findall(r'"([^"]+)"', m.group(1)):
+        names.add(raw)
+        names.add(re.sub(r"_\d+(?:_\d+)*$", "", raw))
+    return names
+
+
+def assert_vendored_imports(typ_path, lib_path, report):
+    allowed = vendored_set(lib_path)
+    if allowed is None:
+        report("cannot read the vendored package set from %s "
+               "(run render-project)" % lib_path)
+        return
+    try:
+        with open(typ_path, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+    except OSError as e:
+        report("cannot read the generated typst: %s" % e)
+        return
+    for n, line in enumerate(lines, 1):
+        for pkg, ver in IMPORT_RE.findall(line):
+            if pkg not in allowed:
+                report("%s:%d: imports @preview/%s:%s, which the framework "
+                       "does not vendor (allowed: %s)"
+                       % (typ_path, n, pkg, ver,
+                          ", ".join(sorted(allowed))))
+
+
+# ---------------------------------------------------------------------------
+# the prose-fidelity markers — the render must not alter authored prose
+# ---------------------------------------------------------------------------
+# The fence router is the single point where authored prose is transformed, and
+# the transform is hard: Typst reserves `#`, `$` and `@` in content position,
+# and this layer carries 536 inline `#term-` references. Four separate router
+# bugs each shipped a document that compiled cleanly, passed the gate, and SAID
+# SOMETHING DIFFERENT from what the author wrote:
+#
+#   `COVERAGE.md — breadth`  rendered as  `COVERAGE.md u2014 breadth`
+#   `#raw("x");`             dropped the authored `;`
+#   a converted box          leaked `\#box[` onto the page
+#   `` `#term-foo` ``        rendered as `\#term-foo`
+#
+# All four are fixed by the router's span design. NOTHING ENFORCES THAT. The
+# freshness check is a byte-compare of committed PDF against fresh render, so it
+# proves render-matches-render and never render-matches-source: a consistently
+# wrong conversion is wrong identically in both, the bytes match, and the gate
+# goes green. That is how the em-dash corruption reached a committed PDF.
+#
+# This check is deliberately NARROW, and its limit is stated rather than hidden.
+# It scans the generated typst for the escape-leak shapes the router has
+# actually produced. It is a regression check, not a fidelity proof: it cannot
+# see a DROPPED character (router bug two), because absence leaves no marker.
+# The general contract — comparing authored prose against extracted text on a
+# basis that tolerates reflow and typographic substitution — is a design change
+# that needs its contract written first, and is not this check.
+#
+# A full-text diff was tried and rejected: naive PDF extraction reflows lines,
+# hyphenates at breaks and substitutes typographic quotes, so it reported ~33
+# false positives, and the normalizations that silence them (folding an em dash
+# to a hyphen) are exactly what would hide the em-dash bug.
+LEAK_RES = (
+    # a json-escaped codepoint that reached the page as literal text; the
+    # em-dash corruption's exact shape
+    (re.compile(r"(?<!\\)\\u[0-9a-fA-F]{4}"), r"an escaped codepoint (—) as literal text"),
+    # an escape that leaked THROUGH a converted call, so the page shows the
+    # backslash: `\#box[`, `\#pill(`. Only a call SHAPE counts — the escaped
+    # name must be followed by `[` or `(`, the syntax that makes it a call.
+    (re.compile(r"\\\#(?:box|pill|lnk|diagram|diagram_source|code_block)\s*[\[(]"),
+     "an escaped framework call"),
+    # An HTML entity reaching the render. These are legacy escaping: the retired
+    # HTML renderer needed `&lt;` inside a diagram label, and the current one
+    # does not, so the entity now prints literally — a mermaid node read
+    # "lang/&lt;language&gt;/" on the page. Authors write the character.
+    (re.compile(r"&(?:lt|gt|amp|quot|#\d+);"),
+     "an HTML entity as literal text"),
+)
+# A `#` inside a STRING LITERAL is not content, and escaping it there is
+# correct: a link destination carries a URL fragment, so the generated
+# `[`afk`](CONTEXT.md\#term-run-mode)` is right and must not be reported.
+STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+CMARKER_CALL_RE = re.compile(r'(#cmarker\.render\()(' + STRING_RE.pattern + r')')
+
+
+def blank_cmarker_arg(line):
+    """Blank out the markdown argument handed to cmarker, keeping line length.
+
+    Only this one string is exempt from the content scan, because only this one
+    is parsed as markdown downstream. Every other string literal on a generated
+    line reaches the page as written.
+    """
+    return CMARKER_CALL_RE.sub(
+        lambda m: m.group(1) + '"' + " " * (len(m.group(2)) - 2) + '"', line)
+# A raw span is verbatim in Typst, so an authored `#term-` inside backticks must
+# NOT carry a backslash. Checked separately: the marker is only a violation
+# inside a backtick raw span, where an escape renders as a visible character.
+RAW_SPAN_RE = re.compile(r"`([^`\n]*)`")
+RAW_LEAK_RE = re.compile(r"\\[#$@]")
+
+
+def assert_prose_markers(typ_path, report):
+    try:
+        with open(typ_path, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+    except OSError as e:
+        report("cannot read the generated typst: %s" % e)
+        return
+    for n, line in enumerate(lines, 1):
+        # Blank out the ONE string whose content a markdown parser decodes:
+        # cmarker's argument. `&amp;` there is authored markdown that becomes
+        # `&` on the page (verified against cmarker's own output), so reporting
+        # it as an entity reaching the render states the opposite of the truth.
+        #
+        # The exemption is deliberately this narrow and NOT "any string
+        # literal". A diagram's DOT source is a string literal too, and nothing
+        # decodes it — `label="lang/&lt;language&gt;/"` prints those entities
+        # verbatim, which is the original bug this rule was written for. Widen
+        # this to all strings and that bug renders clean again; it was caught
+        # here by testing the widened form against a diagram.
+        content = blank_cmarker_arg(line)
+        for rx, what in LEAK_RES:
+            m = rx.search(content)
+            if m:
+                report("%s:%d: the render would carry %s — the router altered "
+                       "authored prose (found %r)"
+                       % (typ_path, n, what, m.group(0)))
+        for raw in RAW_SPAN_RE.findall(line):
+            m = RAW_LEAK_RE.search(raw)
+            if m:
+                report("%s:%d: a raw span carries the escape %r, which renders "
+                       "as a visible backslash — raw content is verbatim in "
+                       "Typst and must not be escaped" % (typ_path, n, m.group(0)))
+
+
+# ---------------------------------------------------------------------------
+# the renderer's own warnings — a warning means the page is not what was written
+# ---------------------------------------------------------------------------
+# The compiler was already reporting this class of corruption on every build and
+# the gate was throwing it away: both compile sites ran with capture_output=True
+# and wrote proc.stderr ONLY when the return code was non-zero. So a document
+# that rendered "successfully" while Typst said `warning: no text within stars`
+# passed the gate with its bold silently dropped — measured on
+# docs/design/lifecycle/design.md, whose authored `**teach-me and `explain` …**`
+# reached the page with no emphasis at all.
+#
+# A Typst warning on a GENERATED document is not advisory. The author did not
+# write Typst; the router did. So a warning means the conversion produced
+# something the compiler had to interpret loosely, which is exactly the
+# silent-corruption class the source scan exists to catch — caught here by the
+# compiler itself, for free, if the gate simply stops discarding it.
+# STAGED, DELIBERATELY. The rule below is reported, not enforced, and the reason
+# is recorded rather than left as a soft edge: the layer currently trips it 24
+# times, all from ONE root cause — the router converts a line at a time, so an
+# inline span that WRAPS across a line break is never matched and its markers
+# reach Typst raw. Making this fail-closed today would make the gate red for
+# every commit while the fix is a router change, not a document change.
+#
+# A paragraph-buffering patch was tried and reverted: joining lines before
+# conversion lets a code span wrap the join, and CODE_RE cannot match across a
+# newline, so `###` inside backticks landed in code position and the compile
+# failed. That is the same silent-corruption family the router's own docstring
+# records, which is why the real fix is to hand the inline layer to a real
+# CommonMark parser rather than to widen another regex.
+#
+# That fix landed — the inline layer of prose now goes to cmarker, a real
+# CommonMark parser — the count reached zero, and the rule is ENFORCED.
+WARN_RE = re.compile(r"^warning: (.+)$", re.M)
+ENFORCE_RENDERER_WARNINGS = True
+
+
+def warns(stderr_text, src_path, report):
+    """Report Typst warnings. Returns True only when they are ENFORCED.
+
+    A warning on a GENERATED document is not advisory: the author did not write
+    Typst, the router did, so a warning means the conversion produced something
+    the compiler had to read loosely — the page is not what the author wrote.
+    """
+    found = WARN_RE.findall(stderr_text or "")
+    if not found:
+        return False
+    label = "violation" if ENFORCE_RENDERER_WARNINGS else "warning"
+    for w in found:
+        report("design-render: %s: %s: the renderer warned: %s\n"
+               % (label, src_path, w))
+    report("design-render: %d renderer warning(s) — the rendered page is not "
+           "what the author wrote.\n" % len(found))
+    return ENFORCE_RENDERER_WARNINGS
+
+
+# ---------------------------------------------------------------------------
+# the compile phase
+# ---------------------------------------------------------------------------
+def render(md_path, out_pdf, lib_dir, check=False):
+    typst = os.environ.get("TYPST", "typst")
+    tmpdir = tempfile.mkdtemp(prefix="design-render.")
+    # the generated .typ must sit INSIDE the project root, because the renderer
+    # refuses a source file outside it; it is written beside the authored
+    # document and removed after the compile.
+    typ = os.path.splitext(md_path)[0] + ".gen.typ"
+    lib = os.path.join(lib_dir, "designlib.typ")
+    if not os.path.exists(lib):
+        sys.stderr.write("design-render: error: no projected library at %s "
+                         "(run render-project, or set DESIGN_LIB_DIR)\n" % lib)
+        return 2
+    # the library is imported by a path RELATIVE to the generated .typ: an
+    # absolute path is resolved against the renderer's project root, not the
+    # filesystem, so it would not be found.
+    rel_lib = os.path.relpath(os.path.abspath(lib),
+                              os.path.dirname(os.path.abspath(typ)))
+    rc = subprocess.call([sys.executable, os.path.join(HERE, "md-to-typst"),
+                          md_path, typ, "--lib", rel_lib])
+    if rc != 0:
+        return 2
+
+    # FAIL CLOSED, BEFORE THE COMPILE. Both scans read the generated typst and
+    # must run before the renderer sees it: the import scan exists precisely
+    # because reaching the renderer is already too late (it fetches), and the
+    # marker scan must not leave a corrupted PDF behind. The generated file is
+    # removed on every exit path so a violation leaves no artifact.
+    source_violations = []
+    assert_vendored_imports(typ, lib, source_violations.append)
+    assert_prose_markers(typ, source_violations.append)
+    if source_violations:
+        for v in source_violations:
+            sys.stderr.write("design-render: violation: %s\n" % v)
+        os.remove(typ)
+        return 1
+
+    target = out_pdf if not check else os.path.join(tmpdir, "fresh.pdf")
+    root = os.path.commonpath([os.path.abspath(md_path), os.path.abspath(lib)])
+    # A PDF embeds a creation timestamp, so two renders of one source would
+    # differ in bytes for no reason the reader can see. Pinning the timestamp
+    # makes a render REPRODUCIBLE, which is what lets the freshness check be a
+    # plain byte-compare with no external text extractor in the loop.
+    env = dict(os.environ, SOURCE_DATE_EPOCH="0")
+    try:
+        proc = subprocess.run([typst, "compile", typ, target, "--root", root],
+                              capture_output=True, text=True, env=env)
+    finally:
+        if os.path.exists(typ):
+            os.remove(typ)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        return 1
+    if warns(proc.stderr, md_path, report=sys.stderr.write):
+        return 1
+    if check:
+        if not os.path.exists(out_pdf):
+            sys.stderr.write("design-render: %s is missing a rendered %s\n"
+                             % (md_path, os.path.basename(out_pdf)))
+            return 1
+        with open(out_pdf, "rb") as f:
+            committed = f.read()
+        with open(target, "rb") as f:
+            fresh = f.read()
+        if committed != fresh:
+            sys.stderr.write("design-render: %s is stale (does not match a "
+                             "fresh render)\n" % out_pdf)
+            return 1
+    return 0
+
+
+def main():
+    args = [a for a in sys.argv[1:]]
+    check = "--check" in args
+    if check:
+        args.remove("--check")
+    if len(args) != 1:
+        sys.stderr.write("usage: design-render <design.md> [--check]\n")
+        return 2
+    md = args[0]
+    if not os.path.exists(md):
+        sys.stderr.write("design-render: error: no such file: %s\n" % md)
+        return 2
+
+    schema = load_schema()
+    violations = []
+    assert_document(md, schema, violations.append)
+
+    # FAIL CLOSED: an invalid design emits no document. The assert phase runs
+    # BEFORE the compile so a violating document never leaves a rendered PDF
+    # behind — a stale-but-present artifact would read as if it had passed.
+    if violations:
+        for v in violations:
+            sys.stderr.write("design-render: violation: %s\n" % v)
+        return 1
+
+    lib_dir = os.environ.get("DESIGN_LIB_DIR") or os.path.join(
+        os.path.dirname(os.path.abspath(md)).split("/docs/")[0], "docs", "design", ".render")
+    out_pdf = os.path.splitext(md)[0] + ".pdf"
+    return render(md, out_pdf, lib_dir, check=check)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

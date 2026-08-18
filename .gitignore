@@ -1,0 +1,19 @@
+# Nix / direnv
+.direnv/
+result
+result-*
+
+# Python bytecode. The gate scripts are extensionless python programs imported
+# by their siblings (design-aggregate loads md-to-typst as a module), so running
+# the gate writes a __pycache__ beside them.
+__pycache__/
+*.py[cod]
+
+# Rendered output of the fixture render (regenerated, never committed)
+fixtures/*.pdf
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/

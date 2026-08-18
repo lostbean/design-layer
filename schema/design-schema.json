@@ -4,11 +4,11 @@
   "anchors": {
     "term": {
       "heading_form": "### <Term> {#term-<slug>}",
-      "heading_regex": "^#{1,6} .*\\{#term-[a-z0-9]+(-[a-z0-9]+)*\\}\\s*$",
+      "heading_regex": "^### .*\\{#term-[a-z0-9]+(-[a-z0-9]+)*\\}\\s*$",
       "id_pattern": "^term-[a-z0-9]+(-[a-z0-9]+)*$",
       "slug_rule": "lowercase; collapse runs of non-alphanumerics to single hyphens; strip leading/trailing hyphens",
       "definition_rule": "1–2 sentences stating what the concept IS — never what the system does with it; project-specific concepts only, general engineering vocabulary never earns a term",
-      "avoid_line": "optional '_Avoid_: <word>, <word>' line under the definition naming rejected synonyms — the vocabulary is opinionated: one best word, the rest rejected by name; the naming test (primitives/communicate.md) records a rejected metaphor-as-name here",
+      "avoid_line": "optional '_Avoid_: <word>, <word>' line under the definition naming rejected synonyms — the vocabulary is opinionated: one best word, the rest rejected by name, including a rejected metaphor-as-name",
       "slug_retirement": "a term-<slug> id is never repurposed for a different concept — retire the term and mint a new slug, never rebind",
       "coverage_rule": "every load-bearing vocabulary the system actually uses earns a term — in particular EVERY schema enum that governs behavior (cure_class, timing, drift_kind, enforcement, run_mode, work_order_state, triage_roles, recommendation_strength, lens). A behavior-governing enum with no CONTEXT term is an undocumented-vocabulary gap the probe flags; the design must not lean on a word it never defines."
     },
@@ -306,7 +306,7 @@
         "invariants",
         "robustness"
       ],
-      "note": "the order is fixed and load-bearing: combo pills and combo findings list contributing lenses in this order (see primitives/lens-board.md and the style asset). Modeling leads because it is upstream — it carves the entities the other five then judge."
+      "note": "the order is fixed and load-bearing: a combo pill lists its contributing lenses in this order, never the order they were written. Modeling leads because it is upstream of the other five — it carves the entities they then judge."
     }
   }
 }

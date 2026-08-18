@@ -145,6 +145,7 @@ class Schema:
 
     term_id_re: "re.Pattern"
     term_heading_re: "re.Pattern"
+    term_heading_form: str  # the prescriptive shape, e.g. "### <Term> {#term-<slug>}"
     # A link into a SECTION of a design document. Tolerate-absent, like the
     # staleness advisory: an older copy-installed schema without anchors.section
     # gets None and the check falls back to the pre-existing term/adr-only
@@ -181,7 +182,7 @@ def locate_schema(argv0: str) -> str:
 
 
 CONTRACT_ERROR = (
-    "requires anchors.term.{id_pattern,heading_regex}, "
+    "requires anchors.term.{id_pattern,heading_regex,heading_form}, "
     "anchors.adr.{id_pattern,filename_pattern,element_regex}, "
     "layer_layout.{adr_dir,entry_points}"
 )
@@ -212,6 +213,7 @@ def load_schema(path: str) -> Schema:
         layout = raw["layer_layout"]
         term_id_src = anchors["term"]["id_pattern"]
         term_heading_src = anchors["term"]["heading_regex"]
+        term_heading_form = anchors["term"]["heading_form"]
         adr_id_src = anchors["adr"]["id_pattern"]
         adr_file_src = anchors["adr"]["filename_pattern"]
         adr_element_src = anchors["adr"]["element_regex"]
@@ -261,6 +263,7 @@ def load_schema(path: str) -> Schema:
     return Schema(
         term_id_re=re.compile(term_id_src),
         term_heading_re=re.compile(term_heading_src),
+        term_heading_form=term_heading_form,
         section_id_re=re.compile(section_src) if section_src else None,
         adr_id_re=re.compile(adr_id_src),
         adr_id_src=adr_id_src,
@@ -305,6 +308,9 @@ class FileIndex:
     link_dests: list = field(default_factory=list)  # raw destinations, stripped text
     click_dests: list = field(default_factory=list)  # mermaid `click` targets
     term_anchor_ids: list = field(default_factory=list)  # {#...} ids on headings
+    term_anchor_wrong_level: list = field(
+        default_factory=list
+    )  # (term_id, lineno, heading_prefix) — id-shaped but off the declared level
     adr_elements: list = field(default_factory=list)  # lines matching element_regex
     loose_anchor_count: int = 0  # anchor-ish lines, matched or not
     term_headings: set = field(default_factory=set)  # heading anchor ids present
@@ -384,6 +390,19 @@ def index_markdown(path: str, rel: str, schema: Schema) -> FileIndex:
             if schema.term_heading_re.search(line):
                 for m in ANCHOR_BRACE_RE.finditer(line):
                     idx.term_headings.add(m.group(1))
+            elif schema.term_id_re is not None:
+                # An id-shaped {#term-...} anchor that does NOT satisfy the full
+                # heading-level contract (anchors.term.heading_regex, which pins
+                # the level as well as the id shape) is not a silent non-term: it
+                # is a term declared at the wrong heading level. Left undetected
+                # here, it surfaces only as a downstream "dangling term anchor" on
+                # every citation, which reads as a broken link rather than what it
+                # actually is — check_terms reports it directly instead.
+                for m in ANCHOR_BRACE_RE.finditer(line):
+                    tid = m.group(1)
+                    if schema.term_id_re.search(tid):
+                        prefix = HEADING_RE.match(line).group(0).split()[0]
+                        idx.term_anchor_wrong_level.append((tid, lineno, prefix))
 
         for m in SCRIPT_ATTR_RE.finditer(line):
             idx.script_refs.append((lineno, m.group(1)))
@@ -756,6 +775,19 @@ def check_terms(contexts: list, schema: Schema, report: Report) -> None:
                 )
             else:
                 seen.add(term_id)
+
+        # A term-id-shaped anchor sitting on a heading at the wrong level is not
+        # a dangling link waiting to happen — it is wrong NOW, at its own
+        # declaration site, and is reported there rather than left to surface
+        # only when something later fails to cite it.
+        for term_id, lineno, prefix in idx.term_anchor_wrong_level:
+            report.violation(
+                idx.rel,
+                "term anchor at wrong heading level",
+                f"{prefix} {{#{term_id}}} declares a term-shaped id, but "
+                f"anchors.term.heading_form requires {schema.term_heading_form}"
+                f" — no link to it will resolve until the heading level matches",
+            )
 
 
 # --- Check 4: map totality (multi-context) ------------------------------------

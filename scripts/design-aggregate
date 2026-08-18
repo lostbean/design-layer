@@ -12,11 +12,12 @@ document with a table of contents, the contexts as chapters, and every glossary
 gathered into one alphabetised section.
 
 THIS IS THE LAYER'S RENDERED DOCUMENT, not one artifact among several. A
-context's design.md renders into it as a chapter and emits no sibling PDF of its
-own. The one exception is the reference gallery under .design-reference/, which
-keeps its own render: it is the vocabulary reference an adopting repo reads, and
-its byte-compared render is the tripwire that fails when a renderer change
-alters how a block draws.
+context's design.md renders into it as a chapter and emits no sibling PDF of
+its own. A host that keeps a standalone reference document outside the
+aggregate — a vocabulary gallery it wants adopters to browse on its own,
+say — renders that one document separately with design-render instead of
+folding it in here; this repo's own fixtures/widget-gallery.md is exactly
+that shape; see its "How this file is rendered" section.
 
 Inside one document a citation of a CONTEXT term is an INTRA-document reference,
 so the compiler resolves it and a missing term fails the build with a source
@@ -66,7 +67,36 @@ _gate = importlib.util.module_from_spec(_gspec)
 _gspec.loader.exec_module(_gate)
 warns = _gate.warns
 
-TERM_RE = re.compile(r"^###\s+(?P<title>.+?)\s*\{#(?P<slug>term-[a-z0-9-]+)\}\s*$")
+def _term_re_from_schema():
+    """Derive the glossary term heading pattern from the ONE declared schema,
+    never a hardcoded copy.
+
+    A hardcoded `^###` here once disagreed with layer-integrity, which reads
+    the schema's anchors.term.heading_regex directly and — before that regex
+    was tightened to match anchors.term.heading_form — accepted a term anchor
+    at ANY heading level. A layer authored at the level layer-integrity
+    accepted passed that gate clean while this aggregate silently counted
+    zero terms and rendered an empty glossary: two readers of one declared
+    vocabulary, disagreeing, with no error either side. Deriving the level
+    from heading_form here closes that gap structurally — a future schema
+    edit to the term heading's level re-derives this pattern instead of
+    leaving a second copy to fall out of step.
+    """
+    schema = _gate.load_schema()
+    form = schema["anchors"]["term"]["heading_form"]
+    m = re.match(r"^(#+)\s", form)
+    if not m:
+        sys.stderr.write(
+            "design-aggregate: error: anchors.term.heading_form %r does not "
+            "open with a markdown heading prefix\n" % form)
+        sys.exit(2)
+    prefix = re.escape(m.group(1))
+    return re.compile(
+        r"^%s\s+(?P<title>.+?)\s*\{#(?P<slug>term-[a-z0-9]+(?:-[a-z0-9]+)*)\}\s*$"
+        % prefix)
+
+
+TERM_RE = _term_re_from_schema()
 H1_RE = re.compile(r"^#\s+(.*)$")
 
 # ---------------------------------------------------------------------------

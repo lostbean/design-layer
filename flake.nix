@@ -172,6 +172,7 @@
       {
         devShells.default = pkgs.mkShell {
           packages = [
+            pkgs.lefthook
             # The treefmt wrapper `nix fmt` resolves to. Putting it in the shell
             # is what makes formatting fast: without it every `nix fmt` call
             # re-evaluates the flake and realises each formatter from the store.

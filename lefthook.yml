@@ -1,0 +1,44 @@
+# Install the hooks with `lefthook install` (lefthook is provided by the flake
+# devShell).
+#
+# The pre-commit hook formats only STAGED files via `nix fmt` and re-stages the
+# results (stage_fixed: true). A commit with unformatted code is fixed in place
+# and succeeds — no re-commit needed — and unstaged hunks of a partially-staged
+# file are left untouched.
+pre-commit:
+  commands:
+    format:
+      # treefmt (via `nix fmt`) accepts explicit file paths; lefthook passes the
+      # staged files in {staged_files}.
+      run: nix fmt -- {staged_files}
+      stage_fixed: true
+    gate-self-tests:
+      # This repo's equivalent of a design gate: the fixture-based self-tests
+      # that ARE this tool's correctness proof (README.md "What this repo
+      # deliberately does not do" — no dogfooded layer, tests instead).
+      # Whole-repo rather than staged-only, because a schema or projector edit
+      # can break a self-test without touching the test script itself.
+      # Measured at ~7s together; needs the vendored `typst` on PATH, which the
+      # devShell provides. Exit: 0 pass, 1 a self-test failed.
+      run: |
+        set -e
+        bash ./scripts/layer-integrity.test.sh
+        bash ./scripts/design-render.test.sh
+        bash ./scripts/widget-coverage.test.sh
+    projection-determinism:
+      # The seam `nix flake check`'s projection-freshness check also proves:
+      # projecting the schema twice must yield identical bytes. Cheap (well
+      # under a second) and catches a nondeterministic projector edit before
+      # it reaches CI.
+      run: |
+        set -e
+        fresh1="$(mktemp -d)"
+        fresh2="$(mktemp -d)"
+        trap 'rm -rf "$fresh1" "$fresh2"' EXIT
+        bash ./scripts/render-project schema/design-schema.json "$fresh1" >/dev/null
+        bash ./scripts/render-project schema/design-schema.json "$fresh2" >/dev/null
+        if ! diff -r "$fresh1" "$fresh2" >/dev/null 2>&1; then
+          echo "projection is not deterministic: two runs of one schema differ" >&2
+          diff -r "$fresh1" "$fresh2" >&2 || true
+          exit 1
+        fi

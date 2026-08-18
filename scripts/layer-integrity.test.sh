@@ -724,6 +724,35 @@ A script in scripts/ enforces this.
 EOF
 assert_exit 0 "script= naming a local repo script is legal" -- "$CHECK" "$SAB"
 
+# --- Scenario (cov): COVERAGE.md's own citations resolve ----------------------
+# The coverage map cites terms and design sections like any other entry point.
+# It was once indexed but never link-checked, so an invented term anchor passed
+# clean here while the identical break inside a design document failed — the
+# silent hole the map exists to close.
+SCOV="$TMP/cov"
+build_single "$SCOV"
+cat >"$SCOV/docs/COVERAGE.md" <<'EOF'
+# Coverage
+
+| Part | Status | Note |
+| ---- | ------ | ---- |
+| the engine | captured | Described as [drift](design/CONTEXT.md#term-no-such-term). |
+EOF
+assert_exit 1 "a dangling term anchor in COVERAGE.md is a violation" -- "$CHECK" "$SCOV"
+assert_contains "term-no-such-term" "the violation names the missing term"
+
+# The same map citing a term that DOES exist resolves clean.
+SCOVB="$TMP/covb"
+build_single "$SCOVB"
+cat >"$SCOVB/docs/COVERAGE.md" <<'EOF'
+# Coverage
+
+| Part | Status | Note |
+| ---- | ------ | ---- |
+| the engine | captured | Described as [drift](design/CONTEXT.md#term-drift). |
+EOF
+assert_exit 0 "a resolving term anchor in COVERAGE.md is clean" -- "$CHECK" "$SCOVB"
+
 # --- Scenario (perf): a run finishes well under a wall-clock ceiling ----------
 # The parse-once invariant: the checker reads each layer file ONCE into an
 # index and answers every check as a lookup against it. The shape it replaced

@@ -1202,6 +1202,14 @@ def main(argv: list) -> int:
         check_links(src, repo, schema, targets, report)
     if map_index is not None:
         check_links(map_index, repo, schema, targets, report)
+    # The coverage map cites terms and design sections like any other entry
+    # point, so its links resolve under the same rules. Without this it was the
+    # one layer artifact whose citations were indexed but never resolved: an
+    # invented term anchor passed clean here while the identical break inside a
+    # design document failed, which is exactly the silent hole the map is
+    # supposed to close.
+    for cov in coverage_files:
+        check_links(cov, repo, schema, targets, report)
 
     check_adrs(adr_files, schema, report)
     check_terms(contexts, schema, report)

@@ -115,7 +115,19 @@ layer; nothing about it lives beside the source it describes.
 scripts/     the gate: aggregate, render, layer-integrity, token-coverage, render-project
 schema/      the ONE declared schema — block vocabulary, anchors, layout, enums
 fixtures/    the widget gallery: every block kind, and the renderer-drift tripwire
+skills/      the authoring guidance an agent loads to write a well-formed layer
 ```
+
+## Writing a design document
+
+The gate tells you a document is malformed; it does not tell you how to write
+one. That is `skills/design-document-syntax/SKILL.md` — the format
+specification: the artifact set and where each file lives, the term and ADR
+anchors, block anatomy and the `title=` contract, the whole block vocabulary,
+the section spine, the pending ledger's fields, the `:::behavior` and
+`::::entity` clause blocks, and which rules are machine-checked rather than
+convention. It is a plain markdown file; read it in the browser, in a clone, or
+point an agent at it.
 
 ## Development
 

@@ -9,8 +9,18 @@ result-*
 __pycache__/
 *.py[cod]
 
-# Rendered output of the fixture render (regenerated, never committed)
+# ruff's own cache. It writes a self-ignoring .gitignore inside the directory
+# it creates, which is why it does not show up as untracked debris under a
+# plain `git status` — declared here anyway so the repo's own ignore rules
+# do not depend on that generated file being present.
+.ruff_cache/
+
+# Rendered output of the fixture render, and the schema's projected library a
+# local `render-project` run against fixtures/ writes beside it (see the
+# "How this file is rendered" section of fixtures/widget-gallery.md) — both
+# regenerated on demand, never committed.
 fixtures/*.pdf
+fixtures/.render/
 
 # OS / editor cruft
 .DS_Store

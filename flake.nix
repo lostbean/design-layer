@@ -148,18 +148,18 @@
           #
           # The other extensionless python programs (design-aggregate,
           # design-render, md-to-typst, token-coverage) are deliberately NOT
-          # listed. treefmt cannot see their language without an extension, so
-          # they go unformatted — the same arrangement they had upstream. Adding
-          # them here is a one-line change that rewrites ~320 lines across four
-          # files; that reformat is a separate decision from this split, and
-          # making it here would bury it.
+          # listed, so treefmt cannot see their language and they go
+          # unformatted. Adding them here is a one-line change that rewrites
+          # ~320 lines across four files; that reformat is a separate
+          # decision from whatever else touches this config, and making it
+          # here would bury it in an unrelated diff.
           settings.formatter.ruff-format.includes = [
             "scripts/layer-integrity"
           ];
           settings.global.excludes = [
             # The widget gallery is the renderer-drift TEST FIXTURE, and a
             # figure block's body is VERBATIM Typst which prettier reads as
-            # markdown. Measured in the upstream repo: it rewrote
+            # markdown. Measured directly: prettier rewrote
             # `import cetz.draw: *` to `import cetz.draw: \*`, which is invalid
             # Typst, so formatting the fixture broke the render.
             "fixtures/*"

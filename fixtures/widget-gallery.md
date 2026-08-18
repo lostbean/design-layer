@@ -17,14 +17,14 @@ The rendered artifact is `widget-gallery.pdf`. There is no HTML.
 
 The block set below is not a wish list. It is exactly the function set that
 `scripts/render-project` projects from `schema/design-schema.json` into
-`docs/design/.render/designlib.typ`. A block kind that the projection does not
-define does not render, so it does not appear here as a live demonstration.
+`designlib.typ`. A block kind that the projection does not define does not
+render, so it does not appear here as a live demonstration.
 
 ```bash
-# render this file, then check the committed PDF is fresh
-./scripts/design-render docs/design/.design-reference/widget-gallery.md
-./scripts/design-render docs/design/.design-reference/widget-gallery.md --check
-./scripts/layer-integrity .        # exit 0 clean · 1 violation · 2 error
+# project the schema fresh, then render this fixture and check it is clean
+./scripts/render-project schema/design-schema.json fixtures/.render
+DESIGN_LIB_DIR=fixtures/.render ./scripts/design-render fixtures/widget-gallery.md
+DESIGN_LIB_DIR=fixtures/.render ./scripts/design-render fixtures/widget-gallery.md --check
 ```
 
 ## Typed statements
@@ -36,21 +36,22 @@ rule, the kind label, the title, the body, and then a **footer** carrying
 a declared slot, not a markup convention: the author writes attributes and the
 library places them.
 
-:::goal {title="Design is the focal point"}
-One shared, checkable design layer is the medium of agreement between human and
-agent.
+:::goal {title="A design either renders or names why not"}
+Every block contract is enforced fail-closed at render time, so a broken
+design document never produces a document that looks trustworthy.
 :::
 
-:::no-goal {title="Not a process cage"}
-The router is a convenience for unclassified signals, never a choke point.
+:::no-goal {title="Not a proof of good design"}
+The gate proves a document is well-formed. It has no opinion on whether the
+design behind it is a good one.
 :::
 
-:::invariant {title="One home per concern" enforcement=convention}
-Shared behavior lives in exactly one primitive; a consumer composes it, never
-re-inlines it.
+:::invariant {title="One schema, no forked copies" enforcement=convention}
+Every vocabulary the library carries — enums, block contracts, the token
+table — is read from the schema at projection time, never re-typed by hand.
 :::
 
-:::invariant {title="The catalog matches the shipped set" enforcement=mechanism script="scripts/catalog-check"}
+:::invariant {title="Every referenced token is defined" enforcement=mechanism script="scripts/token-coverage"}
 An invariant declaring `enforcement=mechanism` must name the script that
 enforces it. The library refuses to render one that does not — the check is a
 panic in the projected contract, not a review convention.
@@ -223,17 +224,17 @@ column, because a paragraph of prose in a narrow column reads badly.
 
 :::cards {cols=3}
 
-### design-layer
+### schema
 
-Owns the artifacts and their generation.
+The one declared vocabulary: block contracts, anchors, enums.
 
-### skill-system
+### render-project
 
-Owns what a skill and a primitive are.
+Projects the schema into the Typst library every compile imports.
 
-### lifecycle
+### layer-integrity
 
-Owns the flow of intent.
+Checks every cross-link, every ADR, every glossary term.
 :::
 
 :::cards {tint=teal cols=3}
@@ -259,16 +260,16 @@ so they sit side by side rather than stacking.
 
 ::::stat-grid
 
-:::stat-tile {value=31 label="Skills shipped"}
+:::stat-tile {value=4 label="Statement kinds"}
 :::
 
-:::stat-tile {value=3 label="Bounded contexts"}
+:::stat-tile {value=6 label="Lenses"}
 :::
 
-:::stat-tile {value=96% label="Coverage"}
+:::stat-tile {value=6 label="Tints"}
 :::
 
-:::stat-tile {value=5 label="Pending ledger"}
+:::stat-tile {value=3 label="Enforcement levels"}
 :::
 
 ::::
@@ -279,24 +280,26 @@ Two kinds — `:::info` and `:::warning` — each taking a `title=` and any of t
 six `tint=` families. The tint selects the colour from the projected
 `TINT_COLOR` table; with no tint the block falls back to its kind's own colour.
 
-:::info {title="The seams" tint=violet}
-The schema is the anti-corruption boundary that keeps the three vocabularies
-from leaking.
+:::info {title="One schema" tint=violet}
+The schema is the only place a block's contract, an enum's members, or a
+colour token is declared — the projector reads it, never a hand-kept copy.
 :::
 
-:::info {title="Reading the map"}
-A solid arrow is a customer/supplier dependency; a dashed arrow is conformance
-to the kernel. With no `tint=`, the block takes its kind colour.
+:::info {title="No tint, no problem"}
+With no `tint=`, an admonition falls back to its own kind's colour. With no
+`title=`, the kind name itself is shown, upper-cased, as the label.
 :::
 
-:::warning {title="Staleness"}
-The system has moved many commits since the design last changed — reconcile
-before relying on the layer.
+:::warning {title="Freshness is checked, not assumed"}
+`design-render --check` and `design-aggregate --check` regenerate the
+document and byte-compare it against the committed PDF — a stale artifact is
+reported, never silently repaired.
 :::
 
-:::warning {title="Cold regeneration" tint=rose}
-A cold regenerate measures the generators, not the standing loop — run it as an
-experiment, judged by the git diff, never as the everyday write path.
+:::warning {title="A figure names what it uses" tint=rose}
+A `:::figure` block's `uses=` list is restricted to the packages this
+repo's flake vendors. An import outside that set fails the render, so a
+design layer stays reproducible offline.
 :::
 
 ## Pending-ledger entries
@@ -306,13 +309,12 @@ experiment, judged by the git diff, never as the everyday write path.
 decorative: it is validated as `YYYY-MM-DD` and rides in the footer, so an
 aging entry is visible as design debt.
 
-:::pending {title="Project the figure block into the library" kind=build since=2026-08-16}
-The `figure` block is declared in the schema but the projector does not yet
-emit a function for it. A `build` entry must cite its decision as a real link
-whose fragment is `#adr-NNNN`; this gallery cites its own illustrative anchor
-below rather than a live decision record, so demonstrating the block never
-couples the look tripwire to the layer's actual ADR set. See
-[ADR-0000](#adr-0000).
+:::pending {title="A hypothetical unbuilt delta" kind=build since=2026-08-16}
+A `build` entry names something designed but not yet built. It must cite its
+decision as a real link whose fragment is `#adr-NNNN`; this gallery cites its
+own illustrative anchor below rather than a live decision record, so
+demonstrating the block never couples the look tripwire to a real ADR set.
+See [ADR-0000](#adr-0000).
 :::
 
 <a id="adr-0000"></a>
@@ -321,7 +323,8 @@ _The citation target above: an illustrative anchor, so this reference resolves
 within the gallery. A real `build` entry links a real decision record._
 
 :::pending {title="Fill goals a derivation cannot produce" kind=foundation since=2026-07-01}
-The onboarding phase-2 backlog.
+Foundation content a system cannot yield on its own — why it exists, what it
+deliberately excludes — waits here until a human states it.
 :::
 
 :::pending {title="Re-check the token table against a printed page" kind=verify since=2026-08-10}
@@ -352,24 +355,25 @@ moves the blocks and the diagrams together.
 
 ```mermaid
 graph TD
-    SS["skill-system context"] --> DL["design-layer context"]
-    LC["lifecycle context"] -->|writes via design-write| DL
-    SS -.conforms.-> K["schema — the kernel"]
-    LC -.conforms.-> K
-    DL -.conforms.-> K
+    S["schema — the ONE declared vocabulary"] --> P["render-project"]
+    P --> L["designlib.typ — the projected library"]
+    M["a design.md"] --> R["md-to-typst — the fence router"]
+    R --> G["generated Typst"]
+    G --> C["typst compile"]
+    L -.imported by.-> C
+    C --> PDF["design-layer.pdf"]
 ```
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant F as frontdesk
-    participant D as diagnose
-    participant C as coder
-    U->>F: raw signal
-    F->>D: genuine bug
-    D-->>F: root cause + (cure-class, timing)
-    F->>C: in-place-fix · now
-    C-->>U: accepted, gated
+    participant Author
+    participant Gate as design-render
+    participant Typst
+    Author->>Gate: design.md
+    Gate->>Gate: assert document-level contracts
+    Gate->>Typst: generated .typ (per-block contracts)
+    Typst-->>Gate: compiled, or panicked
+    Gate-->>Author: PDF, or a violation naming the line
 ```
 
 ## Figures
@@ -418,11 +422,11 @@ illustrates one point; many series in one chart reads as noise.
 
 :::chart {type=bar}
 
-| context      | coverage |
-| ------------ | -------- |
-| design-layer | 98       |
-| skill-system | 96       |
-| lifecycle    | 94       |
+| self-test              | assertions |
+| ----------------------- | ---------- |
+| layer-integrity.test.sh | 81         |
+| design-render.test.sh   | 12         |
+| widget-coverage.test.sh | 4          |
 
 :::
 
@@ -432,11 +436,11 @@ Standard Markdown, converted by the router: tables become a real Typst table
 with a header band, fenced code becomes a highlighted code block, and inline
 `code` stays verbatim.
 
-| Context      | Owns                   | Vocabulary                    | Status   |
-| ------------ | ---------------------- | ----------------------------- | -------- |
-| design-layer | Artifacts + generation | `unit`, `anchor`, `block`     | built    |
-| skill-system | Skills & primitives    | `skill`, `concern`, `catalog` | built    |
-| lifecycle    | Flow of intent         | `signal`, `drift`, `grill`    | evolving |
+| Script          | Reads                    | Decides                          |
+| --------------- | ------------------------ | --------------------------------- |
+| render-project  | the schema                | the projected Typst library       |
+| design-render   | one `design.md`           | pass, or a violation and a line   |
+| layer-integrity | every layer file in a repo | cross-link and homing violations |
 
 ```python
 def render(md_path, out_pdf, lib_dir, check=False):

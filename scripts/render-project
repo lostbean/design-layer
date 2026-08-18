@@ -127,6 +127,57 @@ except (KeyError, TypeError, IndexError) as e:
     sys.stderr.write("render-project: error: schema missing a required key: %s\n" % e)
     sys.exit(2)
 
+# The schema declares its id/selector shapes as LUA patterns (the authoring
+# side's vocabulary); Typst's regex() is the Rust regex engine, which is a
+# different dialect — no %-escapes, no %f[] frontier assertions. This table is
+# the translation, kept explicit and small rather than a general Lua-pattern
+# compiler, so every entry is a reviewable, individually-tested claim about
+# what one pattern means:
+#   #[%w_-]+              an id/selector-shaped token: '#' + word chars
+#   %.[%a][%w_-]*%-[%w_-]+  a hyphenated CSS class shape: '.foo-bar'
+#   %f[%w]id=              Lua's frontier assertion for "id= not glued to a
+#                          preceding word char" (so 'id=' but not 'valid=') —
+#                          the Rust engine has no frontier/lookbehind, but a
+#                          leading \b (word boundary) checks the same
+#                          transition, because '=' is not itself a word char:
+#                          '\bid=' matches exactly where 'i' begins a new word
+#   data%-testid            a literal hyphen, '%-' being Lua's escape for a
+#                          pattern-magic '-'; equivalent to the literal text
+_LUA_PATTERN_TRANSLATION = {
+    "#[%w_-]+": r"#[A-Za-z0-9_-]+",
+    "%.[%a][%w_-]*%-[%w_-]+": r"\.[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9_-]+",
+    "%f[%w]id=": r"\bid=",
+    "data%-testid": r"data-testid",
+}
+
+
+def _translate_fence_patterns(fence):
+    """Translate every declared Lua pattern to its Typst-regex equivalent.
+
+    Fails loudly (exit 2) on a pattern this table does not recognize, rather
+    than guessing a translation: a wrong regex would silently under-enforce
+    the fence, which is worse than refusing to project it. Extending the
+    schema's pattern list means extending _LUA_PATTERN_TRANSLATION here too —
+    the two are meant to be edited together.
+    """
+    out = {}
+    for lv, halves in fence.items():
+        translated = []
+        for p in halves["patterns"]:
+            if p not in _LUA_PATTERN_TRANSLATION:
+                sys.stderr.write(
+                    "render-project: error: no Typst-regex translation for "
+                    "behavior fence Lua pattern %r (level %s) — add it to "
+                    "_LUA_PATTERN_TRANSLATION in scripts/render-project\n"
+                    % (p, lv))
+                sys.exit(2)
+            translated.append(_LUA_PATTERN_TRANSLATION[p])
+        out[lv] = {"terms": halves["terms"], "patterns": translated}
+    return out
+
+
+behavior_fence = _translate_fence_patterns(behavior_fence)
+
 # fail-closed on shell drift: the hook renders a masthead (eyebrow, lede) and a
 # colophon (footer), so the schema must still declare those three page-identity
 # keys. A schema that drops or renames one is a projector-visible break, never a
@@ -237,7 +288,22 @@ w("#let FOUNDATION_ORDER = " + tuple_of(foundation_order))
 w("#let TITLE_MAX = 64")
 w("")
 
-# ---- the semantic token table (ADR-0052) ----------------------------------
+# ---- the behavior fence: forbidden terms + patterns, per level -------------
+# design_doc.behavior_contract.fence.honest_limit declares this a PARTIAL
+# check: it catches the shapes it names and misses a mechanism named in
+# ordinary words. That is enforcement=partial, not enforcement=convention —
+# the mechanical half still has to actually run, or the schema's own claim
+# that a shape like '#submit-btn' or 'controller' is caught becomes false.
+w("// ---- the behavior fence (partial, mechanical) — schema behavior_contract.fence")
+w("#let BEHAVIOR_FENCE = (")
+for lv in behavior_levels:
+    halves = behavior_fence[lv]
+    w("  " + q(lv) + ": (terms: " + tuple_of(halves["terms"])
+      + ", patterns: " + tuple_of(halves["patterns"]) + "),")
+w(")")
+w("")
+
+# ---- the semantic token table ----------------------------------------------
 # Colours are the framework's semantic look: per-kind, per-lens, per-tint.
 # Every token a block renderer references must be defined here — the totality
 # property token-coverage checks.
@@ -427,6 +493,56 @@ w("""// ---- inline furniture: lens pills, chips, links ------------------------
 
 """)
 
+# ---- the behavior fence: forbidden terms + patterns, checked per clause ---
+w("""// ---- the behavior fence — design_doc.behavior_contract.fence ------------
+// Declared enforcement=partial: it catches the shapes BEHAVIOR_FENCE names
+// (an id or selector, a bare term like "controller") and misses a mechanism
+// named in ordinary words ("the blue button"), exactly as the schema's own
+// honest_limit states. That partial coverage is still coverage — a clause
+// naming one of these shapes fails the render, fail-closed, the same as
+// every other per-block contract in this library.
+//
+// A behavior block's clauses (given/when/then) are nested INSIDE its body and
+// read the enclosing level back out of this state — _statement sets it before
+// showing that body, clears it after. Typst evaluates a content argument's
+// function calls at SHOW time, not at the point the argument is written, so a
+// clause nested in the body sees the level this state makes visible, never a
+// stale one from a previous behavior block. Same lazy-content pattern
+// _census_group already uses for the entity census's two groups.
+#let _behavior_level = state("behavior-level", none)
+
+// A clause's body is markdown already routed through cmarker.render, so its
+// content tree is a call, not literal text — this walks it down to the
+// characters the author actually wrote, the same structural walk _len (below)
+// uses to measure a card body, but returning text instead of a length.
+#let _flatten_text(c) = {
+  if type(c) == str { c }
+  else if type(c) != content { "" }
+  else if c.has("text") { c.text }
+  else if c.has("children") { c.children.map(_flatten_text).sum(default: "") }
+  else if c.has("body") { _flatten_text(c.body) }
+  else { "" }
+}
+
+#let _fence_violation(text, level) = {
+  if level == none { return none }
+  let f = BEHAVIOR_FENCE.at(level, default: none)
+  if f == none { return none }
+  let lower_text = lower(text)
+  for term in f.terms {
+    if lower_text.contains(term) {
+      return "names the forbidden term " + repr(term)
+    }
+  }
+  for pat in f.patterns {
+    if text.contains(regex(pat)) {
+      return "matches the forbidden shape " + repr(pat)
+    }
+  }
+  none
+}
+""")
+
 # ---- the statement block ---------------------------------------------------
 w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ----
 // The footer carries id / lens / enforcement / script as DECLARED furniture
@@ -454,6 +570,14 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
   if script != none { furniture.push(chip(script)) }
   if since != none { furniture.push(chip("since " + since)) }
   if level != none { furniture.push(chip("level: " + level)) }
+  // A behavior block's clauses (given/when/then) are nested INSIDE `body` and
+  // read their enclosing level back out of this state — set before `body` is
+  // shown, cleared after, the same lazy-content pattern _census_group already
+  // uses for the entity census's two groups. Typst evaluates a content
+  // argument's function calls at SHOW time, not at call time, so a clause
+  // nested in `body` sees the level this update makes visible, never a stale
+  // one from a previous behavior block.
+  if kind == "behavior" { _behavior_level.update(level) }
   block(width: 100%, inset: (left: 9pt, rest: 7pt), fill: c.lighten(94%),
         stroke: (left: 2.5pt + c), radius: (right: 2pt), breakable: false,
     [
@@ -462,6 +586,7 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
       #linebreak() #body
       #if furniture.len() > 0 [ #v(4pt) #furniture.join(h(3pt)) ]
     ])
+  if kind == "behavior" { _behavior_level.update(none) }
   v(0.45em)
 }
 """)
@@ -475,7 +600,19 @@ w("")
 
 # ---- the remaining block kinds + the document shell ------------------------
 w("""// ---- clause + census blocks --------------------------------------------
-#let _clause(word, body) = block(inset: (left: 10pt), [*#word* #body])
+#let _clause(word, body) = context {
+  let level = _behavior_level.get()
+  let flat = _flatten_text(body)
+  let hit = _fence_violation(flat, level)
+  if hit != none {
+    _fail(lower(word) + " clause",
+          "at level=" + level + " " + hit + " — " +
+          "the behavior fence forbids naming the mechanism " +
+          "(design_doc.behavior_contract.fence): restate the OBSERVABLE " +
+          "outcome instead")
+  }
+  block(inset: (left: 10pt), [*#word* #body])
+}
 #let given(..a, body) = _clause("Given", body)
 #let when(..a, body) = _clause("When", body)
 #let then(..a, body) = _clause("Then", body)

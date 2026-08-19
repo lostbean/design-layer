@@ -288,6 +288,24 @@ def main():
     # Sections are labelled `sec-<stem>-<slug>`, matching the scoping applied to
     # the generated Typst below — every context carries a "00 Foundation", so an
     # unscoped label would be defined five times and Typst rejects a duplicate.
+    # The DOCUMENT-LEVEL contracts — foundation cardinality and order, spine
+    # ordering, pending-entry validity — are asserted per chapter, here, before
+    # anything is rendered. The projected library cannot see them: it validates
+    # one block at a time and cannot know a principle preceded an invariant, or
+    # that a build entry cites no ADR. design-render carries the fold; the
+    # aggregate used to import it only for `warns`, so a layer gated solely
+    # through the aggregate — which is what a host's `check` runs — was never
+    # asked these questions at all, and an out-of-order foundation rendered
+    # clean. Fail closed: report every violation, emit nothing.
+    _schema = _gate.load_schema()
+    _violations = []
+    for _name, _doc in docs:
+        _gate.assert_document(_doc, _schema, _violations.append)
+    if _violations:
+        for v in _violations:
+            sys.stderr.write("design-aggregate: violation: %s\n" % v)
+        return 1
+
     known = {"ctx-" + ("root" if n is None else n) for n, _d in docs}
     known |= {t["slug"] for t in glossary_terms(root)}
     for name, doc in docs:

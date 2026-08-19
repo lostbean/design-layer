@@ -210,6 +210,48 @@ else
   pass_line "(f2) the generated typst is removed on the violation path"
 fi
 
+# --- (h) the AGGREGATE path asserts the document-level contracts -----------
+# design-render carries the document-level fold, but a host gates through the
+# aggregate, which once imported this module only for `warns`. An out-of-order
+# foundation then rendered clean: the contract existed and nothing ran it on
+# the path that actually matters.
+AGGD="$TMP/aggfold"
+mkdir -p "$AGGD/docs/design"
+cat >"$AGGD/docs/design/CONTEXT.md" <<'EOF'
+# CONTEXT
+
+### Lift {#term-lift}
+
+Upward force from airflow.
+EOF
+cat >"$AGGD/docs/design/design.md" <<'EOF'
+# Kite
+
+## 00 Foundation
+
+:::goal {title="It flies"}
+The kite makes [lift](CONTEXT.md#term-lift).
+:::
+
+:::principle {title="Simple beats clever" id=P1 lens=depth}
+Fewer parts, fewer failures.
+:::
+
+:::invariant {title="The line stays taut" enforcement=convention}
+Tension is maintained.
+:::
+EOF
+agg_out="$(DESIGN_LIB_DIR="$LIB_SRC" "$HERE/design-aggregate" \
+  "$AGGD/docs/design" "$AGGD/docs/design/design-layer.pdf" 2>&1)" &&
+  agg_rc=0 || agg_rc=$?
+if [ "$agg_rc" -eq 0 ]; then
+  fail_line "(h) the aggregate accepted an out-of-order foundation"
+elif printf '%s' "$agg_out" | grep -q "foundation out of order"; then
+  pass_line "(h) the aggregate rejects an out-of-order foundation"
+else
+  fail_line "(h) the aggregate failed, but not on the order rule"
+fi
+
 # --- (g) the aggregate resolves internal links ----------------------------
 # A relative markdown path is a FILE reference. Inside one rendered document it
 # has no meaning, so a viewer offers to open another application and every term

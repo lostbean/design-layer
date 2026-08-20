@@ -210,6 +210,66 @@ else
   pass_line "(f2) the generated typst is removed on the violation path"
 fi
 
+# --- (i) clause cardinality and order, and required block attributes -------
+# The projected library structurally cannot check these: given/when/then render
+# as independent _clause calls, so a clause never meets its siblings. The rules
+# were declared in behavior_contract for a long time with nothing reading them.
+CLD="$TMP/clauses"
+mkdir -p "$CLD/docs/design"
+cat >"$CLD/docs/design/CONTEXT.md" <<'EOF'
+# CONTEXT
+
+### Lift {#term-lift}
+
+Force.
+EOF
+cat >"$CLD/docs/design/design.md" <<'EOF'
+# X
+
+## 00 Foundation
+
+:::goal {title="G"}
+A [lift](CONTEXT.md#term-lift).
+:::
+
+:::invariant {title="I" enforcement=convention}
+Held.
+:::
+
+:::principle {title="P" id=P1 lens=depth}
+Simple.
+:::
+
+## 01 Behavior
+
+::::behavior {title="Malformed"}
+:::then
+outcome first
+:::
+:::when
+one
+:::
+:::when
+two
+:::
+::::
+EOF
+cl_out="$(DESIGN_LIB_DIR="$LIB_SRC" "$HERE/design-aggregate" \
+  "$CLD/docs/design" "$CLD/docs/design/design-layer.pdf" 2>&1)" && cl_rc=0 || cl_rc=$?
+if [ "$cl_rc" -eq 0 ]; then
+  fail_line "(i) a malformed behavior block was accepted"
+else
+  printf '%s' "$cl_out" | grep -q "2 when clause" &&
+    pass_line "(i) two when clauses is a violation" ||
+    fail_line "(i) the duplicate when clause was not reported"
+  printf '%s' "$cl_out" | grep -q "clauses out of order" &&
+    pass_line "(i2) a then before a when is a violation" ||
+    fail_line "(i2) the clause order was not reported"
+  printf '%s' "$cl_out" | grep -q "missing required attribute level=" &&
+    pass_line "(i3) a behavior block with no level= is a violation" ||
+    fail_line "(i3) the missing level= was not reported"
+fi
+
 # --- (h) the AGGREGATE path asserts the document-level contracts -----------
 # design-render carries the document-level fold, but a host gates through the
 # aggregate, which once imported this module only for `warns`. An out-of-order

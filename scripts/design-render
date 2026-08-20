@@ -233,6 +233,68 @@ def assert_document(path, schema, report):
                        "(a build entry must link an #adr-NNNN anchor)"
                        % (path, ln))
 
+    # -- required block attributes -----------------------------------------
+    # design_doc.blocks declares each kind's attrs in prose, marking the
+    # mandatory ones "(required)". The projected library enforces the ones its
+    # renderer happens to need and silently accepts the rest — an entity with
+    # no owner draws fine, so nothing objected. Read the declaration and hold
+    # every kind to it. Derived, never listed here, so a schema edit moves the
+    # requirement with it.
+    # Two shapes appear in the declarations, and both mean required:
+    #   level=interface|boundary (required)      a field with its vocabulary
+    #   owner (required, the unit responsible)   a bare field
+    ATTR_DECL = re.compile(
+        r"\b([a-z_]+)\s*(?:=[^;(]*?)?\((?:required)\b")
+    for kind, attrs, body, ln in blocks:
+        decl = schema["design_doc"].get("blocks", {}).get(kind)
+        if not isinstance(decl, str):
+            continue
+        for field in dict.fromkeys(ATTR_DECL.findall(decl)):
+            if not str(attrs.get(field, "")).strip():
+                report("%s:%d: %s block is missing required attribute %s= "
+                       "(design_doc.blocks.%s)" % (path, ln, kind, field, kind))
+
+    # -- behavior clauses: cardinality and order ---------------------------
+    # The projected library cannot see this. given/when/then each render as an
+    # independent _clause call, so a clause never meets its siblings and cannot
+    # know it is the second `when` or that it preceded one. The rules are
+    # DECLARED in behavior_contract.clause_cardinality and .clause_order, and
+    # were declared for a long time with nothing reading them; the document is
+    # where the whole set is visible at once, so the fold lives here.
+    bc = schema["design_doc"].get("behavior_contract", {})
+    clause_order = ["given", "when", "then"]
+    # "when: exactly 1" and "then: 1..n" are read out of the declared prose
+    # rather than restated, so a schema edit moves the check with it.
+    card = str(bc.get("clause_cardinality", ""))
+    want_one = re.findall(r"(\w+):\s*exactly 1", card)
+    want_min1 = re.findall(r"(\w+):\s*1\.\.", card)
+    for kind, attrs, body, ln in blocks:
+        if kind != "behavior":
+            continue
+        seq = [m.group(1) for line in body
+               for m in [re.match(r"^:{3,4}\s*(given|when|then)\b", line)] if m]
+        if not seq:
+            continue
+        for c in want_one:
+            if seq.count(c) != 1:
+                report("%s:%d: behavior block has %d %s clause(s), expected "
+                       "exactly 1 (behavior_contract.clause_cardinality)"
+                       % (path, ln, seq.count(c), c))
+        for c in want_min1:
+            if seq.count(c) < 1:
+                report("%s:%d: behavior block has no %s clause, expected at "
+                       "least 1 (behavior_contract.clause_cardinality)"
+                       % (path, ln, c))
+        rank = {c: i for i, c in enumerate(clause_order)}
+        prev, prev_c = -1, None
+        for c in seq:
+            if rank[c] < prev:
+                report("%s:%d: behavior clauses out of order: %s follows %s "
+                       "(behavior_contract.clause_order)"
+                       % (path, ln, c, prev_c))
+                break
+            prev, prev_c = rank[c], c
+
     # -- the spine: the foundation heading precedes every numbered section --
     numbered = [(lvl, t, ln) for lvl, t, ln in headings
                 if re.match(r"^\d\d\s", t)]

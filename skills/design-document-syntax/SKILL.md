@@ -313,25 +313,25 @@ text. Titles live in `title=` only.
 
 ### The block vocabulary
 
-Nineteen block kinds are declared. Each row names its required attributes; the
+Twenty block kinds are declared. Each row names its required attributes; the
 gallery shows each one written out.
 
-| Block                                           | Required attrs                                       | Use it for                                                                                                  |
-| ----------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `:::goal`                                       | `title=`                                             | a pragmatic, practical objective. `lens=` optional                                                          |
-| `:::no-goal`                                    | `title=`                                             | an explicit exclusion. Body optional — the only block where it is                                           |
-| `:::principle`                                  | `title=`                                             | an aspirational value guiding judgment. `id=P1` makes it citable from prose; `lens=` optional               |
-| `:::invariant`                                  | `title=`, `enforcement=`                             | a property that holds at all times. `mechanism` and `partial` must each name a `script=`                    |
-| `::::behavior` + `:::given` `:::when` `:::then` | `title=`, `level=`                                   | one conditional rule — a context, one event, observable outcomes. Body is clauses, never prose (§5)         |
-| `::::entity` + `:::attribute` `:::relates`      | `title=`, `kind=`, `owner=`, `lifecycle=`, `domain=` | one entry of a core model's entity census (§5)                                                              |
-| `:::pending`                                    | `title=`, `kind=`, `since=`                          | one pending-ledger entry (§4)                                                                               |
-| `:::cards`                                      | —                                                    | **the workhorse grid**: items are `###` headings inside the block. `cols=2\|3\|4`, `tint=`, `size=md\|sm`   |
-| `:::stat-grid` wrapping `:::stat-tile`          | `value=`, `label=` on each tile                      | a row of KPI numbers read at a glance                                                                       |
-| `:::info` · `:::warning`                        | —                                                    | a titled notes panel. `title=` and `tint=` optional; with no tint it falls back to the kind's own colour    |
-| ` ```mermaid `                                  | —                                                    | flowcharts, sequence diagrams, state machines. Declare nodes and edges only, never coordinates              |
-| `:::chart`                                      | `type=bar\|line\|pie`                                | a chart drawn from a small markdown table immediately inside the block. First column category, second value |
-| `:::embedded-svg`                               | `file=`                                              | a figure sourced from a sibling SVG file. Caption comes from `caption=`, never the body                     |
-| `:::figure`                                     | `caption=`, `uses=`                                  | a self-contained drawing carrying renderer markup, for a shape no diagram carrier covers                    |
+| Block                                           | Required attrs                                       | Use it for                                                                                                                                                              |
+| ----------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `:::goal`                                       | `title=`                                             | a pragmatic, practical objective. `lens=` optional                                                                                                                      |
+| `:::no-goal`                                    | `title=`                                             | an explicit exclusion. Body optional — the only block where it is                                                                                                       |
+| `:::principle`                                  | `title=`                                             | an aspirational value guiding judgment. `id=P1` makes it citable from prose; `lens=` optional                                                                           |
+| `:::invariant`                                  | `title=`, `enforcement=`                             | a property that holds at all times. `mechanism` and `partial` must each name a `script=`                                                                                |
+| `::::behavior` + `:::given` `:::when` `:::then` | `title=`, `level=`                                   | one conditional rule — a context, one event, observable outcomes. Body is clauses, never prose (§5)                                                                     |
+| `::::entity` + `:::attribute` `:::relates`      | `title=`, `kind=`, `owner=`, `lifecycle=`, `domain=` | one entry of a core model's entity census (§5)                                                                                                                          |
+| `:::pending`                                    | `title=`, `kind=`, `since=`                          | one pending-ledger entry (§4)                                                                                                                                           |
+| `:::cards`                                      | —                                                    | **the workhorse grid**: items are `###` headings inside the block. `cols=2\|3\|4`, `tint=`, `size=md\|sm`                                                               |
+| `:::stat-grid` wrapping `:::stat-tile`          | `value=`, `label=` on each tile                      | a row of KPI numbers read at a glance                                                                                                                                   |
+| `:::info` · `:::warning`                        | —                                                    | a titled notes panel. `title=` and `tint=` optional; with no tint it falls back to the kind's own colour                                                                |
+| ` ```mermaid `                                  | —                                                    | flowcharts, sequence diagrams, state machines. Declare nodes and edges only, never coordinates                                                                          |
+| `:::chart`                                      | `type=bar\|line\|pie`                                | a chart drawn from a small markdown table immediately inside the block. First column category, second value                                                             |
+| `:::embedded-svg`                               | `caption=`                                           | a placeholder frame naming a sibling SVG in `file=`. **The file is not read or embedded** — the renderer draws a labelled box, so a missing file does not fail the gate |
+| `:::figure`                                     | `caption=`, `uses=`                                  | a self-contained drawing carrying renderer markup, for a shape no diagram carrier covers                                                                                |
 
 Note the fence depth. A block that **nests** other blocks opens with four
 colons (`::::behavior`, `::::entity`, `::::stat-grid`) so its children can use

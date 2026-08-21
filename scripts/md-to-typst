@@ -87,6 +87,59 @@ BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
 ITAL_RE = re.compile(r"(?<![*\w])\*([^*\n]+)\*(?!\*)")
 
 
+def _emphasis(spans, pattern, mark):
+    """Match emphasis across span boundaries without re-escaping what is done.
+
+    _split only looks inside one LIT span, which is right for a pattern whose
+    delimiters and content are all still raw markdown. Emphasis is different: by
+    the time it runs the link and code splits have already emitted opaque spans,
+    so `**[Term](dest)**` leaves its two `**` markers in SEPARATE LIT spans with
+    an OUT span between them. _split can never pair them.
+
+    The scan therefore runs over the joined text, but the REBUILD preserves the
+    original span kinds: a matched region is re-emitted as the pieces it was
+    made of, wrapped in the mark. Rebuilding it as one LIT string would send an
+    already-converted `#lnk(...)` back through esc_prose and corrupt it into
+    `\\#lnk(...)`.
+
+    A match is kept only when both delimiters are LIT — an asterisk inside
+    emitted output is literal text, not markup the author wrote.
+    """
+    joined = "".join(t for _k, t in spans)
+    if not pattern.search(joined):
+        return spans
+    owner = []
+    for kind, text in spans:
+        owner.extend([kind] * len(text))
+
+    def slice_spans(a, b):
+        """The original spans covering [a, b), split at the boundaries."""
+        out, pos = [], 0
+        for kind, text in spans:
+            lo, hi = pos, pos + len(text)
+            pos = hi
+            if hi <= a or lo >= b:
+                continue
+            out.append((kind, text[max(a, lo) - lo:min(b, hi) - lo]))
+        return out
+
+    result, last, matched = [], 0, False
+    for m in pattern.finditer(joined):
+        a, b = m.span()
+        if owner[a] is not LIT or owner[b - 1] is not LIT:
+            continue
+        matched = True
+        result.extend(slice_spans(last, a))
+        result.append((OUT, mark))
+        result.extend(slice_spans(*m.span(1)))
+        result.append((OUT, mark))
+        last = b
+    if not matched:
+        return spans
+    result.extend(slice_spans(last, len(joined)))
+    return result
+
+
 def inline(s):
     """Convert one line of Markdown inline markup to Typst."""
     spans = [(LIT, s)]
@@ -119,8 +172,19 @@ def inline(s):
                    lambda m: '#lnk("%s")[%s]' % (esc(m.group(2)),
                                                  inline(m.group(1))))
     spans = _split(spans, CODE_RE, code)
-    spans = _split(spans, BOLD_RE, lambda m: "*%s*" % esc_prose(m.group(1)))
-    spans = _split(spans, ITAL_RE, lambda m: "_%s_" % esc_prose(m.group(1)))
+    # Emphasis is matched ACROSS already-emitted spans, not only within a
+    # literal one. `**[Term](dest)**` — ordinary CommonMark, and the usual shape
+    # of a table's first column — put the link in an opaque OUT span between the
+    # two `**` markers, stranding each marker in a SEPARATE literal span where
+    # BOLD_RE could never see them as a pair. esc_prose does not escape `*`, so
+    # both reached Typst, which warned "no text within stars" on each.
+    #
+    # The link must still split FIRST (the ordering bug documented above), so
+    # the fix is not a reorder: it is to re-join the spans and match emphasis
+    # over the joined text, whose already-converted regions are opaque to the
+    # emphasis pattern because they no longer contain markdown.
+    spans = _emphasis(spans, BOLD_RE, "*")
+    spans = _emphasis(spans, ITAL_RE, "_")
     return "".join(esc_prose(t) if k is LIT else t for k, t in spans)
 
 

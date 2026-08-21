@@ -210,6 +210,36 @@ else
   pass_line "(f2) the generated typst is removed on the violation path"
 fi
 
+# --- (j) emphasis wrapping a link survives the span split ------------------
+# `**[Term](dest)**` in a table cell used to strand both `**` markers in
+# separate literal spans — LINK_RE had emitted the middle as opaque — so
+# BOLD_RE could never pair them and Typst warned "no text within stars" twice.
+# The link must still split FIRST, so the fix matches emphasis across spans
+# while preserving each span's kind: rebuilding the match as one literal would
+# send the converted #lnk back through the escaper.
+MDT="$HERE/md-to-typst"
+emphasis_case() { # <markdown> <expected-substring> <label>
+  got="$(python3 -c "
+import importlib.util, importlib.machinery, sys
+spec = importlib.util.spec_from_loader('m',
+    importlib.machinery.SourceFileLoader('m', sys.argv[1]))
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+print(mod.inline(sys.argv[2]))" "$MDT" "$1")"
+  # EXACT, not a substring: `*#lnk("d")[A]*` is a substring of the buggy
+  # `**#lnk("d")[A]**`, so a substring test passes against the very output it
+  # exists to reject.
+  if [ "$got" = "$2" ]; then
+    pass_line "(j) $3"
+  else
+    fail_line "(j) $3 — want: $2 | got: $got"
+  fi
+}
+emphasis_case '**[A](d)**' '*#lnk("d")[A]*' 'bold wrapping a link converts both'
+emphasis_case '[**b**](d)' '#lnk("d")[*b*]' 'link wrapping bold still converts'
+emphasis_case '[`afk`](d)' '#lnk("d")[`afk`]' 'link wrapping code still converts'
+emphasis_case '**bold** and [link](d)' '*bold* and #lnk("d")[link]' \
+  'a converted link is not re-escaped'
+
 # --- (i) clause cardinality and order, and required block attributes -------
 # The projected library structurally cannot check these: given/when/then render
 # as independent _clause calls, so a clause never meets its siblings. The rules

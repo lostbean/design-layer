@@ -173,6 +173,7 @@
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.lefthook
+            pkgs.poppler-utils # pdftotext, for the self-tests' outline check
             # The treefmt wrapper `nix fmt` resolves to. Putting it in the shell
             # is what makes formatting fast: without it every `nix fmt` call
             # re-evaluates the flake and realises each formatter from the store.
@@ -276,6 +277,7 @@
                 pkgs.bash
                 pkgs.python3
                 pkgs.git # layer-integrity's gitignore-prune fixture
+                pkgs.poppler-utils # pdftotext — the chapter assertion reads the PDF
                 renderer # the render seam
               ];
             }

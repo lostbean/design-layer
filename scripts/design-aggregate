@@ -376,7 +376,28 @@ def main():
                     + ("," if len(index) == 1 else "") + ")",
                     _typ_str("root design" if stem == "root" else "context")))
         L.append("#pagebreak()")
-        L.append("= %s <ctx-%s>" % (inline(title), stem))
+        # The context's OWN `# Title` is the chapter. A synthetic `= title` was
+        # emitted here once, purely to carry the <ctx-stem> label that a
+        # cross-document link resolves against — and it cost a chapter number:
+        # every context showed twice in the outline, an empty divider chapter
+        # followed by the real one, both on the same page. A Typst label
+        # attaches to a heading that already exists, so the label moves onto the
+        # authored H1 and the extra heading goes away.
+        #
+        # A document with no H1 of its own still needs the anchor, so the
+        # synthetic heading remains its fallback.
+        # Typst permits ONE label per element, and the authored H1 already
+        # carries its section label. A cross-document link may name the chapter
+        # either way — by context (<ctx-stem>) or by that section anchor — so a
+        # zero-width metadata anchor carries the context label beside the
+        # heading rather than competing for its slot.
+        m_h1 = re.search(r"^= .*$", src, re.M)
+        if m_h1:
+            src = (src[:m_h1.end()]
+                   + "\n#metadata(none) <ctx-%s>" % stem
+                   + src[m_h1.end():])
+        else:
+            L.append("= %s <ctx-%s>" % (inline(title), stem))
         L.append(src)
     if terms:
         L.append("= Glossary <glossary>")

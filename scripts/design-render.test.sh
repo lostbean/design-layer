@@ -210,6 +210,86 @@ else
   pass_line "(f2) the generated typst is removed on the violation path"
 fi
 
+# --- (k) a context contributes ONE chapter, not two ------------------------
+# The aggregate emitted a synthetic `= title <ctx-stem>` heading to carry the
+# cross-document link label. A context whose design.md has its own `# Title`
+# then had TWO level-1 headings, so the outline listed every context twice — an
+# empty divider chapter and the real one, on the same page. The label now rides
+# a zero-width metadata anchor beside the authored H1.
+CHD="$TMP/chapters"
+mkdir -p "$CHD/docs/design/alpha"
+cat >"$CHD/docs/design/CONTEXT.md" <<'EOF'
+# CONTEXT
+
+### Root term {#term-root}
+
+Shared.
+EOF
+cat >"$CHD/docs/design/design.md" <<'EOF'
+---
+index_only: true
+---
+
+# Root
+
+## 00 Foundation
+
+:::goal {title="Index"}
+Points at [alpha](alpha/design.md).
+:::
+EOF
+cat >"$CHD/docs/design/alpha/CONTEXT.md" <<'EOF'
+# CONTEXT
+
+### Alpha thing {#term-alpha-thing}
+
+A thing.
+EOF
+cat >"$CHD/docs/design/alpha/design.md" <<'EOF'
+# alpha — the alpha library
+
+## 00 Foundation
+
+:::goal {title="G"}
+An [alpha thing](CONTEXT.md#term-alpha-thing).
+:::
+
+:::invariant {title="I" enforcement=convention}
+Held.
+:::
+
+:::principle {title="P" id=P1 lens=depth}
+Simple.
+:::
+EOF
+ch_out="$(DESIGN_LIB_DIR="$LIB_SRC" "$HERE/design-aggregate" \
+  "$CHD/docs/design" "$CHD/docs/design/design-layer.pdf" 2>&1)" && ch_rc=0 || ch_rc=$?
+if [ "$ch_rc" -ne 0 ]; then
+  fail_line "(k) a multi-context layer with authored H1s failed to render: $ch_out"
+else
+  # The bug produced NO error — it rendered a wrong document quietly — so the
+  # only honest assertion reads the outline the reader sees. pdftotext comes
+  # from the devShell; when it is missing the case reports skipped rather than
+  # passing, because a silent pass here is exactly the failure mode under test.
+  if command -v pdftotext >/dev/null 2>&1; then
+    toc="$(pdftotext -f 1 -l 3 "$CHD/docs/design/design-layer.pdf" - 2>/dev/null |
+      grep -cE '^[0-9]+ alpha' || true)"
+    if [ "${toc:-0}" -eq 1 ]; then
+      pass_line "(k) a context with its own H1 contributes exactly one chapter"
+    else
+      fail_line "(k) the outline lists the alpha context ${toc:-0} time(s), want 1"
+    fi
+  else
+    printf '  SKIP (k) outline check needs pdftotext (nix develop provides it)\n'
+  fi
+  case "$ch_out" in
+  *"labelled multiple times"*)
+    fail_line "(k2) the context label collided with the heading's own label"
+    ;;
+  *) pass_line "(k2) the context label does not collide with the section label" ;;
+  esac
+fi
+
 # --- (j) emphasis wrapping a link survives the span split ------------------
 # `**[Term](dest)**` in a table cell used to strand both `**` markers in
 # separate literal spans — LINK_RE had emitted the middle as opaque — so

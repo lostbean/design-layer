@@ -117,8 +117,8 @@
     "blocks": {
       "goal": "pragmatic, practical objective; attrs: title (required, the short label), lens (optional)",
       "no-goal": "explicit exclusion; attrs: title (required, the short label)",
-      "principle": "aspirational, abstract value that guides judgment; attrs: title (required, the short label), id (stable, referencable from prose, e.g. P1), lens — id and lens optional",
-      "invariant": "checkable property; attrs: title (required, the short label), enforcement=mechanism|partial|convention — mechanism and partial must each name their script; lens optional",
+      "principle": "aspirational, abstract value that guides judgment; attrs: title (required, the short label), lens optional",
+      "invariant": "checkable property; attrs: title (required, the short label), enforcement=mechanism|partial|convention (required — the honest label for HOW the property is held), lens optional",
       "behavior": "a conditional behavior rule — given a context, when an actor acts, then an outcome; attrs: title (required, the short label), level=interface|boundary (required), lens optional. Body is NOT prose: it is the nested clause blocks declared in behavior_contract (`:::given` optional and repeatable, `:::when` exactly one, `:::then` one or more). Each clause states the rule with NO concrete values — the durable rule, never an example of it. Distinct from invariant: an invariant holds at all times with no trigger and no actor; a behavior rule is event-shaped and conditional",
       "given": "a behavior rule's context clause — legal ONLY nested inside a behavior block; optional and repeatable (a rule needing no setup has none). Body is one clause stating the context, no concrete values",
       "when": "a behavior rule's event clause — legal ONLY nested inside a behavior block; exactly one per rule. Body is one clause stating the actor's action. Two events mean two rules, never one block with two when clauses",
@@ -138,10 +138,10 @@
     },
     "block_fields": {
       "principle": "block contracts ARE the design language's invariants: each kind declares the information it must capture (fields, attrs, allowed vocabularies), the generator enforces the contract fail-closed at render time, and the writer instructs authors through it. Capturing a NEW kind of information reliably means minting or extending a block contract — schema, renderer, and authoring guidance evolve in lockstep, and the change re-validates every existing document. Never capture load-bearing language as free-form prose when a contract can hold it",
-      "statement_blocks": "goal, no-goal, principle, invariant share one anatomy: a required TITLE — the `title=` attr, ≤64 chars, plain (no links) — the short description; then the BODY — the long description as markdown (required, except optional on no-goal; for invariant the body IS the checkable statement). The title is a declared attr, NOT a bold-first-line convention: it is deterministically located and validated (presence, length, plainness) at generation time, never positionally guessed. Badges render in a fixed head row derived from attrs: principle → id chip + lens pill(s); invariant → enforcement chip (+ script chip when a script is named) + lens pill(s); goal/no-goal → lens pill(s) when given. The lens attr accepts a multi-value list (lens=state+composition, same syntax as inline combos), validated against the lens enum",
+      "statement_blocks": "goal, no-goal, principle, invariant share one anatomy: a required TITLE — the `title=` attr, ≤64 chars, plain (no links) — the short description; then the BODY — the long description as markdown (required, except optional on no-goal; for invariant the body IS the checkable statement). The title is a declared attr, NOT a bold-first-line convention: it is deterministically located and validated (presence, length, plainness) at generation time, never positionally guessed. Badges render in a fixed head row derived from attrs: invariant → enforcement chip + lens pill(s); principle, goal, no-goal → lens pill(s) when given. The lens attr accepts a multi-value list (lens=state+composition, same syntax as inline combos), validated against the lens enum",
       "rendered_slots": "every block renders the same slot structure for the stylist: .entry-head (containing .label from the title= attr and .badges) then .body — cards items, callouts (title= attr), and pending entries (title= attr + kind badge + since) follow the same anatomy. Every titled block sources its title from the same declared title= attr",
       "validated": "field presence, label length and shape, and attr legality are generation-time violations — the structure is enforced by the renderer against the projected contracts on every render, so architectural changes to the block language always re-validate the whole document",
-      "statement_footer": "every prose-bodied statement block renders three slots: a title head, a body, and a FOOTER carrying the furniture projected from the block's attrs (id, lens, enforcement, script). The furniture is declared rather than flattened into prose or faked as markup in the head row"
+      "statement_footer": "every prose-bodied statement block renders three slots: a title head, a body, and a FOOTER carrying the furniture projected from the block's attrs (lens, enforcement). The furniture is declared rather than flattened into prose or faked as markup in the head row"
     },
     "inline": {
       "lens_pill": "a code span `lens:<name>` renders as that lens's pill; combos `lens:a+b` render one gradient pill with lenses auto-sorted into the fixed enum order; an unknown lens name is a violation"
@@ -292,7 +292,7 @@
   "enums": {
     "enforcement": {
       "values": ["mechanism", "partial", "convention"],
-      "note": "mechanism and partial each name their script (mechanism: the script decides the whole property; partial: the script checks its mechanical shadow); a convention truthfully labelled beats a mechanism falsely claimed"
+      "note": "the honest label for how a property is held: mechanism (a check decides the whole property), partial (a check decides its mechanical shadow), convention (discipline, no check). It names the KIND of enforcement, never the enforcer — finding which check holds a property is the gate's own job, not a pointer the design document carries and a human keeps current. A convention truthfully labelled beats a mechanism falsely claimed"
     },
     "provenance": {
       "values": ["authored", "derived", "observed"],

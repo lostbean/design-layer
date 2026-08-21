@@ -694,35 +694,23 @@ EOF
 assert_exit 1 "dangling mermaid click target is a violation" -- "$CHECK" "$SZ2"
 assert_contains "../gone/design.md" "click-target violation names the destination"
 
-# --- Scenario (aa): a script= attr is recorded, never resolved ----------------
-# The gate runs from a bundle, so an invariant's enforcer legitimately lives
-# outside the tree being checked: a host has no scripts/ of its own. Resolving
-# the name locally would fail correct designs, so the name is parsed and kept
-# but never looked up. The honesty rule that survives is the projected
-# library's: enforcement=mechanism naming NO script fails the render.
+# --- Scenario (aa): an invariant carries no pointer to its enforcer ---------
+# `script=` is gone. It named the mechanism holding a property, but resolution
+# only ever proved a name existed — never that the named thing checked
+# anything — and it had to be kept current by hand. Which check holds a
+# property is the gate's own job to find, so the attribute was removed rather
+# than made resolvable. `enforcement` stays as the honest label for the KIND of
+# enforcement, and an invariant declaring it is legal with nothing else.
 SAA="$TMP/aa"
 build_single "$SAA"
 cat >>"$SAA/docs/design/design.md" <<'EOF'
 
-:::invariant {title="Enforced from the bundle" enforcement=mechanism script=no-such-script}
-The enforcer lives outside this tree.
+:::invariant {title="Held by a mechanism" enforcement=mechanism}
+The property is checked; which check holds it is not declared here.
 :::
 EOF
-assert_exit 0 "script= naming a nonexistent local script is not a violation" -- "$CHECK" "$SAA"
-
-# A name that IS a local repo script is equally legal — the two cases must look
-# the same, because the checker no longer distinguishes them.
-SAB="$TMP/ab"
-build_single "$SAB"
-mkdir -p "$SAB/scripts"
-printf '#!/bin/sh\nexit 0\n' >"$SAB/scripts/real-check"
-cat >>"$SAB/docs/design/design.md" <<'EOF'
-
-:::invariant {title="Enforced by a repo script" enforcement=mechanism script=real-check}
-A script in scripts/ enforces this.
-:::
-EOF
-assert_exit 0 "script= naming a local repo script is legal" -- "$CHECK" "$SAB"
+assert_exit 0 "an enforcement=mechanism invariant needs no enforcer pointer" \
+  -- "$CHECK" "$SAA"
 
 # --- Scenario (cov): COVERAGE.md's own citations resolve ----------------------
 # The coverage map cites terms and design sections like any other entry point.

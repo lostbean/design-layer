@@ -14,7 +14,7 @@
 #
 # SCOPE, declared honestly. The library carries every PER-BLOCK contract: field
 # presence, title length, enum legality, and the cross-field rules that live
-# inside one block (an enforcement=mechanism invariant naming a script; a lens
+# inside one block (an invariant's enforcement value; a lens
 # combo with no repeats). It does NOT carry the DOCUMENT-level contracts —
 # foundation order and cardinality, spine order, the ADR citation a pending
 # build entry must carry. Those cannot be expressed as a per-block function,
@@ -321,7 +321,7 @@ KIND_HUES = {
     "entity": "#7c3aed", "info": "#0ea5e9", "warning": "#f59e0b",
 }
 # enforcement reads as a STRENGTH scale: how much of the claim is actually
-# checked. mechanism (the script decides the whole property) -> partial (it
+# checked. mechanism (a check decides the whole property) -> partial (it
 # checks a mechanical shadow) -> convention (held by review).
 ENFORCEMENT_HUES = {
     "mechanism": "#14b8a6", "partial": "#f59e0b", "convention": "#64748b",
@@ -545,29 +545,43 @@ w("""// ---- the behavior fence — design_doc.behavior_contract.fence ---------
 
 # ---- the statement block ---------------------------------------------------
 w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ----
-// The footer carries id / lens / enforcement / script as DECLARED furniture
-// rather than markup convention.
-#let _statement(kind, title: none, id: none, lens: none, enforcement: none,
-                script: none, since: none, level: none, adr: none,
+// The footer carries lens / enforcement as DECLARED furniture rather than
+// markup convention. It carries no pointer to an enforcer: `enforcement` names
+// the KIND of enforcement, and finding which check holds a property is the
+// gate's own job, not a claim the document makes and a human keeps current.
+#let _statement(kind, title: none, lens: none, enforcement: none,
+                since: none, level: none, adr: none,
                 ..rest, body) = {
   _title(kind, title)
+  // A RETIRED attribute fails loudly rather than falling into ..rest. `script`
+  // and `id` were removed, and an unnamed argument is silently ignored — so a
+  // host carrying the old markup would render clean forever and never learn it
+  // is writing something the contract no longer has.
+  for (k, _) in rest.named() {
+    if k == "script" {
+      _fail(kind, "attribute script= was retired. enforcement names the KIND of "
+            + "enforcement; which check holds a property is the gate's job to "
+            + "find, not a pointer the document carries and a human keeps "
+            + "current. Remove it")
+    }
+    if k == "id" {
+      _fail(kind, "attribute id= was retired. It existed to be cited from "
+            + "prose and nothing cited it; a block is referenced by its section "
+            + "anchor. Remove it")
+    }
+  }
   _enum(kind, "enforcement", enforcement, ENFORCEMENTS)
   _enum(kind, "level", level, BEHAVIOR_LEVELS)
   let ls = _lenses(kind, lens)
   if since != none and since.match(regex("^\\d{4}-\\d{2}-\\d{2}$")) == none {
     _fail(kind, "since must be YYYY-MM-DD, got " + repr(since))
   }
-  if enforcement != none and enforcement != "convention" and script == none {
-    _fail(kind, "declares enforcement=" + enforcement + " but names no script")
-  }
   let c = KIND_COLOR.at(kind, default: luma(120))
   let furniture = ()
-  if id != none { furniture.push(chip("id " + id)) }
   if ls.len() > 0 { furniture.push(pill(..ls)) }
   if enforcement != none {
     furniture.push(chip(enforcement, tone: ENFORCEMENT_COLOR.at(enforcement)))
   }
-  if script != none { furniture.push(chip(script)) }
   if since != none { furniture.push(chip("since " + since)) }
   if level != none { furniture.push(chip("level: " + level)) }
   // A behavior block's clauses (given/when/then) are nested INSIDE `body` and

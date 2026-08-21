@@ -32,7 +32,7 @@ DESIGN_LIB_DIR=fixtures/.render ./scripts/design-render fixtures/widget-gallery.
 The foundation vocabulary. Four block kinds, each coloured by its own entry in
 the projected `KIND_COLOR` token table. A statement renders as a left accent
 rule, the kind label, the title, the body, and then a **footer** carrying
-`id`, `lens`, `enforcement`, and `script` as declared furniture. The footer is
+`lens` and `enforcement` as declared furniture. The footer is
 a declared slot, not a markup convention: the author writes attributes and the
 library places them.
 
@@ -51,17 +51,19 @@ Every vocabulary the library carries — enums, block contracts, the token
 table — is read from the schema at projection time, never re-typed by hand.
 :::
 
-:::invariant {title="Every referenced token is defined" enforcement=mechanism script="scripts/token-coverage"}
-An invariant declaring `enforcement=mechanism` must name the script that
-enforces it. The library refuses to render one that does not — the check is a
-panic in the projected contract, not a review convention.
+:::invariant {title="Every referenced token is defined" enforcement=mechanism}
+`enforcement` is the honest label for HOW a property is held — `mechanism` (a
+check decides it), `partial` (a check decides its mechanical shadow), or
+`convention` (discipline). It names the kind, never the enforcer: finding which
+check holds a property is the gate's own job, not a pointer the document carries
+and a human keeps current.
 :::
 
-:::principle {title="Model the domain before judging the structure" id=P1 lens=modeling}
+:::principle {title="Model the domain before judging the structure" lens=modeling}
 Carve the right entities first — wrong entities sink every other lens.
 :::
 
-:::principle {title="Make illegal states unrepresentable" id=P2 lens=invariants+robustness}
+:::principle {title="Make illegal states unrepresentable" lens=invariants+robustness}
 Enforcement by construction beats enforcement by hope. A `lens=` combo is
 split on `+`, each part checked against the lens enum, and the pill is drawn in
 the schema's fixed lens order — not the order they were written.

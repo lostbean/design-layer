@@ -273,7 +273,7 @@ Every statement block — `goal`, `no-goal`, `principle`, `invariant` — shares
 one anatomy:
 
 ```markdown
-:::invariant {title="Every booking names an existing resource" enforcement=mechanism script="check-booking-refs"}
+:::invariant {title="Every booking names an existing resource" enforcement=mechanism}
 No booking may reference a resource that has been withdrawn. An invariant
 declaring `enforcement=mechanism` must name the script that enforces it.
 :::
@@ -286,7 +286,7 @@ declaring `enforcement=mechanism` must name the script that enforces it.
   **is** the checkable statement. Only `no-goal` may omit a body.
 - **Attributes are always brace-wrapped.** `:::invariant {title="…"}` is
   correct; a bare `key=value` after the kind is a violation.
-- **The footer is a declared slot.** `id`, `lens`, `enforcement`, and `script`
+- **The footer is a declared slot.** `lens` and `enforcement`
   come from attributes and render as furniture in the block's footer. Never
   scatter them through the body, and never fake them as markup in the heading.
 
@@ -320,8 +320,8 @@ gallery shows each one written out.
 | ----------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `:::goal`                                       | `title=`                                             | a pragmatic, practical objective. `lens=` optional                                                                                                                      |
 | `:::no-goal`                                    | `title=`                                             | an explicit exclusion. Body optional — the only block where it is                                                                                                       |
-| `:::principle`                                  | `title=`                                             | an aspirational value guiding judgment. `id=P1` makes it citable from prose; `lens=` optional                                                                           |
-| `:::invariant`                                  | `title=`, `enforcement=`                             | a property that holds at all times. `mechanism` and `partial` must each name a `script=`                                                                                |
+| `:::principle`                                  | `title=`                                             | an aspirational value guiding judgment; `lens=` optional                                                                                                                |
+| `:::invariant`                                  | `title=`, `enforcement=`                             | a property that holds at all times. `enforcement=` is the honest label for HOW it is held, never which check holds it                                                   |
 | `::::behavior` + `:::given` `:::when` `:::then` | `title=`, `level=`                                   | one conditional rule — a context, one event, observable outcomes. Body is clauses, never prose (§5)                                                                     |
 | `::::entity` + `:::attribute` `:::relates`      | `title=`, `kind=`, `owner=`, `lifecycle=`, `domain=` | one entry of a core model's entity census (§5)                                                                                                                          |
 | `:::pending`                                    | `title=`, `kind=`, `since=`                          | one pending-ledger entry (§4)                                                                                                                                           |

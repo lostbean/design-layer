@@ -210,6 +210,27 @@ else
   pass_line "(f2) the generated typst is removed on the violation path"
 fi
 
+# --- (l) a retired attribute fails loudly, not silently --------------------
+# script= and id= were removed. Every block signature ends `..rest`, so an
+# unnamed argument is silently ignored — a host carrying the old markup would
+# render clean forever and never learn the contract dropped it. Retired names
+# are named and refused.
+RET="$TMP/retired"
+# A PRINCIPLE, not an invariant: the foundation-order fold ranks kinds across
+# the whole document, so a body invariant reports "out of order" before the
+# render is reached and masks the case under test.
+MD_RET="$(fixture retired ':::principle {title="Old markup" id=P9}
+The value.
+:::')"
+ret_out="$(DESIGN_LIB_DIR="$LIB_SRC" python3 "$DR" "$MD_RET" 2>&1)" && ret_rc=0 || ret_rc=$?
+if [ "$ret_rc" -eq 0 ]; then
+  fail_line "(l) a retired id= attribute rendered clean"
+elif printf '%s' "$ret_out" | grep -q "id= was retired"; then
+  pass_line "(l) a retired id= attribute is refused by name"
+else
+  fail_line "(l) the run failed, but not on the retired attribute"
+fi
+
 # --- (k) a context contributes ONE chapter, not two ------------------------
 # The aggregate emitted a synthetic `= title <ctx-stem>` heading to carry the
 # cross-document link label. A context whose design.md has its own `# Title`
@@ -258,7 +279,7 @@ An [alpha thing](CONTEXT.md#term-alpha-thing).
 Held.
 :::
 
-:::principle {title="P" id=P1 lens=depth}
+:::principle {title="P" lens=depth}
 Simple.
 :::
 EOF
@@ -346,7 +367,7 @@ A [lift](CONTEXT.md#term-lift).
 Held.
 :::
 
-:::principle {title="P" id=P1 lens=depth}
+:::principle {title="P" lens=depth}
 Simple.
 :::
 
@@ -403,7 +424,7 @@ cat >"$AGGD/docs/design/design.md" <<'EOF'
 The kite makes [lift](CONTEXT.md#term-lift).
 :::
 
-:::principle {title="Simple beats clever" id=P1 lens=depth}
+:::principle {title="Simple beats clever" lens=depth}
 Fewer parts, fewer failures.
 :::
 

@@ -231,6 +231,24 @@ else
   fail_line "(l) the run failed, but not on the retired attribute"
 fi
 
+# --- (m) an UNTAGGED fence is verbatim, like a tagged one ------------------
+# The fence handler required a language tag, so ``` with none fell through to
+# the block parser: a document SHOWING `:::invariant {...}` as an example had it
+# converted into a real invariant. Documentation of the syntax could not survive
+# its own renderer — and a retired attribute inside such an example failed the
+# render of the file explaining how to remove it.
+MD_FEN="$(fixture untaggedfence '```
+:::invariant {title="An example" enforcement=mechanism script=old}
+Shown as documentation, not rendered as a block.
+:::
+```')"
+fen_out="$(DESIGN_LIB_DIR="$LIB_SRC" python3 "$DR" "$MD_FEN" 2>&1)" && fen_rc=0 || fen_rc=$?
+if [ "$fen_rc" -eq 0 ]; then
+  pass_line "(m) an untagged fence holding block syntax is verbatim"
+else
+  fail_line "(m) an untagged fence was parsed as a block: $fen_out"
+fi
+
 # --- (l2) an unknown attribute fails, not just the retired ones ------------
 # `lens` is OPTIONAL, so `lense=` was dropped into ..a and the block rendered
 # without it — correct-looking and missing what the author wrote. The named

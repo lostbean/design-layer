@@ -338,8 +338,13 @@ def convert(text, lib_path, diagram_convert=None):
         line = lines[i]
 
         m = FENCE_RE.match(line)
-        if m and m.group("lang"):
-            ticks, lang = m.group("ticks"), m.group("lang")
+        if m:
+            # A fence with NO language tag was falling through to the block
+            # parser, so its contents were converted as live blocks: a document
+            # showing `:::invariant {...}` as an EXAMPLE rendered a real
+            # invariant, and a retired attribute inside that example failed the
+            # render. A fence is verbatim whichever way it is tagged.
+            ticks, lang = m.group("ticks"), m.group("lang") or ""
             j, body = i + 1, []
             while j < len(lines) and not re.match(r"^%s\s*$" % ticks, lines[j]):
                 body.append(lines[j])
@@ -355,8 +360,12 @@ def convert(text, lib_path, diagram_convert=None):
                                % (json.dumps(lang, ensure_ascii=False),
                                   json.dumps(payload, ensure_ascii=False)))
             else:
+                # An untagged fence passes `none`, not "": Typst's raw()
+                # treats an empty language as a language, which changes the
+                # rendered bytes for every untagged block in a layer.
                 out.append("#code_block(%s, %s)"
-                           % (json.dumps(lang, ensure_ascii=False),
+                           % (json.dumps(lang, ensure_ascii=False) if lang
+                              else "none",
                               json.dumps(payload, ensure_ascii=False)))
             i = j + 1
             continue

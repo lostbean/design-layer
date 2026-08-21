@@ -18,13 +18,19 @@ pre-commit:
       # deliberately does not do" — no dogfooded layer, tests instead).
       # Whole-repo rather than staged-only, because a schema or projector edit
       # can break a self-test without touching the test script itself.
-      # Measured at ~7s together; needs the vendored `typst` on PATH, which the
-      # devShell provides. Exit: 0 pass, 1 a self-test failed.
+      # Run THROUGH the devShell, not bare. The suite needs the vendored
+      # `typst` and `pdftotext`, and a bare run silently degrades rather than
+      # failing: the chapter-doubling case reports SKIP when pdftotext is
+      # absent, so the hook would pass while the case it exists for never ran.
+      # Exit: 0 pass, 1 a self-test failed.
       run: |
         set -e
-        bash ./scripts/layer-integrity.test.sh
-        bash ./scripts/design-render.test.sh
-        bash ./scripts/widget-coverage.test.sh
+        nix develop --command bash -c '
+          set -e
+          bash ./scripts/layer-integrity.test.sh
+          bash ./scripts/design-render.test.sh
+          bash ./scripts/widget-coverage.test.sh
+        '
     projection-determinism:
       # The seam `nix flake check`'s projection-freshness check also proves:
       # projecting the schema twice must yield identical bytes. Cheap (well

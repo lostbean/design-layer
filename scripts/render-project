@@ -553,10 +553,13 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
                 since: none, level: none, adr: none,
                 ..rest, body) = {
   _title(kind, title)
-  // A RETIRED attribute fails loudly rather than falling into ..rest. `script`
-  // and `id` were removed, and an unnamed argument is silently ignored — so a
-  // host carrying the old markup would render clean forever and never learn it
-  // is writing something the contract no longer has.
+  // EVERY unrecognized attribute fails, not just the retired two. A block
+  // signature ends `..rest`, so an unknown name is silently dropped: `lense=`
+  // for `lens=`, a plain typo — the block renders without it and looks
+  // correct, which is the worst shape a mistake can take. The named parameters
+  // ARE the allowed set, so anything reaching `rest` is outside the contract.
+  // The retired names keep their own message, because "unknown" would send an
+  // author hunting a typo that is not there.
   for (k, _) in rest.named() {
     if k == "script" {
       _fail(kind, "attribute script= was retired. enforcement names the KIND of "
@@ -569,6 +572,10 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
             + "prose and nothing cited it; a block is referenced by its section "
             + "anchor. Remove it")
     }
+    _fail(kind, "unknown attribute " + k + "= — the block contract declares no "
+          + "such attr, and an unrecognized name would otherwise be dropped "
+          + "silently, rendering a block that looks right and is missing what "
+          + "you wrote (schema design_doc.blocks)")
   }
   _enum(kind, "enforcement", enforcement, ENFORCEMENTS)
   _enum(kind, "level", level, BEHAVIOR_LEVELS)

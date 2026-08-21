@@ -231,6 +231,22 @@ else
   fail_line "(l) the run failed, but not on the retired attribute"
 fi
 
+# --- (l2) an unknown attribute fails, not just the retired ones ------------
+# `lens` is OPTIONAL, so `lense=` was dropped into ..a and the block rendered
+# without it — correct-looking and missing what the author wrote. The named
+# parameters are the allowed set; anything else is outside the contract.
+MD_UNK="$(fixture unknownattr ':::principle {title="Typo" lense=depth}
+The value.
+:::')"
+unk_out="$(DESIGN_LIB_DIR="$LIB_SRC" python3 "$DR" "$MD_UNK" 2>&1)" && unk_rc=0 || unk_rc=$?
+if [ "$unk_rc" -eq 0 ]; then
+  fail_line "(l2) an unknown attribute rendered clean"
+elif printf '%s' "$unk_out" | grep -q "unknown attribute lense="; then
+  pass_line "(l2) an unknown attribute is refused by name"
+else
+  fail_line "(l2) the run failed, but not on the unknown attribute"
+fi
+
 # --- (k) a context contributes ONE chapter, not two ------------------------
 # The aggregate emitted a synthetic `= title <ctx-stem>` heading to carry the
 # cross-document link label. A context whose design.md has its own `# Title`

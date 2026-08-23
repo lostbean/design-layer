@@ -38,12 +38,21 @@
             finite # state machines
             cetz # the drawing language a native figure may use
             cetz-plot # plots
+            fletcher # node-and-edge diagrams, laid out automatically
             lilaq # plots
             showybox # framed blocks
             gentle-clues # admonitions
             codly # code blocks
             timeliney # the pending ledger's time axis
-            oxifmt_0_2_1 # transitive: cetz 0.3.4 imports this exact version
+            # Two oxifmt versions, because two cetz versions are in the tree and
+            # they disagree. `cetz` here is 0.4.2, which imports oxifmt 1.0.0;
+            # `fletcher` pins cetz 0.3.4 internally, which imports oxifmt
+            # EXACTLY 0.2.1. withPackages resolves a transitive closure, but
+            # measured directly it does NOT carry that second oxifmt: with
+            # fletcher alone and the package cache pointed at a nonexistent
+            # path, the compile fails on a missing @preview/oxifmt:0.2.1. Both
+            # are listed so the render resolves nothing at run time.
+            oxifmt_0_2_1
             oxifmt
             tidy
           ]
@@ -297,6 +306,11 @@
               bash ./scripts/layer-integrity.test.sh
               bash ./scripts/widget-coverage.test.sh
               bash ./scripts/design-render.test.sh
+              # The offline guarantee, asserted where it is REAL: the build
+              # sandbox has no network, so a package the vendored set failed to
+              # carry cannot be silently fetched the way it can on a laptop
+              # with a warm cache.
+              bash ./scripts/vendored-offline.test.sh
               touch $out
             '';
 

@@ -73,18 +73,25 @@ missing=$(
   python3 - "$SCHEMA" "$LIB" <<'PY'
 import json, re, sys
 schema, lib = sys.argv[1], sys.argv[2]
-declared = list(json.load(open(schema))["design_doc"]["blocks"].keys())
+doc = json.load(open(schema))["design_doc"]
+declared = list(doc["blocks"].keys())
 src = open(lib).read()
-have = set(re.findall(r"^#let ([a-z_]+)\(", src, re.M))
+have = set(re.findall(r"^#let ([a-z][a-z0-9-]*)\(", src, re.M))
 # fenced diagram languages reach a carrier, not a directive function
 FENCE_KINDS = {"mermaid", "vega-lite"}
-# `figure` collides with a Typst builtin and is projected under a safe name
-ALIAS = {"figure": "figure_block"}
+# A kind and the function rendering it carry ONE name
+# (design_doc.function_naming), so there is nothing to translate. The single
+# declared exception is `figure`, which would shadow a Typst builtin. It is
+# READ from the schema rather than restated here, so this check cannot drift
+# from the rule it checks.
+_collisions = doc["function_naming"]["collisions"]
+_pair = re.findall(r"`([a-z][a-z0-9-]*)`", _collisions)
+ALIAS = {_pair[0]: _pair[1]} if len(_pair) >= 2 else {}
 missing = []
 for kind in declared:
     if kind in FENCE_KINDS:
         continue
-    fn = ALIAS.get(kind, kind.replace("-", "_"))
+    fn = ALIAS.get(kind, kind)
     if fn not in have:
         missing.append("%s (expected #%s)" % (kind, fn))
 print("\n".join(missing))

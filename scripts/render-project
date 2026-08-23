@@ -279,13 +279,13 @@ w("// ---- the declared vocabularies, read from the one schema ----------------"
 w("#let LENSES = " + tuple_of(lens_values))
 w("#let ENFORCEMENTS = " + tuple_of(enforcement_values))
 w("#let TINTS = " + tuple_of(tint_values))
-w("#let PENDING_KINDS = " + tuple_of(pending_kinds))
+w("#let PENDING-KINDS = " + tuple_of(pending_kinds))
 w("#let PROVENANCES = " + tuple_of(provenance_values))
-w("#let ENTITY_KINDS = " + tuple_of(entity_kinds))
-w("#let ENTITY_LIFECYCLES = " + tuple_of(entity_lifecycles))
-w("#let BEHAVIOR_LEVELS = " + tuple_of(behavior_levels))
-w("#let FOUNDATION_ORDER = " + tuple_of(foundation_order))
-w("#let TITLE_MAX = 64")
+w("#let ENTITY-KINDS = " + tuple_of(entity_kinds))
+w("#let ENTITY-LIFECYCLES = " + tuple_of(entity_lifecycles))
+w("#let BEHAVIOR-LEVELS = " + tuple_of(behavior_levels))
+w("#let FOUNDATION-ORDER = " + tuple_of(foundation_order))
+w("#let TITLE-MAX = 64")
 w("")
 
 # ---- the behavior fence: forbidden terms + patterns, per level -------------
@@ -295,7 +295,7 @@ w("")
 # the mechanical half still has to actually run, or the schema's own claim
 # that a shape like '#submit-btn' or 'controller' is caught becomes false.
 w("// ---- the behavior fence (partial, mechanical) — schema behavior_contract.fence")
-w("#let BEHAVIOR_FENCE = (")
+w("#let BEHAVIOR-FENCE = (")
 for lv in behavior_levels:
     halves = behavior_fence[lv]
     w("  " + q(lv) + ": (terms: " + tuple_of(halves["terms"])
@@ -355,12 +355,12 @@ PROVENANCE_HUES = {
 
 w("// ---- the semantic token table (the framework owns the semantic look) ----")
 for name, table, keys in (
-    ("LENS_COLOR", LENS_HUES, lens_values),
-    ("TINT_COLOR", TINT_HUES, tint_values),
-    ("ENFORCEMENT_COLOR", ENFORCEMENT_HUES, enforcement_values),
-    ("ENTITY_KIND_COLOR", ENTITY_KIND_HUES, entity_kinds),
-    ("ENTITY_LIFECYCLE_COLOR", ENTITY_LIFECYCLE_HUES, entity_lifecycles),
-    ("PROVENANCE_COLOR", PROVENANCE_HUES, provenance_values),
+    ("LENS-COLOR", LENS_HUES, lens_values),
+    ("TINT-COLOR", TINT_HUES, tint_values),
+    ("ENFORCEMENT-COLOR", ENFORCEMENT_HUES, enforcement_values),
+    ("ENTITY-KIND-COLOR", ENTITY_KIND_HUES, entity_kinds),
+    ("ENTITY-LIFECYCLE-COLOR", ENTITY_LIFECYCLE_HUES, entity_lifecycles),
+    ("PROVENANCE-COLOR", PROVENANCE_HUES, provenance_values),
 ):
     w("#let " + name + " = (")
     for k in keys:
@@ -370,7 +370,7 @@ for name, table, keys in (
             sys.exit(2)
         w("  " + q(k) + ": rgb(" + q(table[k]) + "),")
     w(")")
-w("#let KIND_COLOR = (")
+w("#let KIND-COLOR = (")
 for k in sorted(KIND_HUES):
     w("  " + q(k) + ": rgb(" + q(KIND_HUES[k]) + "),")
 w(")")
@@ -423,8 +423,8 @@ w("""// ---- contract helpers — every block's checks route through these -----
   // str.len() counts UTF-8 BYTES; a title carrying a multi-byte character
   // would be measured longer than a reader sees it. The contract is about
   // characters, so count clusters.
-  if title.clusters().len() > TITLE_MAX {
-    _fail(kind, "title exceeds " + str(TITLE_MAX) + " characters: " + title)
+  if title.clusters().len() > TITLE-MAX {
+    _fail(kind, "title exceeds " + str(TITLE-MAX) + " characters: " + title)
   }
 }
 
@@ -453,7 +453,7 @@ w("""// ---- inline furniture: lens pills, chips, links ------------------------
 #let pill(..names) = {
   let ns = names.pos()
   for n in ns { _enum("lens pill", "lens", n, LENSES) }
-  let cs = ns.map(n => LENS_COLOR.at(n))
+  let cs = ns.map(n => LENS-COLOR.at(n))
   box(inset: (x: 4pt, y: 1.5pt), radius: 6pt, baseline: 2pt,
       fill: if cs.len() == 1 { cs.first() }
             else { gradient.linear(..cs).sharp(cs.len()) },
@@ -480,7 +480,7 @@ w("""// ---- inline furniture: lens pills, chips, links ------------------------
 // The `@label` link rule. A #show at module scope does not reach the importing
 // document, so each document shell applies it — that is what turns a resolved
 // `@name` destination into a real internal jump rather than an external URI.
-#let _link_rule(body) = {
+#let _link-rule(body) = {
   show link: it => {
     if type(it.dest) == str and it.dest.starts-with("@") {
       link(label(it.dest.slice(1)), text(fill: rgb("#0369a1"), it.body))
@@ -495,7 +495,7 @@ w("""// ---- inline furniture: lens pills, chips, links ------------------------
 
 # ---- the behavior fence: forbidden terms + patterns, checked per clause ---
 w("""// ---- the behavior fence — design_doc.behavior_contract.fence ------------
-// Declared enforcement=partial: it catches the shapes BEHAVIOR_FENCE names
+// Declared enforcement=partial: it catches the shapes BEHAVIOR-FENCE names
 // (an id or selector, a bare term like "controller") and misses a mechanism
 // named in ordinary words ("the blue button"), exactly as the schema's own
 // honest_limit states. That partial coverage is still coverage — a clause
@@ -508,25 +508,25 @@ w("""// ---- the behavior fence — design_doc.behavior_contract.fence ---------
 // function calls at SHOW time, not at the point the argument is written, so a
 // clause nested in the body sees the level this state makes visible, never a
 // stale one from a previous behavior block. Same lazy-content pattern
-// _census_group already uses for the entity census's two groups.
-#let _behavior_level = state("behavior-level", none)
+// _census-group already uses for the entity census's two groups.
+#let _behavior-level = state("behavior-level", none)
 
 // A clause's body is markdown already routed through cmarker.render, so its
 // content tree is a call, not literal text — this walks it down to the
 // characters the author actually wrote, the same structural walk _len (below)
 // uses to measure a card body, but returning text instead of a length.
-#let _flatten_text(c) = {
+#let _flatten-text(c) = {
   if type(c) == str { c }
   else if type(c) != content { "" }
   else if c.has("text") { c.text }
-  else if c.has("children") { c.children.map(_flatten_text).sum(default: "") }
-  else if c.has("body") { _flatten_text(c.body) }
+  else if c.has("children") { c.children.map(_flatten-text).sum(default: "") }
+  else if c.has("body") { _flatten-text(c.body) }
   else { "" }
 }
 
-#let _fence_violation(text, level) = {
+#let _fence-violation(text, level) = {
   if level == none { return none }
-  let f = BEHAVIOR_FENCE.at(level, default: none)
+  let f = BEHAVIOR-FENCE.at(level, default: none)
   if f == none { return none }
   let lower_text = lower(text)
   for term in f.terms {
@@ -578,27 +578,27 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
           + "you wrote (schema design_doc.blocks)")
   }
   _enum(kind, "enforcement", enforcement, ENFORCEMENTS)
-  _enum(kind, "level", level, BEHAVIOR_LEVELS)
+  _enum(kind, "level", level, BEHAVIOR-LEVELS)
   let ls = _lenses(kind, lens)
   if since != none and since.match(regex("^\\d{4}-\\d{2}-\\d{2}$")) == none {
     _fail(kind, "since must be YYYY-MM-DD, got " + repr(since))
   }
-  let c = KIND_COLOR.at(kind, default: luma(120))
+  let c = KIND-COLOR.at(kind, default: luma(120))
   let furniture = ()
   if ls.len() > 0 { furniture.push(pill(..ls)) }
   if enforcement != none {
-    furniture.push(chip(enforcement, tone: ENFORCEMENT_COLOR.at(enforcement)))
+    furniture.push(chip(enforcement, tone: ENFORCEMENT-COLOR.at(enforcement)))
   }
   if since != none { furniture.push(chip("since " + since)) }
   if level != none { furniture.push(chip("level: " + level)) }
   // A behavior block's clauses (given/when/then) are nested INSIDE `body` and
   // read their enclosing level back out of this state — set before `body` is
-  // shown, cleared after, the same lazy-content pattern _census_group already
+  // shown, cleared after, the same lazy-content pattern _census-group already
   // uses for the entity census's two groups. Typst evaluates a content
   // argument's function calls at SHOW time, not at call time, so a clause
   // nested in `body` sees the level this update makes visible, never a stale
   // one from a previous behavior block.
-  if kind == "behavior" { _behavior_level.update(level) }
+  if kind == "behavior" { _behavior-level.update(level) }
   block(width: 100%, inset: (left: 9pt, rest: 7pt), fill: c.lighten(94%),
         stroke: (left: 2.5pt + c), radius: (right: 2pt), breakable: false,
     [
@@ -607,7 +607,7 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
       #linebreak() #body
       #if furniture.len() > 0 [ #v(4pt) #furniture.join(h(3pt)) ]
     ])
-  if kind == "behavior" { _behavior_level.update(none) }
+  if kind == "behavior" { _behavior-level.update(none) }
   v(0.45em)
 }
 """)
@@ -615,16 +615,17 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
 # per-kind statement wrappers, one per declared foundation kind
 w("// one wrapper per declared statement kind")
 for k in foundation_kinds:
-    fn = k.replace("-", "_")
-    w("#let " + fn + "(..a, body) = _statement(" + q(k) + ", ..a, body)")
+    # the kind IS the function name (design_doc.function_naming): a block kind
+    # and the function rendering it carry one name, so nothing is translated
+    w("#let " + k + "(..a, body) = _statement(" + q(k) + ", ..a, body)")
 w("")
 
 # ---- the remaining block kinds + the document shell ------------------------
 w("""// ---- clause + census blocks --------------------------------------------
 #let _clause(word, body) = context {
-  let level = _behavior_level.get()
-  let flat = _flatten_text(body)
-  let hit = _fence_violation(flat, level)
+  let level = _behavior-level.get()
+  let flat = _flatten-text(body)
+  let hit = _fence-violation(flat, level)
   if hit != none {
     _fail(lower(word) + " clause",
           "at level=" + level + " " + hit + " — " +
@@ -640,7 +641,7 @@ w("""// ---- clause + census blocks --------------------------------------------
 
 #let behavior(..a, body) = _statement("behavior", ..a, body)
 #let pending(kind: none, ..a, body) = {
-  _enum("pending", "kind", kind, PENDING_KINDS)
+  _enum("pending", "kind", kind, PENDING-KINDS)
   _statement("pending", ..a, body)
 }
 // ---- the entity census card ----------------------------------------------
@@ -649,14 +650,14 @@ w("""// ---- clause + census blocks --------------------------------------------
 // body order — attribute clauses, then relates clauses — so the first clause of
 // each run emits its heading and the rest emit nothing. The authored source is
 // unchanged by this.
-#let _census_head(label) = block(inset: (top: 4pt, bottom: 3pt),
+#let _census-head(label) = block(inset: (top: 4pt, bottom: 3pt),
   text(size: 6pt, fill: luma(125), weight: "bold", tracking: 1pt, upper(label)))
-#let _census_group = state("census-group", none)
-#let _census_enter(label) = {
+#let _census-group = state("census-group", none)
+#let _census-enter(label) = {
   context {
-    if _census_group.get() != label { _census_head(label) }
+    if _census-group.get() != label { _census-head(label) }
   }
-  _census_group.update(label)
+  _census-group.update(label)
 }
 
 // A census card carries THREE independent facts, and the reader separates them
@@ -670,12 +671,12 @@ w("""// ---- clause + census blocks --------------------------------------------
 // body does — loses the distinction that makes a census a model.
 #let entity(title: none, kind: none, owner: none, lifecycle: none,
             domain: none, tint: none, ..a, body) = {
-  _enum("entity", "kind", kind, ENTITY_KINDS)
-  _enum("entity", "lifecycle", lifecycle, ENTITY_LIFECYCLES)
+  _enum("entity", "kind", kind, ENTITY-KINDS)
+  _enum("entity", "lifecycle", lifecycle, ENTITY-LIFECYCLES)
   _enum("entity", "tint", tint, TINTS)
   _need("entity", "title", title)
-  let kc = if kind != none { ENTITY_KIND_COLOR.at(kind) } else { luma(120) }
-  let lc = if lifecycle != none { ENTITY_LIFECYCLE_COLOR.at(lifecycle) } else { none }
+  let kc = if kind != none { ENTITY-KIND-COLOR.at(kind) } else { luma(120) }
+  let lc = if lifecycle != none { ENTITY-LIFECYCLE-COLOR.at(lifecycle) } else { none }
   block(width: 100%, breakable: false, radius: 3pt, inset: 0pt, clip: true,
         stroke: 0.6pt + kc.lighten(55%),
     [
@@ -689,9 +690,9 @@ w("""// ---- clause + census blocks --------------------------------------------
           #if domain != none { [#h(3pt) #chip(domain)] }
           #if owner != none { [#h(3pt) #chip("owned by " + owner)] }
         ])
-      // The two groups label themselves — see _census_enter below. The state is
+      // The two groups label themselves — see _census-enter below. The state is
       // cleared as the card opens so every card starts a fresh run.
-      #_census_group.update(none)
+      #_census-group.update(none)
       #block(width: 100%, inset: (x: 9pt, y: 6pt), body)
     ])
   v(0.5em)
@@ -706,8 +707,8 @@ w("""// ---- clause + census blocks --------------------------------------------
 // An attribute's keyword IS its provenance, so the keyword carries the tone.
 #let attribute(provenance: none, ..a, body) = {
   _enum("attribute", "provenance", provenance, PROVENANCES)
-  _census_enter("attributes")
-  let c = if provenance != none { PROVENANCE_COLOR.at(provenance) } else { none }
+  _census-enter("attributes")
+  let c = if provenance != none { PROVENANCE-COLOR.at(provenance) } else { none }
   block(width: 100%, inset: (left: 2pt, y: 2.5pt),
     grid(columns: (58pt, 1fr), column-gutter: 7pt, align: (right + top, left),
       chip(provenance, tone: c), body))
@@ -716,14 +717,14 @@ w("""// ---- clause + census blocks --------------------------------------------
 // A relationship's cardinality is the shape of the edge, so it is set in a
 // monospaced capsule: `1 : 0..n` scans down the column as a column of shapes.
 #let relates(cardinality: none, ..a, body) = {
-  _census_enter("relationships")
+  _census-enter("relationships")
   block(width: 100%, inset: (left: 2pt, y: 2.5pt),
     grid(columns: (58pt, 1fr), column-gutter: 7pt, align: (right + top, left),
       box(inset: (x: 4pt, y: 1.5pt), radius: 3pt, baseline: 2pt,
-          fill: TINT_COLOR.at("blue").lighten(90%),
-          stroke: 0.5pt + TINT_COLOR.at("blue").lighten(55%),
+          fill: TINT-COLOR.at("blue").lighten(90%),
+          stroke: 0.5pt + TINT-COLOR.at("blue").lighten(55%),
           text(size: 6.5pt, weight: "bold", font: "DejaVu Sans Mono",
-               fill: TINT_COLOR.at("blue").darken(25%),
+               fill: TINT-COLOR.at("blue").darken(25%),
                if cardinality != none { cardinality } else { "—" })),
       body))
 }
@@ -731,7 +732,7 @@ w("""// ---- clause + census blocks --------------------------------------------
 // ---- admonitions --------------------------------------------------------
 #let _clue(kind, title, tint, body) = {
   _enum(kind, "tint", tint, TINTS)
-  let c = if tint == none { KIND_COLOR.at(kind) } else { TINT_COLOR.at(tint) }
+  let c = if tint == none { KIND-COLOR.at(kind) } else { TINT-COLOR.at(tint) }
   block(width: 100%, inset: 7pt, fill: c.lighten(93%),
         stroke: (left: 2.5pt + c), radius: (right: 2pt),
     [
@@ -758,7 +759,7 @@ w("""// ---- clause + census blocks --------------------------------------------
 }
 #let cards(cols: "2", tint: none, size: none, items: (), ..a) = {
   _enum("cards", "tint", tint, TINTS)
-  let c = if tint == none { luma(180) } else { TINT_COLOR.at(tint) }
+  let c = if tint == none { luma(180) } else { TINT-COLOR.at(tint) }
   let longest = calc.max(..items.map(it => _len(it.body)), 0)
   let n = if longest > 160 { 1 } else { int(cols) }
   block(width: 100%, grid(columns: (1fr,) * n, gutter: 7pt, row-gutter: 6pt,
@@ -767,7 +768,7 @@ w("""// ---- clause + census blocks --------------------------------------------
       [#text(weight: "bold", size: 9.5pt, it.title) #linebreak() #it.body]))))
   v(0.45em)
 }
-#let stat_grid(cols: "3", tiles: (), ..a) = {
+#let stat-grid(cols: "3", tiles: (), ..a) = {
   block(width: 100%, grid(columns: (1fr,) * int(cols), gutter: 6pt,
     ..tiles.map(t => block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(246),
       [
@@ -777,21 +778,21 @@ w("""// ---- clause + census blocks --------------------------------------------
       ]))))
   v(0.45em)
 }
-#let md_table(ncol, cells) = block(width: 100%, table(
+#let md-table(ncol, cells) = block(width: 100%, table(
   columns: ncol, stroke: 0.4pt + luma(215), inset: 5pt,
   fill: (_, y) => if y == 0 { luma(243) }, ..cells))
-#let code_block(lang, src) = raw(src, block: true, lang: lang)
-#let embedded_svg(caption: none, file: none, ..a, body) = block(
+#let code-block(lang, src) = raw(src, block: true, lang: lang)
+#let embedded-svg(caption: none, file: none, ..a, body) = block(
   width: 100%, inset: 6pt, stroke: 0.5pt + luma(200), radius: 3pt,
   text(size: 7.5pt, fill: luma(120), "figure: " + str(file)))
 """)
 
 # ---- the document shell (page identity from the frontmatter keys) ---------
 w("// ---- the document shell -------------------------------------------------")
-w("#let design_doc(" + ", ".join(
+w("#let design-doc(" + ", ".join(
     k.replace("-", "_") + ": none" for k in
     (["eyebrow", "hero_title", "lede", "footer"])) + ", body) = {")
-w("""  show: _link_rule
+w("""  show: _link-rule
   set page(paper: "a4", margin: (x: 2.1cm, y: 2cm),
     footer: context {
       set text(size: 7pt, fill: luma(130))
@@ -824,8 +825,8 @@ w("""// ---- the aggregate shell -----------------------------------------------
 // One document over the whole layer: an outline, the contexts as chapters, and
 // every glossary gathered into one section. Inside one document a term
 // citation is an INTRA-document reference, so the compiler resolves it.
-#let aggregate_doc(title: none, subtitle: none, body) = {
-  show: _link_rule
+#let aggregate-doc(title: none, subtitle: none, body) = {
+  show: _link-rule
   set page(paper: "a4", margin: (x: 2.1cm, y: 2cm),
     footer: context {
       set text(size: 7pt, fill: luma(130))
@@ -864,9 +865,9 @@ w("""// ---- the aggregate shell -----------------------------------------------
 //
 // The heading itself is emitted after this block by the aggregate, so the
 // outline and the numbering stay the renderer's, not a second hand-built one.
-#let chapter_page(title, lede: none, accent: none, index: (), kind: "context") = {
+#let chapter-page(title, lede: none, accent: none, index: (), kind: "context") = {
   pagebreak(weak: true)
-  let hue = if accent != none and accent in TINTS { TINT_COLOR.at(accent) } else { luma(90) }
+  let hue = if accent != none and accent in TINTS { TINT-COLOR.at(accent) } else { luma(90) }
   v(3.2cm)
   block(width: 100%, stroke: (left: 3pt + hue), inset: (left: 14pt, y: 2pt))[
     #text(size: 8pt, fill: hue, weight: "bold", tracking: 1.2pt,
@@ -895,7 +896,7 @@ w("""// ---- the aggregate shell -----------------------------------------------
 
 // the context that OWNS a glossary term, shown beside the definition so a
 // reader sees ownership without leaving the page.
-#let context_owner(name) = {
+#let context-owner(name) = {
   block(inset: (bottom: 3pt), chip("owned by " + name))
 }
 """)
@@ -907,7 +908,7 @@ w("""// ---- diagrams ----------------------------------------------------------
 // table, never from styling inside the diagram.
 #let diagram(src, accent: none, caption: none) = {
   _enum("diagram", "accent", accent, TINTS)
-  let c = if accent == none { TINT_COLOR.at("teal") } else { TINT_COLOR.at(accent) }
+  let c = if accent == none { TINT-COLOR.at("teal") } else { TINT-COLOR.at(accent) }
   let q = str.from-unicode(34)
   let f = "fontname=" + q + "Libertinus Serif" + q
   let hx(x) = q + x.to-hex() + q
@@ -962,7 +963,7 @@ w("""// ---- diagrams ----------------------------------------------------------
 
 // a diagram shape with no graph carrier keeps its source visible rather than
 // vanishing: the reader sees the drawing's content and the gate stays honest.
-#let diagram_source(kind, src) = block(
+#let diagram-source(kind, src) = block(
   width: 100%, inset: 7pt, radius: 3pt, fill: luma(248),
   stroke: (left: 2.5pt + luma(170)),
   [
@@ -975,15 +976,15 @@ w("""// ---- diagrams ----------------------------------------------------------
 
 # ---- chart and figure ------------------------------------------------------
 w("""// ---- chart: a plot from a small table, no plotting spec ------------------
-#let CHART_TYPES = ("bar", "line", "pie")
+#let CHART-TYPES = ("bar", "line", "pie")
 #let chart(type: none, ..a, body) = {
   _need("chart", "type", type)
-  _enum("chart", "type", type, CHART_TYPES)
+  _enum("chart", "type", type, CHART-TYPES)
   // the body IS the authored table: rows of (category, value)
   block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(249),
-        stroke: (left: 2.5pt + TINT_COLOR.at("blue")),
+        stroke: (left: 2.5pt + TINT-COLOR.at("blue")),
     [
-      #text(size: 6.5pt, fill: TINT_COLOR.at("blue"), weight: "bold",
+      #text(size: 6.5pt, fill: TINT-COLOR.at("blue"), weight: "bold",
             tracking: 0.4pt, upper("chart — " + type))
       #linebreak()
       #body
@@ -996,7 +997,7 @@ w("""// ---- chart: a plot from a small table, no plotting spec ----------------
 // distinct frame in the rendered document, so nobody mistakes a figure for a
 // validated diagram. Its `uses` list is restricted to the VENDORED packages,
 // which is what keeps a design layer offline-reproducible.
-#let figure_block(caption: none, uses: (), ..a, body) = {
+#let figure-block(caption: none, uses: (), ..a, body) = {
   _need("figure", "caption", caption)
   if uses.len() == 0 {
     _fail("figure", "must name the packages it uses in a uses= list")

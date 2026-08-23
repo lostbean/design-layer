@@ -272,10 +272,34 @@ def parse_attrs(s):
             for m in ATTR_RE.finditer(s or "")}
 
 
+# A block kind and the function that renders it carry THE SAME NAME. The router
+# used to derive the call by replacing hyphens with underscores, so `no-goal`
+# reached the library as `#no_goal` and one concept had two spellings — the
+# authored one and the rendered one — with the rule living in a string
+# operation rather than anywhere a reader would look for it.
+#
+# There is exactly ONE exception, and it is named rather than computed:
+# `figure` is a Typst builtin, so shadowing it would break any document using
+# the builtin. The authored directive stays `:::figure`; only the function it
+# calls differs. Declaring the exception by name is what lets every other kind
+# pass through untouched, so a new block kind needs no entry here.
+BLOCK_FN_EXCEPTIONS = {"figure": "figure-block"}
+
+
+def block_fn(kind):
+    """The library function that renders an authored block kind."""
+    return BLOCK_FN_EXCEPTIONS.get(kind, kind)
+
+
 def call_args(attrs):
     out = []
     for k, v in attrs.items():
-        key = k.replace("-", "_")
+        # An attr reaches the library under the name it was AUTHORED with. The
+        # hyphen used to be rewritten to an underscore here, which meant one
+        # attr carried two spellings and a reader had to know which side of the
+        # router they were on. Typst accepts a hyphen in an argument name, so
+        # there is nothing to translate.
+        key = k
         if key == "uses":
             # a list-valued attr: `uses="cetz cetz-plot"`
             items = [i for i in re.split(r"[,\s]+", v) if i]
@@ -326,7 +350,7 @@ def convert(text, lib_path, diagram_convert=None):
     lines = text.split("\n")
     out = ['#import "%s": *' % lib_path, ""]
     if fm:
-        out.append("#show: design_doc.with(")
+        out.append("#show: design-doc.with(")
         for k in ("eyebrow", "hero_title", "lede", "footer"):
             if k in fm:
                 out.append("  %s: [%s]," % (k, inline(fm[k])))
@@ -356,14 +380,14 @@ def convert(text, lib_path, diagram_convert=None):
                     out.append("#diagram(%s)"
                                % json.dumps(dot, ensure_ascii=False))
                 else:
-                    out.append("#diagram_source(%s, %s)"
+                    out.append("#diagram-source(%s, %s)"
                                % (json.dumps(lang, ensure_ascii=False),
                                   json.dumps(payload, ensure_ascii=False)))
             else:
                 # An untagged fence passes `none`, not "": Typst's raw()
                 # treats an empty language as a language, which changes the
                 # rendered bytes for every untagged block in a layer.
-                out.append("#code_block(%s, %s)"
+                out.append("#code-block(%s, %s)"
                            % (json.dumps(lang, ensure_ascii=False) if lang
                               else "none",
                               json.dumps(payload, ensure_ascii=False)))
@@ -415,7 +439,7 @@ def convert(text, lib_path, diagram_convert=None):
                         if t and t.group("kind") == "stat-tile":
                             ta = parse_attrs((t.group("attrs") or "").strip("{}"))
                             tiles.append("  (%s)," % call_args(ta))
-                    out.append("#stat_grid(%stiles: (" % (args + ", " if args else ""))
+                    out.append("#stat-grid(%stiles: (" % (args + ", " if args else ""))
                     out.extend(tiles)
                     out.append("))")
                 i = j + 1
@@ -427,12 +451,12 @@ def convert(text, lib_path, diagram_convert=None):
                 while j < len(lines) and not close.match(lines[j]):
                     body.append(lines[j])
                     j += 1
-                out.append("#figure_block(%s)[" % args)
+                out.append("#figure-block(%s)[" % args)
                 out.extend(body)          # verbatim: the body IS renderer markup
                 out.append("]")
                 i = j + 1
                 continue
-            out.append("#%s(%s)[" % (kind.replace("-", "_"), args))
+            out.append("#%s(%s)[" % (block_fn(kind), args))
             stack.append(kind)
             i += 1
             continue
@@ -466,7 +490,7 @@ def convert(text, lib_path, diagram_convert=None):
                 i += 1
             if rows:
                 ncol = max(len(r) for r in rows)
-                out.append("#md_table(%d, (" % ncol)
+                out.append("#md-table(%d, (" % ncol)
                 for r in rows:
                     r = r + [""] * (ncol - len(r))
                     out.append("  " + ", ".join("[%s]" % inline(c) for c in r) + ",")

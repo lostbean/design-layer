@@ -334,7 +334,7 @@ def main():
         # the whole layer, and a nested page-setup would fight it.
         src = open(gen, encoding="utf-8").read()
         src = re.sub(r'^#import "[^"]*": \*\n', "", src, count=1)
-        src = re.sub(r"^#show: design_doc\.with\((?:.|\n)*?^\)\n", "", src,
+        src = re.sub(r"^#show: design-doc\.with\((?:.|\n)*?^\)\n", "", src,
                      count=1, flags=re.M)
         # A section label is unique only WITHIN its document — every context has
         # a "00 Foundation" — so inside one document it must carry its chapter.
@@ -354,7 +354,7 @@ def main():
 
     # ---- assemble one document --------------------------------------------
     L = ['#import "%s": *' % rel_lib, ""]
-    L.append("#show: aggregate_doc.with(")
+    L.append("#show: aggregate-doc.with(")
     L.append('  title: [Design layer],')
     L.append('  subtitle: [the whole layer, as one document],')
     L.append(")")
@@ -368,7 +368,7 @@ def main():
         # emitted as CONTENT blocks. Passing them as quoted strings would print
         # the raw markup on the page, which is the corruption class the router's
         # own span discipline exists to prevent.
-        L.append("#chapter_page(%s, lede: %s, accent: %s, index: %s, kind: %s)"
+        L.append("#chapter-page(%s, lede: %s, accent: %s, index: %s, kind: %s)"
                  % ("[" + inline(title) + "]",
                     "[" + inline(lede) + "]" if lede else "none",
                     _typ_str(accent) if accent else "none",
@@ -413,7 +413,7 @@ def main():
             # listed, which is what a reader navigates to.
             L.append('#heading(level: 2, outlined: false)[%s] %s'
                      % (inline(t["title"]), "<%s>" % t["slug"]))
-            L.append("#context_owner(%s)" % _typ_str(t["context"]))
+            L.append("#context-owner(%s)" % _typ_str(t["context"]))
             # A glossary body cites its siblings the same way a design document
             # does — mostly as a BARE `#term-x` anchor, since inside one
             # CONTEXT.md the file is implied — so it needs the same rewrite. It

@@ -329,8 +329,8 @@ cat >"$SF/docs/CONTEXT-MAP.md" <<'EOF'
 
 - [Alpha](./design/alpha/CONTEXT.md) — the alpha vocabulary.
 EOF
-assert_exit 1 "unmapped CONTEXT.md is a violation" -- "$CHECK" "$SF"
-assert_contains "unmapped CONTEXT.md" "report flags the map gap"
+assert_exit 1 "unmapped glossary is a violation" -- "$CHECK" "$SF"
+assert_contains "unmapped glossary" "report flags the map gap"
 assert_contains "docs/design/beta/CONTEXT.md" "report names the unmapped context"
 
 # --- Scenario (g): orphan design.pdf -> exit 1 -------------------------------
@@ -799,6 +799,75 @@ EOF
 assert_exit 1 "adr(N) naming no ADR is a violation" -- "$CHECK" "$STYPBAD"
 assert_contains "dangling ADR citation" "report flags the dangling ADR call"
 assert_contains "adr(999)" "report names the offending ADR number"
+
+# --- Scenario: a MULTI-CONTEXT Typst layer ------------------------------------
+# Three checks were written when markdown was the only notation, and each
+# asserted a MARKDOWN BASENAME or a MARKDOWN REFERENCE FORM. Against a
+# well-formed Typst layer all three fired, and every one named a file the
+# author never had or a link the notation does not use — the shape that trains
+# a reader to ignore the checker. This fixture is well-formed and must be
+# clean; the assertions below name each of the three by its message.
+build_typst_multi() {
+  local root="$1"
+  mkdir -p "$root/docs/design/alpha" "$root/docs/design/beta" "$root/docs/adr"
+
+  cat >"$root/docs/adr/0007-a-real-decision.md" <<'EOF'
+# A real decision
+
+<a id="adr-0007"></a>
+
+Decisions are recorded as an append-only ADR ledger.
+EOF
+
+  # The root names its contexts by CALL, which carries no path to resolve.
+  cat >"$root/docs/design/design.typ" <<'EOF'
+#let title = [Root]
+#let body = [
+  #section(title: "00 Foundation")[
+    Indexes #ctx("alpha") and #ctx("beta"), and cites #adr(7).
+  ]
+]
+EOF
+
+  # A repeated CALL line is the syntax working, never a restatement.
+  for c in alpha beta; do
+    cat >"$root/docs/design/$c/design.typ" <<EOF
+#let title = [$c]
+#let body = [
+  #section(title: "02.1 The pending ledger")[
+    #attribute(provenance: "authored")[one]
+    #attribute(provenance: "authored")[two]
+    Cites #adr(7).
+  ]
+]
+EOF
+    cat >"$root/docs/design/$c/CONTEXT.typ" <<EOF
+#let terms = ((slug: "term-$c-thing", title: "Thing", body: [A thing.]),)
+EOF
+  done
+
+  # The map links each glossary at its Typst basename.
+  cat >"$root/docs/CONTEXT-MAP.md" <<'EOF'
+# CONTEXT-MAP
+
+| Context | CONTEXT |
+| ------- | ------- |
+| alpha   | [terms](design/alpha/CONTEXT.typ) |
+| beta    | [terms](design/beta/CONTEXT.typ)  |
+EOF
+}
+
+STYPM="$TMP/typst-multi"
+build_typst_multi "$STYPM"
+assert_exit 0 "clean multi-context Typst layer" -- "$CHECK" "$STYPM"
+# The root is design.typ; looking only for design.md reports it absent.
+assert_not_contains "missing root design doc" "a Typst root is found at its own basename"
+# The map indexes both glossaries, at the basename the notation uses.
+assert_not_contains "unmapped glossary" "a map linking CONTEXT.typ maps its contexts"
+# A repeated call line is syntax, not a restated fact.
+assert_not_contains "duplicate line" "a repeated call line is not a duplicate"
+# The root references its contexts by call, so no path linkage is asserted.
+assert_not_contains "unlinked domain design doc" "a Typst root need not link by path"
 
 # A MIXED layer is refused. Every check would otherwise run against whichever
 # half it discovered, report clean, and say nothing about the other — and a

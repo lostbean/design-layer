@@ -908,14 +908,19 @@ def check_map_totality(
             "declared home",
         )
     else:
+        # The map links each context's GLOSSARY by path, and the basename it
+        # links depends on the layer's notation. A Typst layer's glossary is
+        # CONTEXT.typ, so demanding a CONTEXT.md link would report every
+        # context as unmapped against a map that indexes all of them.
+        wanted = {"CONTEXT.md", "CONTEXT.typ"}
         map_refs = linked_paths(
-            map_index, os.path.dirname(map_index.path), repo, {"CONTEXT.md"}
+            map_index, os.path.dirname(map_index.path), repo, wanted
         )
         for ctx in disc.contexts:
             if ctx.path not in map_refs:
                 report.violation(
                     schema.map_rel,
-                    "unmapped CONTEXT.md",
+                    "unmapped glossary",
                     f"{ctx.rel} has no exact link in the map",
                 )
 
@@ -933,12 +938,21 @@ def check_map_totality(
         root_design_index,
         os.path.dirname(root_design_index.path),
         repo,
-        {"design.md", "design.pdf"},
+        {"design.md", "design.typ", "design.pdf"},
     )
     # A link to the generated design.pdf counts as linking its design.md.
     root_refs = {
         (p[: -len(".html")] + ".md") if p.endswith(".html") else p for p in raw_refs
     }
+    # A TYPST ROOT NAMES ITS CONTEXTS BY CALL, not by path. `#ctx("lifecycle")`
+    # is the reference, and it carries no destination for this check to
+    # resolve; the call's own argument is validated where it is written. So the
+    # path-linkage assertion is asked only of a markdown root, where a link is
+    # the reference. Asking it of a Typst root would report every context as
+    # unlinked from a root that indexes all of them, which is the shape that
+    # teaches a reader to ignore the checker.
+    if not root_design_index.base.endswith(".md"):
+        return
     for doc in domain_design:
         if doc.path not in root_refs:
             report.violation(
@@ -1013,6 +1027,18 @@ def is_trivial(line: str) -> bool:
 
 def check_duplicate_lines(docs: list, report: Report) -> None:
     for idx in docs:
+        # THE CHECK IS SCOPED TO AUTHORED PROSE, and the reason is that its
+        # whole premise inverts under a different notation. In markdown a
+        # repeated non-trivial line is a restatement — the same sentence
+        # written twice, which is the defect. In a Typst-authored layer the
+        # lines are CALLS, and a repeated call line is the syntax working: an
+        # entity census states `#attribute(provenance: "authored")[` once per
+        # attribute, and a set of state machines opens each with the same start
+        # node. Reporting those as duplicates would fail every well-formed
+        # native layer, which trains a reader to ignore the check and hides the
+        # restatement it exists to catch.
+        if not idx.base.endswith(".md"):
+            continue
         counts = {}
         order = []
         in_clause = False
@@ -1301,6 +1327,15 @@ def main(argv: list) -> int:
     }
     targets = TargetIndexes(repo, schema, by_path)
 
+    # THE ROOT IS FOUND BY ITS NOTATION, not by one hardcoded basename. The
+    # schema's entry point names design.md; a Typst-authored layer homes the
+    # same document at design.typ, and looking only for the markdown name
+    # reports the root as ABSENT while it sits right there — a violation that
+    # names a file the author never had.
+    if root_design_abs not in by_path:
+        typ_root = root_design_abs[: -len(".md")] + ".typ"
+        if typ_root in by_path:
+            root_design_abs = typ_root
     root_design_index = by_path.get(root_design_abs)
     domain_design = [d for d in design_docs if d.path != root_design_abs]
     map_index = by_path.get(map_abs) if map_present else None

@@ -809,8 +809,26 @@ w("""// ---- clause + census blocks --------------------------------------------
 
 // A relationship's cardinality is the shape of the edge, so it is set in a
 // monospaced capsule: `1 : 0..n` scans down the column as a column of shapes.
+#let CARDINALITY = ("1", "0..1", "n", "0..n")
+
 #let relates(cardinality: none, ..a, body) = {
   _census-enter("relationships")
+  // The cardinality is DECLARED rather than written into the body precisely so
+  // it can be checked: the census states the shape of every relation uniformly
+  // instead of burying it in a sentence, and a shape nothing validates is a
+  // claim the reader has to take on trust.
+  _need("relates", "cardinality", cardinality)
+  let sides = cardinality.split(":").map(p => p.trim())
+  if sides.len() != 2 {
+    _fail("relates", "cardinality " + repr(cardinality) +
+          " must be written `<this> : <other>`, for example " + repr("1 : 0..n"))
+  }
+  for side in sides {
+    if side not in CARDINALITY {
+      _fail("relates", "cardinality side " + repr(side) + " must be one of " +
+            repr(CARDINALITY))
+    }
+  }
   block(width: 100%, inset: (left: 2pt, y: 2.5pt),
     grid(columns: (58pt, 1fr), column-gutter: 7pt, align: (right + top, left),
       box(inset: (x: 4pt, y: 1.5pt), radius: 3pt, baseline: 2pt,

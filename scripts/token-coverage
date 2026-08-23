@@ -29,12 +29,12 @@ import re
 import sys
 
 # a token table the projector emits: `#let NAME = ( "key": ..., )`
-TABLE_RE = re.compile(r"^#let\s+([A-Z][A-Z_]*)\s*=\s*\($", re.M)
+TABLE_RE = re.compile(r"^#let\s+([A-Z][A-Z_-]*)\s*=\s*\($", re.M)
 KEY_RE = re.compile(r'^\s*"([^"]+)"\s*:', re.M)
 # a lookup a block renderer performs: `TABLE.at("key")` or `TABLE.key`
-LOOKUP_RE = re.compile(r"\b([A-Z][A-Z_]*)\.at\(\s*([a-z_]+|\"[^\"]+\")")
+LOOKUP_RE = re.compile(r"\b([A-Z][A-Z_-]*)\.at\(\s*([a-z_]+|\"[^\"]+\")")
 # a member list the library also carries: `#let LENSES = ("a", "b")`
-LIST_RE = re.compile(r"^#let\s+([A-Z][A-Z_]*)\s*=\s*\(([^)]*)\)\s*$", re.M)
+LIST_RE = re.compile(r"^#let\s+([A-Z][A-Z_-]*)\s*=\s*\(([^)]*)\)\s*$", re.M)
 
 
 def parse_tables(src):
@@ -66,11 +66,13 @@ def parse_lists(src):
 
 
 # a token table and the vocabulary it must cover, by naming convention: the
-# projector emits LENS_COLOR beside LENSES, TINT_COLOR beside TINTS.
+# projector emits LENS-COLOR beside LENSES, TINT-COLOR beside TINTS. The
+# names are kebab-case, so an identifier pattern that admits only underscores
+# matches NO table at all and reports every pair as undefined.
 PAIRS = {
-    "LENS_COLOR": "LENSES",
-    "TINT_COLOR": "TINTS",
-    "ENFORCEMENT_COLOR": "ENFORCEMENTS",
+    "LENS-COLOR": "LENSES",
+    "TINT-COLOR": "TINTS",
+    "ENFORCEMENT-COLOR": "ENFORCEMENTS",
 }
 
 

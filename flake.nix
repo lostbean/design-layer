@@ -313,6 +313,7 @@
               bash ./scripts/vendored-offline.test.sh
               bash ./scripts/designlib-native.test.sh
               bash ./scripts/typst-layer.test.sh
+              bash ./scripts/token-coverage.test.sh
               touch $out
             '';
 

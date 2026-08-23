@@ -1,8 +1,36 @@
 # Working in this repo
 
 The mechanical half of the design layer: the renderer, the projector, the block
-contracts, and the gate. It answers one question — is this `design.md`
+contracts, and the gate. It answers one question — is this design layer
 well-formed, and what does it render to.
+
+## Two authoring surfaces, one library
+
+A layer is authored in exactly ONE of two notations, and the mode is derived
+from the files present rather than declared by a flag, so the declaration
+cannot disagree with the tree:
+
+- **markdown** — `design.md` + `CONTEXT.md`, converted by `md-to-typst`;
+- **typst** — `design.typ` + `CONTEXT.typ`, calling the library directly.
+
+A layer holding both is a hard error (exit 2) naming every file on each side,
+in the aggregate and in `layer-integrity` alike. Preferring one side would
+render a document silently missing the other, and that document reads as
+complete — a coherent table of contents, every chapter present correct, and
+nothing marking the absence.
+
+Both notations reach ONE projected library, so a rule stated once binds either
+way. A block kind and the function rendering it carry the same name, spelled
+kebab (`design_doc.function_naming`); the one exception is `figure`, whose
+function is `figure-block` because `figure` is a Typst builtin.
+
+The library holds **two classes of rule**, and the class is visible at every
+check site. An **invariant** is a rule whose violation makes the model wrong —
+a value outside a declared enum, an edge naming no node, a block missing the
+field that gives it meaning — and it panics. A **guideline** is a rule of style;
+it is silent by default and panics only under `--input strict=1`. Nothing is
+ever emitted onto the page: a design document is read by someone who did not
+write it, who cannot act on a lint note.
 
 ## Run every tool through Nix, never bare
 
@@ -44,16 +72,24 @@ own by decision, so nothing here is verified by dogfooding:
 nix develop --command bash scripts/design-render.test.sh
 nix develop --command bash scripts/layer-integrity.test.sh
 nix develop --command bash scripts/widget-coverage.test.sh
+nix develop --command bash scripts/designlib-native.test.sh
+nix develop --command bash scripts/typst-layer.test.sh
+nix develop --command bash scripts/vendored-offline.test.sh
 ```
 
 ## What is generated, and what is authored
 
 `designlib.typ` is **projected from the schema** by `scripts/render-project` and
 is never hand-edited. A contract changes in `schema/design-schema.json`, and the
-projection follows. `fixtures/widget-gallery.md` is the live demonstration of
-every declared block kind and the drift tripwire: `widget-coverage.test.sh`
-fails when a declared kind has no projected function, or the gallery stops
-exercising one.
+projection follows.
+
+There are TWO gallery fixtures, because there are two authoring surfaces and
+each drifts on its own. `fixtures/widget-gallery.md` demonstrates every declared
+block kind; `fixtures/native-gallery.typ` demonstrates every function projected
+for native authoring, which no markdown document can reach.
+`widget-coverage.test.sh` fails when a declared kind has no projected function,
+when either gallery stops exercising one, or when a gallery renders without its
+marks reaching the page.
 
 ## Where a check belongs
 

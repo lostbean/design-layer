@@ -284,9 +284,14 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
     In this mode those contracts belong to the library, which can hold them
     because the author calls it directly: a `section` cannot omit its title, a
     `pending-entry` cannot carry a malformed date, and an ordering rule is a
-    call-order the document itself expresses. What is NOT yet enforced here is
-    the cross-block foundation ORDER, and that is recorded as a known gap
-    rather than left to look covered.
+    call-order the document itself expresses.
+
+    The foundation ORDER is enforced that way here. Each foundation statement
+    records its kind in a state as it is called, and `assert-foundation-order`
+    reads the trail back. The scope is ONE CONTEXT — the trail is cleared before
+    each chapter's body and judged at the end of it — because a layer renders
+    many chapters into one document, and a chapter opening on a goal does not
+    follow the previous chapter's principle.
     """
     gen_dir = os.path.join(root, ".render")
     os.makedirs(gen_dir, exist_ok=True)
@@ -319,7 +324,14 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
                  % _typ_str("root design" if stem == "root" else "context"))
         L.append("#pagebreak()")
         L.append("= #_t <ctx-%s>" % stem)
+        # The foundation ORDER is judged per context, so the trail is cleared
+        # before each chapter's body. Without the reset a later chapter opening
+        # on a goal would read as following the previous chapter's principle.
+        L.append("#foundation-scope-reset")
         L.append("#%s.body" % mod)
+        # ...and judged at the end of that body, while the trail still holds
+        # this context's calls and no other's.
+        L.append("#assert-foundation-order")
         L.append("")
 
     terms = typst_glossary_terms(root, gen_dir, docs)

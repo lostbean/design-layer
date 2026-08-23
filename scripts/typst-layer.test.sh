@@ -216,7 +216,85 @@ case "$out" in
 esac
 rm -f "$LAYER/beta/design.md"
 
-# --- 4. an empty layer is an error, not an empty document ---------------------
+# --- 4. the foundation ORDER is enforced in Typst mode ------------------------
+# FOUNDATION-ORDER was projected into the library and read by nothing: the
+# document-level fold that checks the order parses markdown, so against Typst
+# sources it found zero blocks and passed VACUOUSLY. The vocabulary read as
+# enforcement to anyone who grepped for it while no check ran.
+#
+# Three cases, because one alone would not distinguish a working check from a
+# check that fires on everything or on nothing.
+FO="$WORK/fo/docs/design"
+mkdir -p "$FO/alpha"
+cp -R "$LAYER/.render" "$FO/.render"
+
+fo_layer() { # $1 = alpha's foundation body
+  cat >"$FO/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Zfoot root]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zfg")[Root goal.]
+    #principle(title: "Zfp")[Root principle.]
+  ])
+]
+EOF
+  cat >"$FO/alpha/design.typ" <<EOF
+#import "../.render/designlib.typ": *
+#let title = [Zfoot alpha]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    $1
+  ])
+]
+EOF
+}
+
+# (a) an ordered foundation renders — the check must not fire on a good layer.
+fo_layer '#goal(title: "Zag")[g] #invariant(title: "Zai")[i]'
+if python3 ./scripts/design-aggregate "$FO" "$FO/a.pdf" >/dev/null 2>&1; then
+  pass_line "an ordered Typst foundation renders"
+else
+  fail_line "the order check fired on a correctly ordered foundation"
+fi
+
+# (b) a misordered foundation is REFUSED, and the message names both kinds.
+fo_layer '#principle(title: "Zap")[p] #goal(title: "Zag")[g]'
+fo_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/b.pdf" 2>&1)"
+fo_rc=$?
+if [ "$fo_rc" -ne 0 ]; then
+  pass_line "a misordered Typst foundation is refused (exit $fo_rc)"
+else
+  fail_line "a misordered Typst foundation rendered — the order is unenforced"
+fi
+case "$fo_out" in
+*"out of order"*) pass_line "the refusal says the foundation is out of order" ;;
+*) fail_line "the refusal does not name the rule: $(printf '%s' "$fo_out" | head -1)" ;;
+esac
+if printf '%s' "$fo_out" | grep -q 'goal' && printf '%s' "$fo_out" | grep -q 'principle'; then
+  pass_line "the refusal names the offending pair"
+else
+  fail_line "the refusal does not name which block followed which"
+fi
+if [ -f "$FO/b.pdf" ]; then
+  fail_line "a misordered foundation still wrote a PDF"
+  rm -f "$FO/b.pdf"
+else
+  pass_line "a misordered foundation writes no document"
+fi
+
+# (c) the scope is ONE CONTEXT. The root ends on a principle and alpha opens on
+# a goal, which is legal — every context carries its own foundation. A check
+# folding over the whole aggregate would call this an inversion and fail every
+# multi-context layer that exists.
+fo_layer '#goal(title: "Zag")[g]'
+if python3 ./scripts/design-aggregate "$FO" "$FO/c.pdf" >/dev/null 2>&1; then
+  pass_line "the order is scoped per context, not across the aggregate"
+else
+  fail_line "a goal opening the next context read as following the previous principle"
+fi
+
+# --- 5. an empty layer is an error, not an empty document ---------------------
 EMPTY="$WORK/empty/docs/design"
 mkdir -p "$EMPTY"
 if python3 ./scripts/design-aggregate "$EMPTY" "$EMPTY/out.pdf" >/dev/null 2>&1; then

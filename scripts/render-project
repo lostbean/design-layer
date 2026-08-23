@@ -254,9 +254,12 @@ card_sizes = ["md", "sm"]
 # The library is a GENERATED artifact, never hand-edited: the schema stays the
 # one source of truth and a schema edit re-projects. It carries the per-block
 # contracts (required fields, enum legality, cross-field rules) as functions
-# that panic; the DOCUMENT-level contracts (foundation order and cardinality,
-# spine order, pending validity) are NOT expressible as per-block functions and
-# are emitted separately for the assert phase — see scripts/design-render.
+# that panic. Most DOCUMENT-level contracts (foundation cardinality, spine
+# order, pending validity) must notice a block that was NEVER WRITTEN, which no
+# function call can, so they live in the assert phase — see scripts/design-render.
+# The foundation ORDER is the exception: it compares blocks that WERE written,
+# so a state records each call and the assertion reads the trail back. That is
+# what enforces it on the Typst side, which the markdown fold cannot parse.
 # ---------------------------------------------------------------------------
 
 def q(s):
@@ -288,10 +291,16 @@ w("// Never hand-edit: a schema edit re-projects this file, and the gate")
 w("// byte-compares a fresh projection against the committed one.")
 w("//")
 w("// Carries the PER-BLOCK contracts as functions that panic fail-closed.")
-w("// Document-level contracts (foundation order and cardinality, spine order,")
+w("// Most document-level contracts (foundation cardinality, spine order,")
 w("// pending validity) cannot be expressed by a per-block function — a")
 w("// function only runs when it is called, so it cannot see a block that was")
 w("// never written. Those live in the assert phase of scripts/design-render.")
+w("//")
+w("// The foundation ORDER is the exception, and it is enforced HERE: it")
+w("// compares blocks that were written, so _foundation-trail records each")
+w("// call and assert-foundation-order reads the trail back. The assert phase")
+w("// parses markdown and sees nothing in a Typst layer, so without this the")
+w("// order would be declared by FOUNDATION-ORDER and enforced by nothing.")
 w("")
 
 # ---- the declared vocabularies --------------------------------------------
@@ -604,6 +613,61 @@ w("""// ---- the behavior fence — design_doc.behavior_contract.fence ---------
 // _census-group already uses for the entity census's two groups.
 #let _behavior-level = state("behavior-level", none)
 
+// ---- the foundation order, enforced ---------------------------------------
+// FOUNDATION-ORDER states the order the four foundation kinds must appear in.
+// That is a DOCUMENT-LEVEL rule: it compares one block against another, which
+// no per-block function can do, since a function only runs when it is called
+// and cannot see what was called before it.
+//
+// On the markdown side the aggregate's own fold reads the parsed block list and
+// checks this. That fold parses markdown, so it sees nothing in a Typst layer,
+// which left the order DECLARED AND UNENFORCED here: the vocabulary was
+// projected, it read as enforcement to anyone who grepped for it, and nothing
+// ran. A rule the schema declares and no home runs is worse than an undeclared
+// one, so the gap is closed rather than documented.
+//
+// A state closes it, because in this mode the author calls the library directly
+// and the call ORDER is the document's own. Each foundation statement appends
+// its kind to the trail; the assertion reads the finished trail and panics on
+// the first inversion. The scope is one CONTEXT, not the whole aggregate: a
+// layer renders many chapters into one document, and a later chapter opening on
+// a goal does not follow the previous chapter's principle.
+#let _foundation-trail = state("foundation-trail", ())
+
+#let _note-foundation(kind, title) = {
+  if FOUNDATION-ORDER.contains(kind) {
+    _foundation-trail.update(t => t + ((kind: kind, title: title),))
+  }
+}
+
+// Open a fresh scope. The aggregate calls this before each context's body, so
+// every context's foundation is judged on its own.
+#let foundation-scope-reset = _foundation-trail.update(())
+
+// Read the trail as it stands HERE and refuse an inversion. The read is
+// `.get()`, not `.final()`, and the difference is the whole scoping story:
+// `.final()` returns the state at the END of the document, which after the next
+// context's reset is that context's trail, so a single final assertion would
+// judge the last chapter four times and the others never. `.get()` inside a
+// `context` block sees the trail accumulated up to this point, so an assertion
+// placed after each chapter's body judges exactly that chapter.
+#let assert-foundation-order = context {
+  let rank = (:)
+  for (i, k) in FOUNDATION-ORDER.enumerate() { rank.insert(k, i) }
+  let prev = -1
+  let prev-kind = none
+  for e in _foundation-trail.get() {
+    let r = rank.at(e.kind)
+    if r < prev {
+      _fail("foundation", "out of order: " + e.kind + " " + repr(e.title)
+            + " follows " + prev-kind + " — the declared order is "
+            + FOUNDATION-ORDER.join(", "))
+    }
+    prev = r
+    prev-kind = e.kind
+  }
+}
+
 // A clause's body is markdown already routed through cmarker.render, so its
 // content tree is a call, not literal text — this walks it down to the
 // characters the author actually wrote, the same structural walk _len (below)
@@ -646,6 +710,9 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
                 since: none, level: none, adr: none,
                 ..rest, body) = {
   _title(kind, title)
+  // Record the call for the document-level order check. A foundation kind is
+  // the only kind that lands in the trail; every other statement passes through.
+  _note-foundation(kind, title)
   // EVERY unrecognized attribute fails, not just the retired two. A block
   // signature ends `..rest`, so an unknown name is silently dropped: `lense=`
   // for `lens=`, a plain typo — the block renders without it and looks

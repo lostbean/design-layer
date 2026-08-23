@@ -98,7 +98,10 @@ unenforced:
 
 - **The projected library** validates ONE block against its own contract —
   a required field, an enum value, a title length. It cannot see anything
-  outside the block it is rendering.
+  outside the block it is rendering, EXCEPT where a state carries the fact
+  across calls: `_foundation-trail` records each foundation statement as it is
+  called, and `assert-foundation-order` reads the trail back. That is how a
+  cross-block rule reaches the Typst side, which the markdown fold cannot see.
 - **`design-render`'s `assert_document`** folds over the WHOLE document —
   foundation cardinality and order, spine order, clause cardinality, pending
   entries. Anything needing two blocks compared belongs here. `given`/`when`/
@@ -109,6 +112,13 @@ unenforced:
 
 A rule the schema declares and no home runs is worse than an undeclared one: the
 manual promises it, an author trusts it, and nothing objects.
+
+**A check with only one home covers only one notation.** `assert_document`
+parses markdown, so against Typst sources it finds zero blocks and passes
+VACUOUSLY — the foundation order was declared, projected as
+`FOUNDATION-ORDER`, and enforced on neither side of a Typst layer, while the
+vocabulary read as enforcement to anyone who grepped for it. A document-level
+rule needs a home in EACH mode, and a test proving it fails in each.
 
 ## Don't
 

@@ -140,6 +140,89 @@ if [ -f "$GALLERY" ]; then
   rm -f /tmp/wc-render.err
 fi
 
+# --- 3b. the NATIVE gallery exercises every native function -------------------
+# The markdown gallery covers the block KINDS a directive can name. It cannot
+# cover the native authoring surface, because those functions have no directive
+# — `section`, `points`, `answers`, `coverage`, `components`, `how-to-read` are
+# only ever called from a design.typ. Left uncovered they would be projected,
+# shipped, and never exercised, which is the same silent drift the markdown
+# gallery exists to prevent, one surface over.
+NATIVE_GALLERY="fixtures/native-gallery.typ"
+if [ -f "$NATIVE_GALLERY" ]; then
+  uncovered=$(
+    python3 - "$LIB" "$NATIVE_GALLERY" <<'PY'
+import re, sys
+lib, gallery = sys.argv[1], sys.argv[2]
+src = open(lib).read()
+used = open(gallery).read()
+
+# The functions that make up the native surface. A private helper (_x) is
+# exercised through its callers; a vocabulary constant is data, not a call.
+public = set(re.findall(r"^#let ([a-z][a-z0-9-]*)\(", src, re.M))
+# These reach the page only through the markdown router, which the OTHER
+# gallery covers. Naming them here keeps this check about the native surface
+# rather than silently passing on functions it never looks at.
+ROUTER_ONLY = {
+    "cards", "chart", "code-block", "diagram", "diagram-source",
+    "embedded-svg", "figure-block", "info", "warning", "md-table",
+    "pending", "pill", "lnk", "given", "when", "then", "attribute",
+    "relates", "entity", "behavior", "chapter-page", "aggregate-doc",
+    "context-owner", "stat-grid",
+}
+missing = []
+for fn in sorted(public - ROUTER_ONLY):
+    # \b does not end a hyphenated name the way it ends a word: in `#stat-tile`
+    # the boundary after `stat` matches, so `#stat` would look present. The
+    # trailing guard is therefore "not another name character", hyphen included.
+    if not re.search(r"[#(\s]" + re.escape(fn) + r"(?![a-z0-9-])", used):
+        missing.append(fn)
+print("\n".join(missing))
+PY
+  )
+  if [ -z "$uncovered" ]; then
+    pass_line "the native gallery exercises every native function"
+  else
+    fail_line "projected for native authoring but NOT in the native gallery:"
+    printf '       %s\n' $uncovered
+  fi
+
+  # And it must RENDER. A function can be projected, present in the gallery,
+  # and still fail to compile; only a render says it works. The rendered text
+  # is then read back, because a page that draws nothing still exits 0.
+  NG_TMP="$WC_TMP/native"
+  mkdir -p "$NG_TMP"
+  cp "$NATIVE_GALLERY" "$NG_TMP/native-gallery.typ"
+  cp -r "$WC_TMP/.render" "$NG_TMP/.render"
+  if "${TYPST:-typst}" compile --root "$NG_TMP" \
+    "$NG_TMP/native-gallery.typ" "$NG_TMP/out.pdf" 2>"$WC_TMP/ng.err"; then
+    pass_line "the native gallery renders clean"
+    if command -v pdftotext >/dev/null 2>&1; then
+      ngtext="$(pdftotext "$NG_TMP/out.pdf" - 2>/dev/null)"
+      ngmissing=""
+      # one mark per structure that could silently render empty: the diagram's
+      # own labels, a coverage reason, a stat value, a pending entry.
+      for mark in designlib "called directly" LICENSE "2.4M" "Pending updates"; do
+        case "$ngtext" in
+        *"$mark"*) ;;
+        *) ngmissing="$ngmissing [$mark]" ;;
+        esac
+      done
+      if [ -z "$ngmissing" ]; then
+        pass_line "the native gallery's diagram, table, and ledger reach the page"
+      else
+        fail_line "the native gallery rendered but these marks are absent:$ngmissing"
+      fi
+    else
+      fail_line "no pdftotext: the native gallery's marks could not be asserted"
+    fi
+  else
+    fail_line "the native gallery does NOT render:"
+    sed 's/^/       /' "$WC_TMP/ng.err" | head -6
+  fi
+else
+  fail_line "no native gallery at $NATIVE_GALLERY"
+fi
+
 # --- 4. the schema's vendored set equals the flake's --------------------------
 # The projector reads the vendored package list from the SCHEMA, so a host that
 # only ever receives the schema still projects the right set. That makes the

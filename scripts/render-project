@@ -523,10 +523,19 @@ w("""// ---- contract helpers — every block's checks route through these -----
 // violation, and the rendered order follows the schema's fixed lens order.
 #let _lenses(kind, lens) = {
   if lens == none { return () }
-  let parts = lens.split("+").map(p => p.trim())
+  // The two authoring surfaces spell a combo differently and both are legal:
+  // the markdown router passes the authored attr through as a "a+b" STRING,
+  // while a native document writes the array it means. Accepting both here is
+  // what lets one validation rule serve both, rather than a second copy that
+  // could drift.
+  let parts = if type(lens) == array {
+    lens
+  } else {
+    lens.split("+").map(p => p.trim())
+  }
   for p in parts { _enum(kind, "lens", p, LENSES) }
   if parts.dedup().len() != parts.len() {
-    _fail(kind, "lens combo repeats a member: " + lens)
+    _fail(kind, "lens combo repeats a member: " + repr(lens))
   }
   LENSES.filter(l => parts.contains(l))
 }
@@ -853,12 +862,32 @@ w("""// ---- clause + census blocks --------------------------------------------
   v(0.45em)
 }
 #let stat-grid(cols: "3", tiles: (), ..a) = {
-  block(width: 100%, grid(columns: (1fr,) * int(cols), gutter: 6pt,
-    ..tiles.map(t => block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(246),
+  // The two surfaces hand the tiles over differently and both are legal: the
+  // markdown router collects the nested :::stat-tile blocks into `tiles:`,
+  // while a native document passes them positionally. Accepting both matters
+  // more than it looks — passing tiles positionally to a tiles:-only signature
+  // renders an EMPTY GRID and exits 0, which is a blank page that reports
+  // success.
+  let ts = if tiles.len() > 0 { tiles } else { a.pos() }
+  if ts.len() == 0 {
+    _guide("stat-grid() holds at least one tile; an empty grid renders nothing")
+    return
+  }
+  block(width: 100%, grid(columns: (1fr,) * calc.min(ts.len(), int(cols)),
+    gutter: 6pt,
+    ..ts.map(t => block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(246),
       [
         #text(size: 16pt, weight: "bold", t.at("value", default: ""))
         #linebreak()
         #text(size: 7pt, fill: luma(110), t.at("label", default: ""))
+        #if t.at("delta", default: none) != none [
+          #linebreak()
+          #text(size: 6.8pt, weight: "bold",
+                fill: if t.at("dir", default: none) == "up" {
+                  TINT-COLOR.at("teal")
+                } else { TINT-COLOR.at("rose") },
+                t.delta)
+        ]
       ]))))
   v(0.45em)
 }
@@ -1207,12 +1236,12 @@ w("""// ---- the native authoring surface --------------------------------------
 // a compile error rather than a dangling path a link checker finds later.
 #let ctx(name, accent: "teal") = {
   _req-enum("accent", accent, TINTS)
-  chip(name, TINT-COLOR.at(accent))
+  chip(name, tone: TINT-COLOR.at(accent))
 }
-#let term(slug) = chip(slug, luma(110))
+#let term(slug) = chip(slug, tone: luma(110))
 #let lens-pill(name) = {
   _req-enum("lens", name, LENSES)
-  chip(name, TINT-COLOR.at("violet"))
+  chip(name, tone: LENS-COLOR.at(name))
 }
 
 // THE DIAGRAM — nodes and edges are DATA and the library lays them out, so the

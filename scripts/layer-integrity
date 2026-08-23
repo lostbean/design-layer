@@ -320,6 +320,7 @@ class FileIndex:
     script_refs: list = field(
         default_factory=list
     )  # (line_no, name) from script= attrs
+    adr_calls: list = field(default_factory=list)  # (line_no, N) from #adr(N)
 
 
 def read_lines(path: str) -> list:
@@ -413,6 +414,79 @@ def index_markdown(path: str, rel: str, schema: Schema) -> FileIndex:
             idx.loose_anchor_count += 1
 
     return idx
+
+
+# --- The Typst authoring surface ---------------------------------------------
+#
+# A Typst-authored layer states the same facts a markdown one does, in calls
+# rather than in markup, so the same checks answer the same questions against a
+# different notation.
+#
+#   an ADR citation      #adr(64)                  -> the number, validated
+#                                                     against the ADR dir
+#   a term declaration   (slug: "term-x", ...)     -> the declared vocabulary
+#   a section            #section(title: "02.1 …") -> the slug a link targets
+#
+# An ADR citation stays a REAL LINK into the markdown ADR, because the ADRs
+# remain markdown and a citation must resolve to a file a reader can open. What
+# the call buys is that the NUMBER is checkable at the citing line, rather than
+# a path that silently rots when a file is renamed.
+TYPST_ADR_RE = re.compile(r"\badr\(\s*(\d+)\s*\)")
+TYPST_TERM_RE = re.compile(r'slug:\s*"(term-[a-z0-9]+(?:-[a-z0-9]+)*)"')
+TYPST_SECTION_RE = re.compile(r'(?:sub)?section\(\s*title:\s*"([^"]*)"')
+TYPST_LINK_RE = re.compile(r'link\(\s*"([^"]*)"')
+TYPST_LINE_COMMENT_RE = re.compile(r"//.*$")
+
+
+def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
+    """Read one Typst layer file and build the same indexes the checks need.
+
+    The section slug is derived by THE SAME RULE the markdown side uses
+    (anchors.section.slug_rule), so a link written against either notation
+    resolves identically: '02.1 The pending ledger' -> '021-the-pending-ledger'.
+    Two slug rules for one concept is how a cross-link starts resolving on one
+    side and dangling on the other.
+    """
+    idx = FileIndex(path=path, rel=rel, base=os.path.basename(path))
+    idx.lines = read_lines(path)
+
+    for lineno, raw in enumerate(idx.lines, 1):
+        # A line comment is prose about the source, not a claim the layer makes.
+        line = TYPST_LINE_COMMENT_RE.sub("", raw)
+        idx.stripped.append(line)
+
+        for m in TYPST_ADR_RE.finditer(line):
+            idx.adr_calls.append((lineno, int(m.group(1))))
+        for m in TYPST_TERM_RE.finditer(line):
+            idx.term_anchor_ids.append(m.group(1))
+            idx.term_headings.add(m.group(1))
+        for m in TYPST_SECTION_RE.finditer(line):
+            slug = re.sub(r"[^a-z0-9]+", "-", m.group(1).lower()).strip("-")
+            if slug:
+                idx.section_ids.add(slug)
+        for m in TYPST_LINK_RE.finditer(line):
+            idx.link_dests.append(m.group(1))
+
+    return idx
+
+
+def check_adr_calls(files: list, adr_numbers: set, report: Report) -> None:
+    """Every #adr(N) names an ADR that exists on disk.
+
+    This is the Typst counterpart of the markdown side's link resolution. The
+    number IS the whole citation, so an ADR that was never written — or a digit
+    typed wrong — is caught at the citing line, rather than surfacing later as
+    a dead link inside a rendered document nobody re-reads.
+    """
+    for idx in files:
+        for lineno, number in sorted(set(idx.adr_calls)):
+            if number not in adr_numbers:
+                report.violation(
+                    f"{idx.rel}:{lineno}",
+                    "dangling ADR citation",
+                    f"cites adr({number}), and the ADR directory holds no ADR "
+                    f"with that number",
+                )
 
 
 def strip_anchors(pattern: str) -> str:
@@ -1110,6 +1184,12 @@ def main(argv: list) -> int:
     layer_names = {
         "design.md",
         "CONTEXT.md",
+        # The Typst authoring surface. A layer authors one notation or the
+        # other; both are walked so a Typst layer is DISCOVERED rather than
+        # reported as no layer at all, which is what an unknown extension
+        # would look like.
+        "design.typ",
+        "CONTEXT.typ",
         # Both names are walked: design-layer.pdf is the layer's rendered
         # document, and design.pdf is walked ONLY so a per-context render left
         # by an older framework version is discovered and reported as the
@@ -1140,14 +1220,41 @@ def main(argv: list) -> int:
     if (
         not walked["design.md"]
         and not walked["CONTEXT.md"]
+        and not walked["design.typ"]
+        and not walked["CONTEXT.typ"]
         and not walked["design.pdf"]
         and not walked["design-layer.pdf"]
         and not map_present
         and not adr_dir_present
     ):
         print(
-            f"error: no design layer in {root} (no design.md, CONTEXT.md, "
-            f"{schema.map_rel}, {schema.adr_dir_rel}/, or a rendered document)",
+            f"error: no design layer in {root} (no design.md, design.typ, "
+            f"CONTEXT.md, CONTEXT.typ, {schema.map_rel}, "
+            f"{schema.adr_dir_rel}/, or a rendered document)",
+            file=sys.stderr,
+        )
+        return 2
+
+    # A layer is authored in exactly ONE notation, and a mixed one is refused
+    # here for the same reason the aggregate refuses it: every check below
+    # would run against whichever half it happened to discover, report clean,
+    # and say nothing about the other. A half-migrated layer is exactly when
+    # this arises, so it stops with both sides named.
+    if (walked["design.typ"] or walked["CONTEXT.typ"]) and (
+        walked["design.md"] or walked["CONTEXT.md"]
+    ):
+        print(
+            f"error: the layer in {root} is authored in BOTH markdown and "
+            f"Typst, so no check over it would be complete",
+            file=sys.stderr,
+        )
+        for p in walked["design.md"] + walked["CONTEXT.md"]:
+            print(f"  markdown: {repo.rel_of(p)}", file=sys.stderr)
+        for p in walked["design.typ"] + walked["CONTEXT.typ"]:
+            print(f"  typst:    {repo.rel_of(p)}", file=sys.stderr)
+        print(
+            "  A layer is authored in exactly one notation. Finish the "
+            "migration or revert it.",
             file=sys.stderr,
         )
         return 2
@@ -1160,8 +1267,13 @@ def main(argv: list) -> int:
             out.append(index_html(p, rel) if html else index_markdown(p, rel, schema))
         return out
 
-    design_docs = index_all(walked["design.md"])
-    contexts = index_all(walked["CONTEXT.md"])
+    def index_all_typst(paths: list) -> list:
+        return [index_typst(p, repo.rel_of(p), schema) for p in paths]
+
+    # A layer is one notation or the other, so each list is the markdown files
+    # plus the Typst ones and exactly one side is ever non-empty.
+    design_docs = index_all(walked["design.md"]) + index_all_typst(walked["design.typ"])
+    contexts = index_all(walked["CONTEXT.md"]) + index_all_typst(walked["CONTEXT.typ"])
     design_pdfs = [
         FileIndex(path=p, rel=os.path.relpath(p, repo.root), base=os.path.basename(p))
         for p in walked["design.pdf"] + walked["design-layer.pdf"]
@@ -1213,6 +1325,17 @@ def main(argv: list) -> int:
 
     check_adrs(adr_files, schema, report)
     check_terms(contexts, schema, report)
+
+    # The Typst side's ADR citation is a NUMBER, so it is resolved against the
+    # ADR filenames on disk. The number set comes from the filenames rather
+    # than the anchors, because the filename is what a link opens; check_adrs
+    # separately holds the two in lockstep.
+    adr_numbers = set()
+    for idx in adr_files:
+        m = re.match(r"^(\d+)-", idx.base)
+        if m:
+            adr_numbers.add(int(m.group(1)))
+    check_adr_calls(design_docs + contexts, adr_numbers, report)
 
     disc = Discovery(
         design_docs=design_docs,

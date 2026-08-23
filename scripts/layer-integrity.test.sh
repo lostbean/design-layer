@@ -741,6 +741,76 @@ cat >"$SCOVB/docs/COVERAGE.md" <<'EOF'
 EOF
 assert_exit 0 "a resolving term anchor in COVERAGE.md is clean" -- "$CHECK" "$SCOVB"
 
+# --- Scenario: a TYPST-authored layer -----------------------------------------
+# A layer may author design.typ + CONTEXT.typ instead of the markdown pair. The
+# same questions are asked of it against a different notation: an ADR citation
+# is the call #adr(N), resolved against the ADR filenames on disk, so a number
+# naming no decision is caught at the citing line rather than surfacing as a
+# dead link inside a rendered document nobody re-reads.
+build_typst() {
+  local root="$1"
+  mkdir -p "$root/docs/design/alpha" "$root/docs/adr"
+
+  cat >"$root/docs/adr/0007-a-real-decision.md" <<'EOF'
+# A real decision
+
+<a id="adr-0007"></a>
+
+Decisions are recorded as an append-only ADR ledger.
+EOF
+
+  cat >"$root/docs/design/design.typ" <<'EOF'
+#let title = [Root]
+#let body = [
+  #section(title: "00 Foundation")[The ledger holds the argument, #adr(7).]
+]
+EOF
+
+  cat >"$root/docs/design/alpha/design.typ" <<'EOF'
+#let title = [Alpha]
+#let body = [
+  #section(title: "02.1 The pending ledger")[Cites #adr(7).]
+]
+EOF
+
+  cat >"$root/docs/design/alpha/CONTEXT.typ" <<'EOF'
+#let terms = ((slug: "term-thing", title: "Thing", body: [A thing is a thing.]),)
+EOF
+}
+
+STYP="$TMP/typst-clean"
+build_typst "$STYP"
+assert_exit 0 "clean Typst-authored layer" -- "$CHECK" "$STYP"
+# A Typst layer must be DISCOVERED, not reported as no layer at all — which is
+# what an unrecognised extension would look like.
+assert_not_contains "no design layer" "a Typst layer is discovered as a layer"
+# The homing rule covers the Typst basenames, so a correctly-placed design.typ
+# is not reported as a stray.
+assert_not_contains "mishomed" "a homed design.typ is not called mishomed"
+
+STYPBAD="$TMP/typst-dangling-adr"
+build_typst "$STYPBAD"
+cat >"$STYPBAD/docs/design/alpha/design.typ" <<'EOF'
+#let title = [Alpha]
+#let body = [
+  #section(title: "02.1 The pending ledger")[Cites #adr(999).]
+]
+EOF
+assert_exit 1 "adr(N) naming no ADR is a violation" -- "$CHECK" "$STYPBAD"
+assert_contains "dangling ADR citation" "report flags the dangling ADR call"
+assert_contains "adr(999)" "report names the offending ADR number"
+
+# A MIXED layer is refused. Every check would otherwise run against whichever
+# half it discovered, report clean, and say nothing about the other — and a
+# half-migrated layer is exactly when that arises.
+STYPMIX="$TMP/typst-mixed"
+build_typst "$STYPMIX"
+echo "# a stray markdown context" >"$STYPMIX/docs/design/alpha/design.md"
+assert_exit 2 "a mixed markdown/Typst layer is an error" -- "$CHECK" "$STYPMIX"
+assert_contains "BOTH markdown and Typst" "report says the layer is mixed"
+assert_contains "docs/design/alpha/design.md" "report names the markdown side"
+assert_contains "docs/design/design.typ" "report names the Typst side"
+
 # --- Scenario (perf): a run finishes well under a wall-clock ceiling ----------
 # The parse-once invariant: the checker reads each layer file ONCE into an
 # index and answers every check as a lookup against it. The shape it replaced

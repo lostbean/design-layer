@@ -50,6 +50,14 @@
           "docs/design/design.md",
           "docs/design/<context>/design.md"
         ],
+        "design.typ": [
+          "docs/design/design.typ",
+          "docs/design/<context>/design.typ"
+        ],
+        "CONTEXT.typ": [
+          "docs/design/CONTEXT.typ",
+          "docs/design/<context>/CONTEXT.typ"
+        ],
         "design.pdf": ["docs/design/design-layer.pdf"],
         "CONTEXT.md": [
           "docs/design/CONTEXT.md",
@@ -97,8 +105,10 @@
     "artifact_filenames": {
       "names": [
         "design.md",
+        "design.typ",
         "design.pdf",
         "CONTEXT.md",
+        "CONTEXT.typ",
         "CONTEXT-MAP.md",
         "COVERAGE.md"
       ],

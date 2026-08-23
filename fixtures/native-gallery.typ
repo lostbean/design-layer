@@ -204,13 +204,15 @@
 
 #pending-ledger(
   pending-entry(
-    title: "Foundation order is unenforced in native mode",
+    title: "Foundation cardinality is unenforced in native mode",
     kind: "verify",
     since: "2026-08-23",
   )[
-    The markdown path re-parses the authored file to assert the foundation's
-    order. That parser reads markdown, so the native path does not run it; the
-    cross-block ordering rule is not yet checked here.
+    The foundation ORDER is now checked here: each statement records its kind
+    as it is called and the aggregate reads the trail back per context. The
+    CARDINALITY rule is not, and cannot be by the same means — it must notice
+    a kind that was never written, and a function that is never called cannot
+    report its own absence.
   ],
   pending-entry(
     title: "A native context map",

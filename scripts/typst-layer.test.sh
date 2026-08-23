@@ -92,11 +92,22 @@ EOF
 # failure: a scrape bounded by the first `]` cannot see past `#emph[`, so the
 # term was dropped from the glossary entirely and the count reported one fewer
 # without complaint.
+#
+# Zcites calls the LIBRARY — `term()` and `ctx()` — from inside a term body,
+# which is how a real glossary cross-references its siblings. This is the case
+# that shipped broken: `#emph` and `#strong` are Typst BUILTINS, in scope
+# everywhere, so a fixture using only those proves nothing about scope. A
+# CONTEXT.typ imports nothing and the aggregate supplies the scope, so placing
+# a term by importing the file as a module left every library name unbound —
+# and a Typst import is EAGER, so one such call failed the whole build. Every
+# host layer whose terms cite each other broke while these assertions passed.
 cat >"$LAYER/alpha/CONTEXT.typ" <<'EOF'
 #let terms = (
   (slug: "term-zthing", title: [Zthing], body: [A Zthing is a thing.]),
   (slug: "term-zmarked", title: [Zmarked #emph[inner] tail],
    body: [Zbody with #strong[Zbold] inside.]),
+  (slug: "term-zcites", title: [Zcites],
+   body: [Zref to #term("term-zthing") owned by #ctx("alpha").]),
 )
 EOF
 cat >"$LAYER/beta/design.typ" <<'EOF'
@@ -136,7 +147,7 @@ if [ "$rc" -eq 0 ] && [ -f "$LAYER/design-layer.pdf" ]; then
   *) fail_line "the summary miscounts the contexts: $out" ;;
   esac
   case "$out" in
-  *"2 term(s)"*) pass_line "the summary counts both glossary terms" ;;
+  *"3 term(s)"*) pass_line "the summary counts every glossary term" ;;
   *) fail_line "the summary miscounts the terms: $out" ;;
   esac
 
@@ -179,9 +190,35 @@ if [ "$rc" -eq 0 ] && [ -f "$LAYER/design-layer.pdf" ]; then
   else
     pass_line "no Typst call leaked onto the page"
   fi
+
+  # --- a term body may CALL THE LIBRARY, and the aggregate supplies the scope -
+  # A CONTEXT.typ imports nothing. Its bodies must still resolve `term()` and
+  # `ctx()`, because they are spliced where the library is already imported.
+  # Asserting the rendered chips is what proves the call ran rather than merely
+  # parsing: `term("term-zthing")` renders the slug, `ctx("alpha")` the name.
+  if printf '%s' "$text" | grep -q 'Zref to'; then
+    pass_line "a term body calling the library renders"
+  else
+    fail_line "the library-calling term body is absent — the splice lost its scope"
+  fi
+  if printf '%s' "$text" | grep -q 'term-zthing'; then
+    pass_line "term() inside a term body resolved and rendered its chip"
+  else
+    fail_line "term() did not render — the library was not in scope at the splice"
+  fi
+  if printf '%s' "$text" | grep -qE 'owned by alpha\.|by alpha'; then
+    pass_line "ctx() inside a term body resolved and rendered its chip"
+  else
+    fail_line "ctx() did not render — the library was not in scope at the splice"
+  fi
 else
   fail_line "a Typst layer did not aggregate (exit $rc)"
   printf '%s\n' "$out" | head -6 | sed 's/^/       /'
+  # Every assertion above sits inside the success branch, so a failed build
+  # SKIPS them rather than failing them — one FAIL line would stand in for a
+  # dozen unrun checks, and the count would read as though little was wrong.
+  # Say plainly what did not run.
+  fail_line "the glossary assertions did not run at all (the build failed first)"
 fi
 
 # --- 2. the freshness check verifies rather than repairs ----------------------

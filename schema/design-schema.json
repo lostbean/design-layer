@@ -103,6 +103,24 @@
         "COVERAGE.md"
       ],
       "note": "the design layer's own file basenames. Every file carrying one of these names is a layer artifact and must sit at its declared home (see homing) — the layer never colocates into source directories, so any tool governing a source directory may treat these basenames like any other stray file."
+    },
+    "coverage_map": {
+      "what": "the answer to 'is any part of the system blind to the design'. A table listing every meaningful system part with a status and a pointer. The STATUSES are declared here because the renderer validates them: a native coverage() row carries one of these values, and a row that is not `captured` states its reason, so absence is a recorded decision rather than an accident",
+      "statuses": {
+        "captured": "a design unit describes this part at reproduction grade — the row links the owning design-document section or context",
+        "standard": "intentionally not detailed — evident boilerplate the owner chose not to design (conventional dev tooling, CI, generated files). A recorded, revisitable decision, not a gap. The row states WHY it is standard.",
+        "out-of-scope": "not a designed subsystem at all (license, .gitignore, vendored third-party). The row says so."
+      }
+    },
+    "unit_model": {
+      "altitudes": ["L1", "L2", "L3", "L4"],
+      "altitude_names": {
+        "L1": "boundary",
+        "L2": "contexts",
+        "L3": "components",
+        "L4": "internals"
+      },
+      "note": "the depth labels a diagram declares itself at. The design layer is a recursively self-similar tree of units — a unit is the same shape at every altitude — so an altitude is a label on ONE node type rather than four different things. The renderer requires the label on every diagram: a drawing whose altitude is unstated leaves a reader unable to tell which zoom level they are looking at, and the tint keyed to it makes the level legible before the caption is read"
     }
   },
   "design_doc": {

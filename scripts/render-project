@@ -68,6 +68,21 @@ except (OSError, ValueError) as e:
 try:
     enforcement_values = schema["enums"]["enforcement"]["values"]
     pending_kinds = list(schema["pending_ledger"]["kinds"].keys())
+    # the coverage map's statuses — the breadth axis the native `coverage()`
+    # block validates its rows against. Read from the schema like every other
+    # vocabulary, so a status added there reaches the library unedited.
+    coverage_statuses = list(
+        schema["layer_layout"]["coverage_map"]["statuses"].keys())
+    # the diagram altitude ladder — the depth labels a native diagram declares
+    # itself at, and the name shown beside each. Declared in the schema so a
+    # rung added there reaches the library without a second edit.
+    altitudes = list(schema["layer_layout"]["unit_model"]["altitudes"])
+    altitude_names = dict(
+        schema["layer_layout"]["unit_model"]["altitude_names"])
+    for _a in altitudes:
+        if _a not in altitude_names:
+            raise KeyError(
+                "layer_layout.unit_model.altitude_names has no entry for %r" % _a)
     lens_values = schema["enums"]["lens"]["values"]
     # the entity census's two vocabularies. provenance is a declared enum like
     # enforcement; the entity KIND set is stated, in words, in the entity block's
@@ -260,6 +275,11 @@ L = []
 w = L.append
 
 w('#import "@preview/diagraph:0.3.6": render as dot-render')
+# fletcher lays out a node-and-edge diagram from declared nodes and edges, so
+# the native diagram block never asks an author for coordinates. Imported under
+# private names because `node` and `edge` are common words a document may bind.
+w('#import "@preview/fletcher:0.5.8" as _fletcher')
+w('#import "@preview/fletcher:0.5.8": node as _fl-node, edge as _fl-edge')
 # the inline layer's CommonMark parser — see SCOPE and the link show rule below
 w('#import "@preview/cmarker:0.1.6"')
 w("")
@@ -285,6 +305,7 @@ w("#let ENTITY-KINDS = " + tuple_of(entity_kinds))
 w("#let ENTITY-LIFECYCLES = " + tuple_of(entity_lifecycles))
 w("#let BEHAVIOR-LEVELS = " + tuple_of(behavior_levels))
 w("#let FOUNDATION-ORDER = " + tuple_of(foundation_order))
+w("#let COVERAGE-STATUSES = " + tuple_of(coverage_statuses))
 w("#let TITLE-MAX = 64")
 w("")
 
@@ -352,6 +373,36 @@ ENTITY_LIFECYCLE_HUES = {
 PROVENANCE_HUES = {
     "authored": "#f59e0b", "derived": "#14b8a6", "observed": "#64748b",
 }
+# COVERAGE is the breadth axis: `captured` is the state the layer is working
+# toward, so it takes teal, the settled tone. `standard` is grey because it is
+# a part deliberately left to a convention and needs no attention. Anything
+# else — `out-of-scope` — takes the warning tone, since a reader auditing
+# breadth is looking for exactly the rows the layer decided not to cover.
+COVERAGE_HUES = {
+    "captured": "#14b8a6", "standard": "#82828e", "out-of-scope": "#a8492a",
+}
+# PENDING kind colours the ledger's time axis, so the four kinds are told
+# apart at a glance rather than by reading each entry's badge.
+PENDING_HUES = {
+    "build": "#2f5f8f", "verify": "#14b8a6",
+    "foundation": "#5a4fa0", "ruling": "#8a6a1f",
+}
+# ALTITUDE names an existing TINT rather than a raw hue: a diagram's altitude
+# band shares the document's accent vocabulary, so the ladder climbs through
+# tints a reader already associates with this layer.
+ALTITUDE_TINTS = {
+    "L1": "slate", "L2": "teal", "L3": "amber", "L4": "violet",
+}
+for _a in altitudes:
+    if _a not in ALTITUDE_TINTS:
+        sys.stderr.write("render-project: error: no tint declared for altitude "
+                         "%r\n" % _a)
+        sys.exit(2)
+    if ALTITUDE_TINTS[_a] not in tint_values:
+        sys.stderr.write("render-project: error: altitude %r names tint %r, "
+                         "which the schema does not declare\n"
+                         % (_a, ALTITUDE_TINTS[_a]))
+        sys.exit(2)
 
 w("// ---- the semantic token table (the framework owns the semantic look) ----")
 for name, table, keys in (
@@ -361,6 +412,8 @@ for name, table, keys in (
     ("ENTITY-KIND-COLOR", ENTITY_KIND_HUES, entity_kinds),
     ("ENTITY-LIFECYCLE-COLOR", ENTITY_LIFECYCLE_HUES, entity_lifecycles),
     ("PROVENANCE-COLOR", PROVENANCE_HUES, provenance_values),
+    ("COVERAGE-COLOR", COVERAGE_HUES, coverage_statuses),
+    ("PENDING-COLOR", PENDING_HUES, pending_kinds),
 ):
     w("#let " + name + " = (")
     for k in keys:
@@ -408,6 +461,31 @@ w("// the vendored package set a figure block's `uses` is restricted to")
 w("#let VENDORED = " + tuple_of(vendored or ["cetz"]))
 w("")
 
+# ---- the two classes of rule ----------------------------------------------
+# An INVARIANT is a rule whose violation makes the model WRONG: a value outside
+# a declared enum, an edge naming no node, a block missing the field that gives
+# it meaning. No document is correct while breaking one, so it panics.
+#
+# A GUIDELINE is a rule of STYLE: how long a title runs, how many sentences a
+# bullet carries. Breaking one makes a document worse, never wrong. It is
+# written down and checkable, and by default it emits NOTHING — a design
+# document is read by someone who did not write it and cannot act on a lint
+# note, so no advisory ever reaches the page.
+w("""// ---- the two classes of rule -------------------------------------------
+// STRICT MODE turns every guideline into an error, for a sweep an author asks
+// for:  typst compile --input strict=1 <doc>.typ <doc>.pdf
+// The default is off. The value is read at CALL TIME by a plain binding rather
+// than by document `state`, because Typst resolves state during layout and a
+// check running after its own panic site never fires.
+#let STRICT = "strict" in sys.inputs and sys.inputs.at("strict") not in ("", "0", "false")
+
+// A guideline: silent by default, a panic naming the rule under strict.
+#let _guide(message) = {
+  if STRICT { panic("[guideline] " + message) }
+}
+""")
+w("")
+
 # ---- contract helpers ------------------------------------------------------
 w("""// ---- contract helpers — every block's checks route through these --------
 #let _fail(kind, msg) = panic(kind + " block: " + msg)
@@ -418,13 +496,19 @@ w("""// ---- contract helpers — every block's checks route through these -----
   }
 }
 
+// The title contract splits across BOTH classes of rule. PRESENCE is an
+// invariant: a statement block with no title is a claim nobody can cite, so
+// absence is a hard error. LENGTH is a guideline: a long title makes a worse
+// document, never a wrong one, and no reader is served by a build that stops
+// over it. Measured against the corpus, no authored document trips it, so the
+// reclassification changes no existing render.
 #let _title(kind, title) = {
   _need(kind, "title", title)
   // str.len() counts UTF-8 BYTES; a title carrying a multi-byte character
   // would be measured longer than a reader sees it. The contract is about
   // characters, so count clusters.
   if title.clusters().len() > TITLE-MAX {
-    _fail(kind, "title exceeds " + str(TITLE-MAX) + " characters: " + title)
+    _guide(kind + " title exceeds " + str(TITLE-MAX) + " characters: " + title)
   }
 }
 
@@ -1019,6 +1103,428 @@ w("""// ---- chart: a plot from a small table, no plotting spec ----------------
       #text(size: 7.5pt, fill: luma(110), caption)
     ])
   v(0.45em)
+}
+""")
+
+# ---- the native authoring surface -----------------------------------------
+# Everything above renders a document the MARKDOWN router produced. The
+# functions below are what a `design.typ` calls DIRECTLY, with no router in
+# between. Both surfaces are one library over one vocabulary, so a rule stated
+# once binds whichever way a layer is authored.
+#
+# The taste rules become function SIGNATURES here. A required argument cannot
+# be omitted, so the failure moves from a reviewer's judgement to the compiler,
+# and from the moment a gate runs to the moment the author writes the line.
+w("""// ---- the native authoring surface --------------------------------------
+// A design.typ calls these directly. The markdown router never emits them.
+
+// Each altitude carries its own tint, so a diagram's altitude is legible
+// before its caption is read. The ladder and its names are PROJECTED; the
+// tints are this library's own visual decision.
+""" + "#let ALTITUDES = " + tuple_of(altitudes) + """
+""" + "#let ALTITUDE-NAMES = (" + ", ".join(
+    "%s: %s" % (a, q(altitude_names[a])) for a in altitudes) + ")" + """
+""" + "#let ALT-TINT = (" + ", ".join(
+    "%s: %s" % (a, q(ALTITUDE_TINTS[a])) for a in altitudes) + ")" + """
+
+// GUIDELINE helpers — sentence budgets. Only a plain string can be counted, so
+// content carrying markup passes through; that is the honest limit of it.
+#let _sentences(t) = t.matches(regex("[.!?](\\\\s|$)")).len()
+
+#let _max-sentences(where, body, limit: 3) = {
+  if type(body) == str and body != "" and _sentences(body) > limit {
+    _guide(where + ": " + str(_sentences(body)) + " sentences exceeds the " +
+           str(limit) + "-sentence bullet guideline. A new bullet begins at a " +
+           "change of object, property, or processing step.")
+  }
+}
+
+#let _max-lead(where, body, limit: 4) = {
+  if type(body) == str and body != "" and _sentences(body) > limit {
+    _guide(where + ": a section lead holds about " + str(limit) +
+           " sentences, found " + str(_sentences(body)) +
+           ". Go deep in a section rather than in its intro.")
+  }
+}
+
+// A required enum: absent is as much a violation as wrong. An honest label
+// that may be omitted is a label nobody writes.
+#let _req-enum(field, value, allowed) = {
+  if value == none {
+    panic(field + " is required and must be one of " + repr(allowed))
+  }
+  if value not in allowed {
+    panic(field + "=" + repr(value) + " must be one of " + repr(allowed))
+  }
+}
+
+// THE BULLET BLOCK. Content is often written as bullets, one property each.
+// This is the convenient way to write that, never the only legal way: a
+// passage whose sense is a chain of causes reads worse chopped into bullets.
+#let points(..items) = {
+  let xs = items.pos()
+  if xs.len() == 0 {
+    _guide("points() holds at least one bullet; an empty list renders nothing")
+  }
+  for x in xs { _max-sentences("points bullet", x) }
+  list(..xs)
+}
+
+// SECTION — the rhythm offered, not imposed: a muted lead, one visual, then
+// notes. `visual` is OPTIONAL, and that is a contract rather than a taste
+// call: the spine mandates an end-to-end walkthrough, and a walkthrough is a
+// narrative. A required visual would make a mandated section illegal to write.
+#let section(title: none, lead: none, visual: none, notes: none, body: none) = {
+  _need("section", "title", title)
+  _max-lead("section lead", lead)
+  heading(level: 1)[#title]
+  if lead != none {
+    block(text(size: 9.4pt, fill: luma(70))[#lead]); v(0.3em)
+  }
+  if visual != none { visual }
+  if notes != none { notes }
+  if body != none { body }
+}
+
+#let subsection(title: none, body) = {
+  _need("subsection", "title", title)
+  heading(level: 2)[#title]
+  body
+}
+
+#let notes(title: none, body) = {
+  _need("notes", "title", title)
+  block(width: 100%, inset: (x: 7pt, y: 6pt), fill: luma(248),
+        stroke: (left: 2.4pt + luma(175)), radius: (right: 2pt))[
+    #text(size: 6.2pt, weight: "bold", tracking: 0.6pt, fill: luma(95),
+          upper(title))
+    #linebreak() #body
+  ]
+  v(0.45em)
+}
+
+// CROSS REFERENCES — a reference is a call over declared data, so a rename is
+// a compile error rather than a dangling path a link checker finds later.
+#let ctx(name, accent: "teal") = {
+  _req-enum("accent", accent, TINTS)
+  chip(name, TINT-COLOR.at(accent))
+}
+#let term(slug) = chip(slug, luma(110))
+#let lens-pill(name) = {
+  _req-enum("lens", name, LENSES)
+  chip(name, TINT-COLOR.at("violet"))
+}
+
+// THE DIAGRAM — nodes and edges are DATA and the library lays them out, so the
+// author never writes a diagram language: there is no dialect to police and no
+// label escaping to get wrong. Altitude is required and validated.
+#let diagram-native(
+  altitude: none, title: none, caption: none, accent: "teal",
+  spacing: (16mm, 11mm), nodes: (), edges: (),
+) = {
+  _req-enum("diagram altitude", altitude, ALTITUDES)
+  _req-enum("accent", accent, TINTS)
+  if nodes.len() == 0 {
+    panic("diagram: a diagram declares at least one node. An empty diagram " +
+          "renders a blank frame, which reads as a drawing that failed " +
+          "rather than as the absence of one.")
+  }
+  let c = TINT-COLOR.at(accent)
+  let ac = TINT-COLOR.at(ALT-TINT.at(altitude))
+  // Every endpoint must name a declared node; a typo would otherwise draw an
+  // edge to nowhere, which renders as a drawing missing a line.
+  let ids = nodes.map(n => n.id)
+  for e in edges {
+    for endpoint in (e.at(0), e.at(1)) {
+      if endpoint not in ids {
+        panic("diagram edge names " + repr(endpoint) + ", which is not a " +
+              "declared node. Declared nodes: " + repr(ids))
+      }
+    }
+  }
+  let ns = nodes.map(n => {
+    let ext = n.at("external", default: false)
+    let lbl = if "sub" in n {
+      align(center)[
+        #text(size: 8.6pt)[#n.label] \\
+        #text(size: 7.6pt, fill: luma(95))[#n.sub]
+      ]
+    } else { text(size: 8.6pt)[#n.label] }
+    _fl-node(n.pos, lbl, name: label(n.id),
+      fill: if ext { white } else { c.lighten(88%) },
+      stroke: if ext {
+        (dash: "dashed", paint: luma(150), thickness: 0.7pt)
+      } else { 0.8pt + c },
+      corner-radius: 2pt, inset: 6pt)
+  })
+  let es = edges.map(e => {
+    let dashed = e.len() > 3 and e.at(3) == "dashed"
+    _fl-edge(label(e.at(0)), label(e.at(1)),
+      if dashed { "-->" } else { "->" },
+      label: text(size: 7pt, fill: luma(80))[#e.at(2)],
+      label-side: if e.len() > 4 { e.at(4) } else { auto },
+      label-sep: 3pt, label-size: 7pt,
+      stroke: if dashed {
+        (dash: "dashed", thickness: 0.6pt, paint: luma(110))
+      } else { 0.7pt + luma(85) })
+  })
+  block(width: 100%, inset: (x: 7pt, y: 3.5pt), fill: ac.lighten(92%),
+        stroke: (left: 2.4pt + ac))[
+    #text(size: 6.2pt, weight: "bold", fill: ac, tracking: 0.7pt)[
+      ALTITUDE #altitude · #upper(ALTITUDE-NAMES.at(altitude))
+    ]
+    #if title != none [ #h(0.6em) #text(size: 8pt, fill: luma(70))[#title] ]
+  ]
+  v(0.45em)
+  align(center, _fletcher.diagram(spacing: spacing, ..ns, ..es))
+  if caption != none {
+    v(0.35em)
+    block(width: 100%, inset: (x: 2pt))[
+      #text(size: 7.4pt, fill: luma(115))[#caption]
+    ]
+  }
+  v(0.55em)
+}
+
+// THE FIVE ANSWERS — the repeated component unit, made composable. EVERY FIELD
+// IS OPTIONAL, and that is load-bearing rather than convenient: a unit with no
+// failure mode should say nothing about failure. Requiring all five is how a
+// genuine "none" becomes a fabricated sentence.
+#let ANSWER-FIELDS = (
+  ("responsibility", "Responsibility"), ("interface", "Interface"),
+  ("interactions", "Interactions"), ("invariants", "Invariants"),
+  ("failure", "Failure"),
+)
+
+#let answers-data(
+  responsibility: none, interface: none, interactions: none,
+  invariants: none, failure: none,
+) = (
+  responsibility: responsibility, interface: interface,
+  interactions: interactions, invariants: invariants, failure: failure,
+)
+
+// The chain is written on ONE expression deliberately. A `.map` starting a
+// fresh line in code mode does not attach to the value above it: the
+// expression ends at the newline, the chain is dropped, and the unfiltered
+// list flows on. That failure is SILENT — it renders every field including the
+// absent ones — so the shape is kept where it cannot recur.
+#let _answer-rows(data) = {
+  let pairs = ANSWER-FIELDS.map(f => (f.at(1), data.at(f.at(0), default: none)))
+  pairs.filter(r => r.at(1) != none)
+}
+
+#let _answers-compact(data, size: 7.6pt) = {
+  let rows = _answer-rows(data)
+  for (i, r) in rows.enumerate() {
+    if i > 0 { v(2pt) }
+    grid(columns: (4.6em, 1fr), gutter: 4pt,
+      text(size: size - 0.8pt, weight: "bold", fill: luma(115))[#lower(r.at(0))],
+      text(size: size)[#r.at(1)])
+  }
+}
+
+#let answers(
+  title: none, accent: "teal", responsibility: none, interface: none,
+  interactions: none, invariants: none, failure: none,
+) = {
+  _req-enum("accent", accent, TINTS)
+  if title != none { _title("answers", title) }
+  let data = answers-data(
+    responsibility: responsibility, interface: interface,
+    interactions: interactions, invariants: invariants, failure: failure)
+  let rows = _answer-rows(data)
+  if rows.len() == 0 {
+    _guide("answers() carries no answer. A unit block with all five fields " +
+           "absent says nothing the surrounding prose did not.")
+    return
+  }
+  let c = TINT-COLOR.at(accent)
+  block(width: 100%, inset: (x: 7pt, y: 6pt), fill: c.lighten(97%),
+        stroke: (left: 2.4pt + c), radius: (right: 2pt))[
+    #if title != none [ #text(size: 9.4pt, weight: "bold")[#title] #v(2.5pt) ]
+    #for (i, r) in rows.enumerate() [
+      #if i > 0 [ #v(2.5pt) ]
+      #grid(columns: (5.6em, 1fr), gutter: 5pt,
+        text(size: 7pt, weight: "bold", fill: c)[#lower(r.at(0))],
+        text(size: 8.4pt)[#r.at(1)])
+    ]
+  ]
+  v(0.45em)
+}
+
+// COMPONENT CARDS — the fixed shape, so an author cannot invent a variant.
+#let component(name: none, lens: none, mission: none, answers: none, body: none) = {
+  _need("component", "name", name)
+  _need("component", "mission", mission)
+  if lens != none { _req-enum("lens", lens, LENSES) }
+  (name: name, lens: lens, mission: mission, answers: answers, body: body)
+}
+
+#let components(..cs, accent: "teal") = {
+  _req-enum("accent", accent, TINTS)
+  let items = cs.pos()
+  if items.len() == 0 {
+    _guide("components() holds at least one card; an empty grid renders nothing")
+    return
+  }
+  let c = TINT-COLOR.at(accent)
+  grid(columns: (1fr,) * calc.min(items.len(), 3), gutter: 6pt,
+    ..items.map(x => block(width: 100%, inset: 6pt, fill: luma(250),
+                           stroke: 0.5pt + luma(210), radius: 2pt)[
+      #grid(columns: (1fr, auto),
+        text(size: 8.6pt, weight: "bold", fill: c)[#x.name],
+        if x.lens != none {
+          box(fill: c.lighten(85%), inset: (x: 3pt, y: 1pt), radius: 1.5pt,
+              text(size: 5.8pt, weight: "bold", fill: c.darken(20%))[#x.lens])
+        })
+      #v(2pt)
+      #text(size: 8.2pt, weight: "bold")[#x.mission]
+      #if x.body != none [ #v(1.5pt) #text(size: 8pt)[#x.body] ]
+      #if x.answers != none [
+        #v(3pt) #line(length: 100%, stroke: 0.4pt + luma(220)) #v(3pt)
+        #_answers-compact(x.answers)
+      ]
+    ]))
+  v(0.55em)
+}
+
+// COVERAGE — the breadth axis, carried in the document. A row that is not
+// `captured` states its reason, so absence is a recorded decision rather than
+// an accident.
+#let coverage(..rows) = {
+  let rs = rows.pos()
+  if rs.len() == 0 {
+    _guide("coverage() holds at least one row; an empty table renders a bare header")
+    return
+  }
+  for r in rs {
+    _req-enum("coverage status", r.at(1), COVERAGE-STATUSES)
+    if r.at(1) != "captured" and (r.len() < 3 or r.at(2) == "" or r.at(2) == none) {
+      panic("coverage row " + repr(r.at(0)) + " is " + repr(r.at(1)) +
+            " and states no reason. A part is marked " + repr(r.at(1)) +
+            " only by an explicit decision, and the row carries why.")
+    }
+  }
+  block(width: 100%)[
+    #table(columns: (auto, auto, 1fr), stroke: none,
+      inset: (x: 5pt, y: 3.5pt), align: (left, left, left),
+      table.header(..("Part", "Status", "Why").map(h => text(size: 6.3pt,
+        weight: "bold", tracking: 0.5pt, fill: luma(110), upper(h)))),
+      ..rs.map(r => (
+        text(size: 8.3pt, font: "DejaVu Sans Mono")[#r.at(0)],
+        {
+          let col = COVERAGE-COLOR.at(r.at(1))
+          box(fill: col.lighten(88%), inset: (x: 3pt, y: 1pt), radius: 1.5pt,
+              text(size: 6.5pt, weight: "bold", fill: col.darken(15%))[#r.at(1)])
+        },
+        text(size: 8.3pt)[#if r.len() > 2 { r.at(2) } else { "" }],
+      )).flatten())
+  ]
+  v(0.5em)
+}
+
+// THE PENDING LEDGER — placed on a time axis, so aging design debt is visible
+// at a glance. That makes `since` load-bearing rather than decorative, so it
+// is required and its shape is checked.
+#let pending-entry(title: none, kind: none, since: none, adr: none, body) = {
+  _title("pending", title)
+  _req-enum("pending kind", kind, PENDING-KINDS)
+  if since == none { panic("pending since is required") }
+  if type(since) != str or since.matches(regex("^\\\\d{4}-\\\\d{2}-\\\\d{2}$")).len() == 0 {
+    panic("pending since=" + repr(since) + " must be a YYYY-MM-DD date. The " +
+          "ledger places entries on a time axis, so a wrong or guessed date " +
+          "misreports how long the layer has run ahead.")
+  }
+  if kind == "build" and adr == none {
+    panic("pending entry " + repr(title) + " is kind=build and cites no ADR. " +
+          "A designed-not-yet-built entry carries the decision that designed it.")
+  }
+  (title: title, kind: kind, since: since, adr: adr, body: body)
+}
+
+#let pending-ledger(..entries) = {
+  let es = entries.pos()
+  // An empty ledger is OMITTED rather than rendered empty: an empty ledger
+  // states that this page is the present, and a heading over nothing states
+  // that the author forgot.
+  if es.len() == 0 {
+    _guide("pending-ledger() holds at least one entry; an empty ledger is " +
+           "omitted entirely rather than rendered empty.")
+    return
+  }
+  heading(level: 1)[Pending updates]
+  v(0.3em)
+  for e in es.sorted(key: e => e.since) {
+    let col = PENDING-COLOR.at(e.kind)
+    block(width: 100%, inset: (x: 7pt, y: 5pt), stroke: (left: 2.4pt + col),
+          fill: col.lighten(96%), radius: (right: 2pt))[
+      #grid(columns: (auto, 1fr, auto), gutter: 6pt,
+        box(fill: col.lighten(85%), inset: (x: 3pt, y: 1pt), radius: 1.5pt,
+            text(size: 6pt, weight: "bold", fill: col.darken(15%))[#e.kind]),
+        text(size: 9.2pt, weight: "bold")[#e.title],
+        text(size: 7pt, fill: luma(120), font: "DejaVu Sans Mono")[#e.since])
+      #if e.body != none [ #v(2pt) #text(size: 8.2pt)[#e.body] ]
+      #if e.adr != none [ #v(1.5pt) #text(size: 7.2pt, fill: luma(110))[#e.adr] ]
+    ]
+    v(0.35em)
+  }
+  v(0.3em)
+}
+
+// STAT TILES — the identity fields are invariants (a tile with no value shows
+// a number nobody can read); the presentation rules are guidelines.
+#let stat-tile(value: none, label: none, delta: none, dir: none) = {
+  _need("stat-tile", "value", value)
+  _need("stat-tile", "label", label)
+  if dir != none and dir not in ("up", "down") {
+    panic("stat-tile dir=" + repr(dir) + " must be one of " + repr(("up", "down")))
+  }
+  if delta != none and dir == none {
+    _guide("stat-tile " + repr(label) + " carries a delta with no dir=. A " +
+           "trend reads better coloured by its direction, so dir is up or down.")
+  }
+  let v = if type(value) == str { value } else { str(value) }
+  if v.matches(regex("^[0-9]{1,3}(,[0-9]{3})+$")).len() > 0 {
+    _guide("stat-tile value=" + repr(v) + " is an accountant's figure. A stat " +
+           "value is a magnitude the eye takes in — abbreviate it (2.4M, 1.2B).")
+  }
+  (value: v, label: label, delta: delta, dir: dir)
+}
+
+// THE LEGEND — show the mark, never name it. The panel is generated from the
+// library's own visual decisions, so it cannot describe a mark the document
+// does not use.
+#let how-to-read(accent: "teal") = {
+  _req-enum("accent", accent, TINTS)
+  let c = TINT-COLOR.at(accent)
+  block(width: 100%, inset: (x: 7pt, y: 6pt), fill: luma(250),
+        stroke: 0.5pt + luma(215), radius: 2pt)[
+    #text(size: 6.3pt, weight: "bold", tracking: 0.6pt, fill: luma(95))[
+      HOW TO READ THIS
+    ]
+    #v(3pt)
+    #grid(columns: (auto, 1fr), gutter: 6pt, row-gutter: 4pt,
+      box(width: 26pt, height: 11pt, fill: c.lighten(88%),
+          stroke: 0.8pt + c, radius: 2pt),
+      text(size: 7.6pt)[a part this document owns],
+      box(width: 26pt, height: 11pt, fill: white,
+          stroke: (dash: "dashed", paint: luma(150), thickness: 0.7pt),
+          radius: 2pt),
+      text(size: 7.6pt)[a part owned elsewhere, drawn as a pointer],
+      align(horizon, line(length: 26pt, stroke: 0.7pt + luma(85))),
+      text(size: 7.6pt)[a relationship inside this unit],
+      align(horizon, line(length: 26pt,
+        stroke: (dash: "dashed", thickness: 0.6pt, paint: luma(110)))),
+      text(size: 7.6pt)[a relationship crossing the seam],
+      ..COVERAGE-STATUSES.map(s => {
+        let col = COVERAGE-COLOR.at(s)
+        (box(fill: col.lighten(88%), inset: (x: 3pt, y: 1pt), radius: 1.5pt,
+             text(size: 6.5pt, weight: "bold", fill: col.darken(15%))[#s]),
+         text(size: 7.6pt)[a coverage row marked #s])
+      }).flatten())
+  ]
+  v(0.5em)
 }
 """)
 

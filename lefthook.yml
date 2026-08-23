@@ -31,6 +31,7 @@ pre-commit:
           bash ./scripts/design-render.test.sh
           bash ./scripts/widget-coverage.test.sh
           bash ./scripts/vendored-offline.test.sh
+          bash ./scripts/designlib-native.test.sh
         '
     projection-determinism:
       # The seam `nix flake check`'s projection-freshness check also proves:

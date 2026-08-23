@@ -311,6 +311,7 @@
               # carry cannot be silently fetched the way it can on a laptop
               # with a warm cache.
               bash ./scripts/vendored-offline.test.sh
+              bash ./scripts/designlib-native.test.sh
               touch $out
             '';
 

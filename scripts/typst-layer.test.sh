@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+#
+# typst-layer.test.sh — a TYPST-authored layer renders as one document, and a
+# MIXED layer is refused.
+#
+# WHY THIS TEST EXISTS. A layer may be authored as markdown (design.md) or as
+# Typst (design.typ), and the mode is derived from the files present rather
+# than declared by a flag, so the declaration cannot disagree with the tree.
+# Two failures are possible and both are silent:
+#
+#   A MIXED LAYER rendered by preference. If the aggregate picked a winner —
+#   the larger set, or one extension — it would emit a document missing every
+#   context the losing mode held, and that document READS AS COMPLETE: the
+#   table of contents is coherent, each chapter present is correct, and
+#   nothing marks the absence. A half-migrated layer is exactly when this
+#   arises, so the refusal is asserted, and asserted to name BOTH sides.
+#
+#   A DOCUMENT THAT COMPILES TO NOTHING. Asserting exit 0 would pass on a
+#   blank page, so the rendered PDF is read back as text and each context's
+#   own marks are asserted present.
+#
+# Usage: typst-layer.test.sh [repo-root]
+# Exit:  0 all assertions pass, 1 an assertion failed, 2 a tool is missing.
+set -uo pipefail
+
+ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$ROOT" || exit 1
+
+TYPST="${TYPST:-typst}"
+if ! command -v "$TYPST" >/dev/null 2>&1; then
+  echo "typst-layer: error: no renderer on PATH (set TYPST or enter the dev shell)" >&2
+  exit 2
+fi
+# The mark assertion reads the PDF back. A check that cannot run must not
+# report success, so a missing extractor is an error rather than a SKIP.
+if ! command -v pdftotext >/dev/null 2>&1; then
+  echo "typst-layer: error: no pdftotext (enter the dev shell)" >&2
+  exit 2
+fi
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+PASS=0
+FAIL=0
+pass_line() {
+  printf '  ok   %s\n' "$1"
+  PASS=$((PASS + 1))
+}
+fail_line() {
+  printf '  FAIL %s\n' "$1"
+  FAIL=$((FAIL + 1))
+}
+
+# A layer conventionally sits at <repo>/docs/design, and the aggregate resolves
+# its renderer root from that shape, so the fixture reproduces it.
+LAYER="$WORK/repo/docs/design"
+mkdir -p "$LAYER/alpha" "$LAYER/beta"
+
+if ! bash ./scripts/render-project schema/design-schema.json "$LAYER/.render" >/dev/null; then
+  echo "typst-layer: could not project the schema" >&2
+  exit 2
+fi
+
+# Each context exports `title` and `body`. The aggregate supplies ONE page
+# shell for the whole layer, so a context never calls design-doc itself.
+cat >"$LAYER/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Zroot document]
+#let body = [
+  #section(title: "00 Foundation", lead: "The root.", body: [
+    #goal(title: "Zrootgoal")[Root goal body.]
+  ])
+]
+EOF
+cat >"$LAYER/alpha/design.typ" <<'EOF'
+#import "../.render/designlib.typ": *
+#let title = [Zalpha context]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zalphagoal")[Alpha goal.]
+  ])
+]
+EOF
+cat >"$LAYER/alpha/CONTEXT.typ" <<'EOF'
+#let terms = ((slug: "term-zthing", title: "Zthing", body: [A Zthing is a thing.]),)
+EOF
+cat >"$LAYER/beta/design.typ" <<'EOF'
+#import "../.render/designlib.typ": *
+#let title = [Zbeta context]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zbetagoal")[Beta goal.]
+  ])
+]
+EOF
+
+echo "typst-layer: a Typst-authored layer renders as one document"
+
+# --- 1. it renders, and every chapter is really on the page -------------------
+out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/design-layer.pdf" 2>&1)"
+rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$LAYER/design-layer.pdf" ]; then
+  pass_line "a Typst layer aggregates (exit 0)"
+  text="$(pdftotext "$LAYER/design-layer.pdf" - 2>/dev/null)"
+  missing=""
+  # one mark per chapter, one per goal, and the glossary term: a chapter that
+  # silently failed to place its body would drop its goal but keep its title.
+  for mark in Zroot Zalpha Zbeta Zrootgoal Zalphagoal Zbetagoal Zthing; do
+    case "$text" in
+    *"$mark"*) ;;
+    *) missing="$missing $mark" ;;
+    esac
+  done
+  if [ -z "$missing" ]; then
+    pass_line "every chapter, goal, and glossary term reaches the page"
+  else
+    fail_line "the document rendered but these marks are absent:$missing"
+  fi
+  case "$out" in
+  *"3 context(s)"*) pass_line "the summary counts all three contexts" ;;
+  *) fail_line "the summary miscounts the contexts: $out" ;;
+  esac
+  case "$out" in
+  *"1 term(s)"*) pass_line "the summary counts the glossary term" ;;
+  *) fail_line "the summary miscounts the terms: $out" ;;
+  esac
+else
+  fail_line "a Typst layer did not aggregate (exit $rc)"
+  printf '%s\n' "$out" | head -6 | sed 's/^/       /'
+fi
+
+# --- 2. the freshness check verifies rather than repairs ----------------------
+if python3 ./scripts/design-aggregate "$LAYER" "$LAYER/design-layer.pdf" --check >/dev/null 2>&1; then
+  pass_line "a freshly built Typst layer is reported fresh"
+else
+  fail_line "a freshly built Typst layer was reported stale"
+fi
+
+# --- 3. a MIXED layer is refused, naming both sides ---------------------------
+echo "# a stray markdown context" >"$LAYER/beta/design.md"
+out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/mixed.pdf" 2>&1)"
+rc=$?
+if [ "$rc" -eq 2 ]; then
+  pass_line "a mixed layer is an error (exit 2)"
+else
+  fail_line "a mixed layer exited $rc, wanted 2 — a half-migrated layer rendered"
+fi
+if [ -f "$LAYER/mixed.pdf" ]; then
+  fail_line "a mixed layer wrote a PDF — it must emit nothing"
+  rm -f "$LAYER/mixed.pdf"
+else
+  pass_line "a mixed layer writes no document"
+fi
+case "$out" in
+*"beta/design.md"*) pass_line "the error names the markdown file" ;;
+*) fail_line "the error does not name the offending markdown file" ;;
+esac
+case "$out" in
+*"alpha/design.typ"*) pass_line "the error names the Typst files" ;;
+*) fail_line "the error does not name the Typst files" ;;
+esac
+rm -f "$LAYER/beta/design.md"
+
+# --- 4. an empty layer is an error, not an empty document ---------------------
+EMPTY="$WORK/empty/docs/design"
+mkdir -p "$EMPTY"
+if python3 ./scripts/design-aggregate "$EMPTY" "$EMPTY/out.pdf" >/dev/null 2>&1; then
+  fail_line "a layer with no documents rendered instead of failing"
+else
+  pass_line "a layer with no design document is an error"
+fi
+
+echo
+echo "typst-layer: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]

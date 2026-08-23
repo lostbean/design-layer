@@ -312,6 +312,7 @@
               # with a warm cache.
               bash ./scripts/vendored-offline.test.sh
               bash ./scripts/designlib-native.test.sh
+              bash ./scripts/typst-layer.test.sh
               touch $out
             '';
 

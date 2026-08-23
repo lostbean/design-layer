@@ -192,20 +192,244 @@ def read_frontmatter(path):
     return fm
 
 
-def contexts_of(root):
-    """The root document plus each context directory, in a stable order."""
+class MixedLayer(Exception):
+    """A layer holding both markdown and Typst sources."""
+
+
+def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
+                       n_contexts, n_terms):
+    """Render the assembled document, then build-or-verify it.
+
+    Shared by both authoring modes: the assembly differs, the compile and the
+    freshness contract do not, so there is one implementation of the part that
+    decides pass or fail.
+    """
+    typst = os.environ.get("TYPST", "typst")
+    # Under --check the fresh render goes to a temp file and the committed
+    # document is left alone, so a stale artifact is REPORTED rather than
+    # silently repaired.
+    tmpdir = tempfile.mkdtemp(prefix="design-aggregate.") if check else None
+    target = os.path.join(tmpdir, "fresh.pdf") if check else os.path.abspath(out_pdf)
+    # A PDF embeds a creation timestamp, so two renders of one source would
+    # differ in bytes for no reason a reader can see. Pinning the timestamp is
+    # what makes the freshness check a plain byte-compare. This render happened
+    # to be reproducible without the pin — Typst omits the field here — but that
+    # is undocumented behavior, and a gate resting on it is resting on an
+    # accident, the same shape as a read-only package cache standing in for an
+    # offline contract.
+    env = dict(os.environ, SOURCE_DATE_EPOCH="0")
+    try:
+        proc = subprocess.run(
+            [typst, "compile", agg, target,
+             # the renderer refuses any source outside its project root, and
+             # the library may sit outside the layer under $DESIGN_LIB_DIR, so
+             # the root must span both the layer and the library.
+             "--root", os.path.commonpath(
+                 [os.path.abspath(os.path.join(root, "..", "..")),
+                  os.path.abspath(lib)])],
+            capture_output=True, text=True, env=env)
+    finally:
+        for f in cleanup:
+            if os.path.exists(f):
+                os.remove(f)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        return 1
+    if warns(proc.stderr, out_pdf, report=sys.stderr.write):
+        return 1
+
+    if check:
+        if not os.path.exists(out_pdf):
+            sys.stderr.write("design-aggregate: %s is missing (the layer has "
+                             "no rendered document)\n" % out_pdf)
+            return 1
+        with open(out_pdf, "rb") as f:
+            committed = f.read()
+        with open(target, "rb") as f:
+            fresh = f.read()
+        if committed != fresh:
+            sys.stderr.write("design-aggregate: %s is stale (does not match a "
+                             "fresh render)\n" % out_pdf)
+            return 1
+        sys.stdout.write("design-aggregate: %s is fresh (%d context(s), %d "
+                         "term(s))\n" % (out_pdf, n_contexts, n_terms))
+        return 0
+
+    sys.stdout.write("design-aggregate: wrote %s (%d context(s), %d term(s))\n"
+                     % (out_pdf, n_contexts, n_terms))
+    return 0
+
+
+def aggregate_typst(root, out_pdf, check, lib, docs):
+    """Assemble a TYPST-authored layer into the one rendered document.
+
+    There is no conversion step here, which is the point of the mode: each
+    context's design.typ is imported as a Typst module and its `body` is
+    placed under the chapter heading. Nothing parses the authored file, so no
+    construct can be half-translated.
+
+    The per-document page shell is NOT applied — the aggregate supplies one
+    shell for the whole layer, exactly as it does on the markdown side. A
+    context's design.typ therefore exports its content as `body` rather than
+    calling `design-doc` itself.
+
+    WHERE THE DOCUMENT-LEVEL CONTRACTS GO, stated plainly because the answer
+    differs by mode. On the markdown side `assert_document` re-parses the
+    authored file to check foundation order, spine order, and pending-entry
+    validity — contracts no per-block function can see, since a function only
+    runs when it is called and cannot notice a block nobody wrote. That parser
+    reads markdown, so it does not run here, and running it against Typst
+    source would report nothing while looking like a check.
+
+    In this mode those contracts belong to the library, which can hold them
+    because the author calls it directly: a `section` cannot omit its title, a
+    `pending-entry` cannot carry a malformed date, and an ordering rule is a
+    call-order the document itself expresses. What is NOT yet enforced here is
+    the cross-block foundation ORDER, and that is recorded as a known gap
+    rather than left to look covered.
+    """
+    gen_dir = os.path.join(root, ".render")
+    os.makedirs(gen_dir, exist_ok=True)
+    rel_lib = os.path.relpath(os.path.abspath(lib), os.path.abspath(gen_dir))
+    cleanup = []
+
+    L = ['#import "%s": *' % rel_lib, ""]
+    L.append("#show: aggregate-doc.with(")
+    L.append('  title: [Design layer],')
+    L.append('  subtitle: [the whole layer, as one document],')
+    L.append(")")
+    L.append("")
+
+    for name, doc in docs:
+        stem = "root" if name is None else name
+        rel_doc = os.path.relpath(os.path.abspath(doc),
+                                  os.path.abspath(gen_dir))
+        mod = "_ctx_%s" % re.sub(r"[^A-Za-z0-9]", "_", stem)
+        L.append('#import %s as %s' % (_typ_str(rel_doc), mod))
+        # The chapter heading carries the context label, so a cross-document
+        # reference resolves to it. A document declaring its own `title` names
+        # the chapter; otherwise the directory name does. A Typst module is not
+        # a dictionary, so the presence test goes through dictionary(), which
+        # is the conversion that lets a missing binding fall back rather than
+        # fail the build.
+        L.append('#let _m = dictionary(%s)' % mod)
+        L.append('#let _t = if "title" in _m { _m.title } else { %s }'
+                 % _typ_str(stem + " context"))
+        L.append("#chapter-page(_t, kind: %s)"
+                 % _typ_str("root design" if stem == "root" else "context"))
+        L.append("#pagebreak()")
+        L.append("= #_t <ctx-%s>" % stem)
+        L.append("#%s.body" % mod)
+        L.append("")
+
+    terms = typst_glossary_terms(root, docs)
+    if terms:
+        L.append("= Glossary <glossary>")
+        L.append("Every term the layer declares, with the context that owns it.")
+        L.append("")
+        for t in sorted(terms, key=lambda x: str(x["title"]).lower()):
+            L.append('#heading(level: 2, outlined: false)[%s] <%s>'
+                     % (t["title"], t["slug"]))
+            L.append("#context-owner(%s)" % _typ_str(t["context"]))
+            L.append(t["body"])
+            L.append("")
+
+    agg = os.path.join(gen_dir, "_aggregate.typ")
+    open(agg, "w", encoding="utf-8").write("\n".join(L) + "\n")
+    cleanup.append(agg)
+    return compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
+                              len(docs), len(terms))
+
+
+def typst_glossary_terms(root, docs):
+    """Every term a TYPST layer declares, with its owning context.
+
+    A CONTEXT.typ exports `terms`, an array of (slug, title, body) — the same
+    three facts the markdown glossary carries as a heading, an anchor, and the
+    prose under it. The aggregate reads the count here, from the SOURCE, so
+    the summary line reports what was gathered; the bodies themselves are
+    placed by the generated Typst above, which imports the module.
+    """
     found = []
-    root_doc = os.path.join(root, "design.md")
-    if os.path.exists(root_doc):
-        found.append((None, root_doc))
+    for name, doc in docs:
+        stem = "root" if name is None else name
+        ctx = os.path.join(os.path.dirname(doc), "CONTEXT.typ")
+        if not os.path.exists(ctx):
+            continue
+        src = open(ctx, encoding="utf-8").read()
+        for m in re.finditer(
+                r'\(\s*slug:\s*"(?P<slug>term-[a-z0-9-]+)"\s*,'
+                r'\s*title:\s*(?P<title>\[[^\]]*\]|"[^"]*")\s*,'
+                r'\s*body:\s*(?P<body>\[(?:[^\[\]]|\[[^\]]*\])*\])', src):
+            found.append({
+                "slug": m.group("slug"),
+                "title": m.group("title").strip('"'),
+                "body": m.group("body"),
+                "context": stem,
+            })
+    return found
+
+
+def _homes(root):
+    """Every place a design document may live, in a stable order.
+
+    (context-name-or-None, directory). The root document first, then each
+    context directory alphabetically — the order the chapters render in.
+    """
+    homes = [(None, root)]
     for name in sorted(os.listdir(root)):
         d = os.path.join(root, name)
         if name.startswith(".") or not os.path.isdir(d):
             continue
-        doc = os.path.join(d, "design.md")
-        if os.path.exists(doc):
-            found.append((name, doc))
-    return found
+        homes.append((name, d))
+    return homes
+
+
+def contexts_of(root):
+    """The layer's documents and the MODE they are authored in.
+
+    Returns (mode, [(context-name-or-None, path), ...]) where mode is
+    "markdown" or "typst".
+
+    THE MODE IS DERIVED FROM THE FILES, never from a flag, so the declaration
+    cannot disagree with the tree (schema design_doc.source_mode). A layer
+    authors design.md throughout, or design.typ throughout.
+
+    A MIXED LAYER IS A HARD ERROR, and this is the load-bearing part. Picking
+    a winner — preferring one extension, or rendering whichever set is larger
+    — produces a document silently missing every context the chosen mode did
+    not cover. That reads as a complete layer: the table of contents is
+    coherent, every chapter present renders correctly, and nothing marks the
+    absence. A half-migrated layer is exactly the state this arises in, so the
+    failure must name both sides and stop.
+    """
+    md, typ = [], []
+    for name, d in _homes(root):
+        m = os.path.join(d, "design.md")
+        t = os.path.join(d, "design.typ")
+        if os.path.exists(m):
+            md.append((name, m))
+        if os.path.exists(t):
+            typ.append((name, t))
+
+    if md and typ:
+        lines = ["design-aggregate: error: the layer is authored in BOTH "
+                 "markdown and Typst, and no rendering of it would be honest.\n"]
+        lines.append("  markdown (design.md):\n")
+        for _n, p in md:
+            lines.append("    %s\n" % os.path.relpath(p, root))
+        lines.append("  typst (design.typ):\n")
+        for _n, p in typ:
+            lines.append("    %s\n" % os.path.relpath(p, root))
+        lines.append("  A layer is authored in exactly one mode. Finish the "
+                     "migration or revert it; rendering one side would emit a "
+                     "document silently missing the other.\n")
+        raise MixedLayer("".join(lines))
+
+    if typ:
+        return "typst", typ
+    return "markdown", md
+
 
 
 def glossary_terms(root):
@@ -267,10 +491,18 @@ def main():
                          "(run render-project, or set DESIGN_LIB_DIR)\n" % lib)
         return 2
 
-    docs = contexts_of(root)
-    if not docs:
-        sys.stderr.write("design-aggregate: error: no design.md under %s\n" % root)
+    try:
+        mode, docs = contexts_of(root)
+    except MixedLayer as exc:
+        sys.stderr.write(str(exc))
         return 2
+    if not docs:
+        sys.stderr.write("design-aggregate: error: no design.md or design.typ "
+                         "under %s\n" % root)
+        return 2
+
+    if mode == "typst":
+        return aggregate_typst(root, out_pdf, check, lib, docs)
 
     # The scratch directory for the generated Typst stays under the LAYER ROOT,
     # never beside the library: $DESIGN_LIB_DIR may point at a read-only store,
@@ -430,60 +662,8 @@ def main():
     open(agg, "w", encoding="utf-8").write("\n".join(L) + "\n")
     cleanup.append(agg)
 
-    typst = os.environ.get("TYPST", "typst")
-    # Under --check the fresh render goes to a temp file and the committed
-    # document is left alone, so a stale artifact is REPORTED rather than
-    # silently repaired.
-    tmpdir = tempfile.mkdtemp(prefix="design-aggregate.") if check else None
-    target = os.path.join(tmpdir, "fresh.pdf") if check else os.path.abspath(out_pdf)
-    # A PDF embeds a creation timestamp, so two renders of one source would
-    # differ in bytes for no reason a reader can see. Pinning the timestamp is
-    # what makes the freshness check a plain byte-compare. This render happened
-    # to be reproducible without the pin — Typst omits the field here — but that
-    # is undocumented behavior, and a gate resting on it is resting on an
-    # accident, the same shape as a read-only package cache standing in for an
-    # offline contract.
-    env = dict(os.environ, SOURCE_DATE_EPOCH="0")
-    try:
-        proc = subprocess.run(
-            [typst, "compile", agg, target,
-             # the renderer refuses any source outside its project root, and
-             # the library may sit outside the layer under $DESIGN_LIB_DIR, so
-             # the root must span both the layer and the library.
-             "--root", os.path.commonpath(
-                 [os.path.abspath(os.path.join(root, "..", "..")),
-                  os.path.abspath(lib)])],
-            capture_output=True, text=True, env=env)
-    finally:
-        for f in cleanup:
-            if os.path.exists(f):
-                os.remove(f)
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr)
-        return 1
-    if warns(proc.stderr, out_pdf, report=sys.stderr.write):
-        return 1
-
-    if check:
-        if not os.path.exists(out_pdf):
-            sys.stderr.write("design-aggregate: %s is missing (the layer has "
-                             "no rendered document)\n" % out_pdf)
-            return 1
-        with open(out_pdf, "rb") as f:
-            committed = f.read()
-        with open(target, "rb") as f:
-            fresh = f.read()
-        if committed != fresh:
-            sys.stderr.write("design-aggregate: %s is stale (does not match a "
-                             "fresh render)\n" % out_pdf)
-            return 1
-        sys.stdout.write("design-aggregate: %s is fresh (%d context(s), %d "
-                         "term(s))\n" % (out_pdf, len(parts), len(terms)))
-        return 0
-
-    sys.stdout.write("design-aggregate: wrote %s (%d context(s), %d term(s))\n"
-                     % (out_pdf, len(parts), len(terms)))
-    return 0
+    return compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
+                              len(parts), len(terms))
 
 
 def _typ_str(s):

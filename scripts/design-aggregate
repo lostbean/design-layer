@@ -322,16 +322,59 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
         L.append("#%s.body" % mod)
         L.append("")
 
-    terms = typst_glossary_terms(root, docs)
+    terms = typst_glossary_terms(root, gen_dir, docs)
     if terms:
+        # One import per CONTEXT.typ that declares terms — the glossary reads
+        # its titles and bodies out of these modules rather than out of their
+        # source text.
+        for imp, mod in sorted({(t["import"], t["module"]) for t in terms}):
+            L.append('#import %s as %s' % (_typ_str(imp), mod))
+        # Find a term by its slug. The panic is the load-bearing half: it is
+        # what turns a disagreement between the scrape and the module into a
+        # failed build instead of a glossary that renders the wrong definition
+        # under a term's name.
+        L.append('#let _term-by-slug(ts, slug) = {')
+        L.append('  let hit = ts.filter(t => t.slug == slug)')
+        L.append('  if hit.len() != 1 {')
+        L.append('    panic("glossary: term " + slug + " is not declared '
+                 'exactly once in its CONTEXT.typ")')
+        L.append('  }')
+        L.append('  hit.first()')
+        L.append('}')
+        L.append("")
         L.append("= Glossary <glossary>")
         L.append("Every term the layer declares, with the context that owns it.")
         L.append("")
-        for t in sorted(terms, key=lambda x: str(x["title"]).lower()):
-            L.append('#heading(level: 2, outlined: false)[%s] <%s>'
-                     % (t["title"], t["slug"]))
+        # A term's title and body are placed by REFERENCE into the imported
+        # module, never as source text copied out of CONTEXT.typ. The scrape
+        # that finds the terms reads raw source, so a `title: [Accent]` is
+        # captured as the seven characters `[Accent]` — brackets included,
+        # because they are part of the text the file holds. Re-wrapping that in
+        # a content block produced `#heading(...)[[Accent]]`, and Typst renders
+        # the inner brackets literally: every term in every Typst-authored
+        # layer headed itself `[Accent]` and closed its body with a stray `]`.
+        #
+        # Stripping the captured brackets would fix the common case and break
+        # the general one — a title carrying its own markup (`[The #emph[real]
+        # name]`) does not survive a text-level unwrap, and neither does a body
+        # holding any nested block. Indexing the module hands Typst the AUTHORED
+        # VALUE, whatever its shape, so no title or body is parsed twice.
+        for t in sorted(terms, key=lambda x: x["sort_key"]):
+            # The term is addressed BY SLUG, not by its position in the array.
+            # A position would have to survive the scrape agreeing with the
+            # module about how many terms there are, and it does not: the
+            # pattern cannot match a title holding nested brackets
+            # (`title: [The #emph[X] name]`), so such a term is skipped and
+            # every later term's index slides by one — which would attach one
+            # term's anchor to another term's definition. A slug lookup is
+            # order-independent, and `glossary-term` panics when the slug is
+            # absent, so a scrape that drifts from the module fails loudly.
+            ref = "%s(%s.terms, %s)" % ("_term-by-slug", t["module"],
+                                        _typ_str(t["slug"]))
+            L.append('#heading(level: 2, outlined: false)[#%s.title] <%s>'
+                     % (ref, t["slug"]))
             L.append("#context-owner(%s)" % _typ_str(t["context"]))
-            L.append(t["body"])
+            L.append("#%s.body" % ref)
             L.append("")
 
     agg = os.path.join(gen_dir, "_aggregate.typ")
@@ -341,14 +384,31 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
                               len(docs), len(terms))
 
 
-def typst_glossary_terms(root, docs):
+def typst_glossary_terms(root, gen_dir, docs):
     """Every term a TYPST layer declares, with its owning context.
 
     A CONTEXT.typ exports `terms`, an array of (slug, title, body) — the same
     three facts the markdown glossary carries as a heading, an anchor, and the
-    prose under it. The aggregate reads the count here, from the SOURCE, so
-    the summary line reports what was gathered; the bodies themselves are
-    placed by the generated Typst above, which imports the module.
+    prose under it.
+
+    WHAT THE SCRAPE IS FOR, and what it is NOT for. Reading the source tells
+    the aggregate three things it must know in Python: which terms exist, what
+    anchor each declares, and the order they sort in. It does not supply the
+    rendered title or body — those are placed by looking the slug up in the
+    imported module, so the AUTHORED VALUE reaches the page rather than a
+    second parse of the text that produced it.
+
+    The title is read as text for ONE purpose, the sort key, and a title
+    carrying markup sorts by the characters it is written with; nothing on the
+    rendered page depends on that reading.
+
+    THE BRACKET SCAN IS NOT DECORATION. A title or body is a Typst content
+    block, and content blocks NEST — `title: [The #emph[X] name]` is ordinary
+    authoring. A regex bounded by the first `]` stops inside such a title,
+    fails to match the term, and silently omits it: the glossary loses an entry
+    and the summary line reports the smaller count as though it were right.
+    Matching brackets by depth is what makes the scan see every term an author
+    actually wrote.
     """
     found = []
     for name, doc in docs:
@@ -357,17 +417,48 @@ def typst_glossary_terms(root, docs):
         if not os.path.exists(ctx):
             continue
         src = open(ctx, encoding="utf-8").read()
+        rel_ctx = os.path.relpath(os.path.abspath(ctx), os.path.abspath(gen_dir))
+        module = "_gl_%s" % re.sub(r"[^A-Za-z0-9]", "_", stem)
         for m in re.finditer(
-                r'\(\s*slug:\s*"(?P<slug>term-[a-z0-9-]+)"\s*,'
-                r'\s*title:\s*(?P<title>\[[^\]]*\]|"[^"]*")\s*,'
-                r'\s*body:\s*(?P<body>\[(?:[^\[\]]|\[[^\]]*\])*\])', src):
+                r'slug:\s*"(?P<slug>term-[a-z0-9-]+)"\s*,\s*title:\s*', src):
+            title = _typst_value_at(src, m.end())
+            if title is None:
+                continue
             found.append({
                 "slug": m.group("slug"),
-                "title": m.group("title").strip('"'),
-                "body": m.group("body"),
+                "sort_key": title.lower(),
                 "context": stem,
+                "module": module,
+                "import": rel_ctx,
             })
     return found
+
+
+def _typst_value_at(src, i):
+    """The text of the Typst value starting at `i`, or None.
+
+    Handles the two forms a term title takes — a content block `[...]`, read
+    with BALANCED brackets so a nested block does not end it early, and a
+    quoted string `"..."`. The brackets or quotes themselves are stripped: the
+    caller wants the text a reader sees, for sorting.
+    """
+    if i >= len(src):
+        return None
+    if src[i] == '"':
+        j = src.index('"', i + 1) if '"' in src[i + 1:] else -1
+        return src[i + 1:j] if j > i else None
+    if src[i] != "[":
+        return None
+    depth, j = 0, i
+    while j < len(src):
+        if src[j] == "[":
+            depth += 1
+        elif src[j] == "]":
+            depth -= 1
+            if depth == 0:
+                return src[i + 1:j]
+        j += 1
+    return None
 
 
 def _homes(root):

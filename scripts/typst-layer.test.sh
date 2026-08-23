@@ -82,8 +82,22 @@ cat >"$LAYER/alpha/design.typ" <<'EOF'
   ])
 ]
 EOF
+# A term's title is a CONTENT BLOCK here, which is how a real layer writes it.
+# The fixture used a quoted string once, and that is precisely why the glossary
+# shipped broken for as long as it did: a quoted title has no brackets for the
+# aggregate to double-wrap, so the one term under test rendered correctly while
+# every content-block title in every real layer rendered as `[Zthing]`.
+#
+# Zmarked carries markup INSIDE its title and body. It covers the second
+# failure: a scrape bounded by the first `]` cannot see past `#emph[`, so the
+# term was dropped from the glossary entirely and the count reported one fewer
+# without complaint.
 cat >"$LAYER/alpha/CONTEXT.typ" <<'EOF'
-#let terms = ((slug: "term-zthing", title: "Zthing", body: [A Zthing is a thing.]),)
+#let terms = (
+  (slug: "term-zthing", title: [Zthing], body: [A Zthing is a thing.]),
+  (slug: "term-zmarked", title: [Zmarked #emph[inner] tail],
+   body: [Zbody with #strong[Zbold] inside.]),
+)
 EOF
 cat >"$LAYER/beta/design.typ" <<'EOF'
 #import "../.render/designlib.typ": *
@@ -122,9 +136,49 @@ if [ "$rc" -eq 0 ] && [ -f "$LAYER/design-layer.pdf" ]; then
   *) fail_line "the summary miscounts the contexts: $out" ;;
   esac
   case "$out" in
-  *"1 term(s)"*) pass_line "the summary counts the glossary term" ;;
+  *"2 term(s)"*) pass_line "the summary counts both glossary terms" ;;
   *) fail_line "the summary miscounts the terms: $out" ;;
   esac
+
+  # --- the glossary renders its terms, not their SOURCE TEXT ----------------
+  # Asserting the mark is present is not enough, and that is the whole lesson
+  # of this bug: `[Zthing]` contains `Zthing`, so the mark loop above passed
+  # green through every broken render. These assertions read the exact
+  # characters on the page and REFUSE the bracketed form.
+  if printf '%s' "$text" | grep -q '\[Zthing\]'; then
+    fail_line "the term heading renders as [Zthing] — its source brackets reached the page"
+  else
+    pass_line "the term heading carries no literal source brackets"
+  fi
+  if printf '%s' "$text" | grep -qE '^[0-9.]+ +Zthing *$'; then
+    pass_line "the term heading renders as Zthing"
+  else
+    fail_line "no numbered heading reads exactly 'Zthing'"
+    printf '%s' "$text" | grep -i "zthing" | head -3 | sed 's/^/       got: /'
+  fi
+  if printf '%s' "$text" | grep -q '\[A Zthing is a thing\.\]'; then
+    fail_line "the term body renders wrapped in literal brackets"
+  else
+    pass_line "the term body carries no literal source brackets"
+  fi
+
+  # --- a title holding markup survives, in the heading AND in the count -----
+  if printf '%s' "$text" | grep -q 'Zmarked inner tail'; then
+    pass_line "a term title holding markup renders its text"
+  else
+    fail_line "the markup-bearing term title is absent or mangled"
+    printf '%s' "$text" | grep -i "zmarked" | head -3 | sed 's/^/       got: /'
+  fi
+  if printf '%s' "$text" | grep -q 'Zbody with Zbold inside'; then
+    pass_line "a term body holding markup renders its text"
+  else
+    fail_line "the markup-bearing term body is absent or mangled"
+  fi
+  if printf '%s' "$text" | grep -qE '#emph|#strong'; then
+    fail_line "a Typst call reached the page as literal text"
+  else
+    pass_line "no Typst call leaked onto the page"
+  fi
 else
   fail_line "a Typst layer did not aggregate (exit $rc)"
   printf '%s\n' "$out" | head -6 | sed 's/^/       /'

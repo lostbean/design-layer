@@ -1,16 +1,17 @@
 ---
 name: design-document-syntax
-description: The format specification for a design layer — the authored markdown that `design.md`, `CONTEXT.md`, and `docs/adr/` are written in, and the contracts the renderer and the gate decide pass or fail on. Covers the artifact set and where each file lives, term and ADR anchors, block anatomy and the `title=` contract, the full block vocabulary, the required section spine, the pending ledger's entry fields, the `:::behavior` clause blocks and `level=`, the `::::entity` census with provenance and cardinality, and how renderer versioning is pinned. Use when writing or editing a `design.md`, `CONTEXT.md`, or an ADR; when a render or gate run reports a violation and the correct syntax is needed; when asking "what block do I use for this?", "how do I write an invariant / a behavior rule / an entity", "where does this file go", "what does `title=` require", "why did my foundation fail to render"; or when bootstrapping a design layer in a repo that has none.
+description: The format specification for a design layer — the Typst that `design.typ` and `CONTEXT.typ` are authored in, the markdown that `docs/adr/` and `COVERAGE.md` stay in, and the contracts the renderer and the gate decide pass or fail on. Covers the artifact set and where each file lives, the bindings a design document exports, the `terms` array a glossary exports, ADR anchors, the block functions and their required arguments, the section spine, the pending ledger, the behavior clause calls and `level`, the entity census, and how the renderer is pinned. Use when writing or editing a `design.typ`, a `CONTEXT.typ`, or an ADR; when a compile or gate run reports a violation and the correct call is needed; when asking "what function do I call for this?", "how do I write an invariant / a behavior rule / an entity", "where does this file go", "why did my foundation fail to compile"; or when bootstrapping a design layer in a repo that has none.
 domains: [engineering]
 status: ship
 ---
 
 # Design document syntax
 
-A design layer is authored markdown. `design.md` is markdown extended with a
-small set of container-directive blocks; `CONTEXT.md` and the files under
-`docs/adr/` are plain markdown holding declared anchors. A renderer compiles
-the layer into one PDF, and a gate decides whether the layer is well-formed.
+A design layer is authored Typst. `design.typ` and `CONTEXT.typ` are Typst
+modules that call a projected library; the files under `docs/adr/`, plus
+`CONTEXT-MAP.md` and `COVERAGE.md`, are plain markdown holding declared
+anchors. A renderer compiles the layer into one PDF, and a gate decides whether
+the layer is well-formed.
 
 This document is the format specification: what you may write, where it goes,
 and which rules a machine actually decides. It does not say when a system is
@@ -19,62 +20,70 @@ judgment calls made with the rendered document in hand.
 
 ## How to read this document
 
-The block vocabulary has one live demonstration: `fixtures/widget-gallery.md`
-in the design-layer repository. Every declared block kind appears there once,
-written in real syntax, and a self-test fails if a declared kind is missing
-from it or stops rendering. **Read the gallery for syntax; read the tables
-below as an index into it.** A table here tells you which block to reach for
-and what its contract requires. The gallery shows you the block working.
+The block vocabulary has one live demonstration: `fixtures/gallery.typ`
+in the design-layer repository. Every function the library projects for an
+author appears there once, written in real syntax, and a self-test fails if a
+projected function is missing from it or stops rendering. **Read the gallery
+for syntax; read the tables below as an index into it.** A table here tells you
+which function to reach for and what its contract requires. The gallery shows
+you the function working.
 
-Two words are used precisely throughout:
+Three words are used precisely throughout:
 
-- **Machine-checked** — a script or the renderer decides pass or fail on this,
-  fail-closed. Break it and you get a violation naming the file and the line.
-- **Convention** — no check enforces it. It is stated because a layer that
-  ignores it reads badly, but nothing will stop you.
+- **Machine-checked** — the renderer or a gate script decides pass or fail on
+  this, fail-closed. Break it and you get a violation naming the file and the
+  line.
+- **Guideline** — the renderer holds the rule but stays silent in an ordinary
+  render. It fires only under the author-requested `lint` sweep (§6), which
+  promotes every guideline to an error. A guideline names a document that could
+  read better, never one that is wrong.
+- **Convention** — no check enforces it at all. It is stated because a layer
+  that ignores it reads badly, but nothing will stop you.
 
 Every command below is a `nix run` against the design-layer flake. A host repo
 copies nothing in: the scripts, the schema, and the renderer travel together as
-one pinned bundle, and the host stores only its own markdown.
+one pinned bundle, and the host stores only its own sources.
 
 ---
 
 ## 1 · The artifact set and where it lives
 
 The design layer is **three artifacts owning three concerns**, joined by
-cross-links.
+cross-references.
 
-| Artifact                           | Owns                                                                 | Never contains                                                   |
-| ---------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `design.md` → a chapter of the PDF | the design itself — the current, actual snapshot, presented visually | a restated definition; a re-argued decision — link the other two |
-| `CONTEXT.md`                       | semantics — the canonical definition, one term per anchor            | implementation detail                                            |
-| `docs/adr/NNNN-slug.md`            | rationale — the canonical argument, one decision per anchor          | a duplicate of either of the above                               |
+| Artifact                            | Owns                                                                 | Never contains                                                   |
+| ----------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `design.typ` → a chapter of the PDF | the design itself — the current, actual snapshot, presented visually | a restated definition; a re-argued decision — cite the other two |
+| `CONTEXT.typ`                       | semantics — the canonical definition, one term per slug              | implementation detail                                            |
+| `docs/adr/NNNN-slug.md`             | rationale — the canonical argument, one decision per anchor          | a duplicate of either of the above                               |
 
 The design document is not a link farm. It presents structure, narrative, and
-visuals in full, and links out only where a word needs knowing or a reader
+visuals in full, and points out only where a word needs knowing or a reader
 would genuinely ask "why?". Definitions and rationale have canonical homes
 elsewhere; the design document states what the design **is**.
 
-### Links stay `.md`
+### The ADRs stay markdown
 
-Every link in every artifact points at the `.md` file. The context map links a
-context's `design.md`, a root links a domain's `design.md`, a `#term-` or
-`#adr-` fragment links its `.md`.
+Authoring in `design.md` + `CONTEXT.md` was removed; the Typst modules are the
+only authoring surface for the design and its glossary. The ADRs did not move
+with them, and neither did `CONTEXT-MAP.md` or `COVERAGE.md`. They were never
+the authoring surface — they are indexes and records a reader browses in a
+forge — so they stay plain markdown with the anchor contract of §2.
 
-There is no rewrite to a second link form. The layer renders to one PDF, and
-`CONTEXT.md` and the ADRs are never rendered at all, so there is no parallel
-artifact set to keep consistent. A link written by the author is the link that
-ships — which keeps the markdown internally coherent as text, the form a
-reviewer reads in a diff and a forge renders in a browser.
+A layer still carrying a `design.md` is **refused by name**: the aggregate and
+the integrity check both name every leftover markdown source and point at the
+migration, rather than walking past it. Walking past it would report "no design
+layer" against a directory visibly full of design documents, and send the
+reader after the wrong fault.
 
-A dangling design-ish link is **machine-checked**: the gate's integrity check
-resolves every one and reports the ones that do not land.
+A dangling design-ish reference is **machine-checked**: the gate's integrity
+check resolves every one and reports the ones that do not land.
 
 ### Single-context layout — the default
 
 ```
-docs/design/design.md          # the design source (authored)
-docs/design/CONTEXT.md         # the glossary — holds the #term- anchors
+docs/design/design.typ         # the design source (authored)
+docs/design/CONTEXT.typ        # the glossary — declares the term slugs
 docs/design/design-layer.pdf   # generated — the ONE rendered document
 docs/COVERAGE.md               # the coverage map (optional)
 docs/adr/0001-slug.md          # append-only decision records
@@ -83,13 +92,13 @@ docs/adr/0001-slug.md          # append-only decision records
 ### Multi-context layout
 
 ```
-docs/CONTEXT-MAP.md               # entry: links each context's design.md + CONTEXT.md
-docs/design/design.md             # the root design source
-docs/design/design-layer.pdf      # generated — ONE document, the whole layer
-docs/design/<context>/design.md   # a context's design source
-docs/design/<context>/CONTEXT.md  # that context's glossary
+docs/CONTEXT-MAP.md                # entry: links each context's CONTEXT.typ
+docs/design/design.typ             # the root design source
+docs/design/design-layer.pdf       # generated — ONE document, the whole layer
+docs/design/<context>/design.typ   # a context's design source
+docs/design/<context>/CONTEXT.typ  # that context's glossary
 docs/COVERAGE.md
-docs/adr/NNNN-slug.md             # central — rationale often spans contexts
+docs/adr/NNNN-slug.md              # central — rationale often spans contexts
 ```
 
 `<context>` is exactly **one** path segment in kebab-case, matching
@@ -112,13 +121,13 @@ directory exactly.
 
 **Machine-checked.** The declared homes are:
 
-| Basename           | Home                                                           |
-| ------------------ | -------------------------------------------------------------- |
-| `CONTEXT-MAP.md`   | `docs/CONTEXT-MAP.md`                                          |
-| `COVERAGE.md`      | `docs/COVERAGE.md`                                             |
-| `design.md`        | `docs/design/design.md` or `docs/design/<context>/design.md`   |
-| `CONTEXT.md`       | `docs/design/CONTEXT.md` or `docs/design/<context>/CONTEXT.md` |
-| `design-layer.pdf` | `docs/design/design-layer.pdf`                                 |
+| Basename           | Home                                                             |
+| ------------------ | ---------------------------------------------------------------- |
+| `CONTEXT-MAP.md`   | `docs/CONTEXT-MAP.md`                                            |
+| `COVERAGE.md`      | `docs/COVERAGE.md`                                               |
+| `design.typ`       | `docs/design/design.typ` or `docs/design/<context>/design.typ`   |
+| `CONTEXT.typ`      | `docs/design/CONTEXT.typ` or `docs/design/<context>/CONTEXT.typ` |
+| `design-layer.pdf` | `docs/design/design-layer.pdf`                                   |
 
 A file carrying one of those basenames found anywhere else is a mishomed stray
 and fails the gate.
@@ -129,7 +138,7 @@ Two consequences follow, both machine-checked:
   whole layer; a context renders as a chapter of it and emits no sibling PDF.
   A per-context `design.pdf` is a stray left by an older render.
 - **In multi-context mode there is no root glossary.** Every glossary lives in
-  its context folder. A `docs/design/CONTEXT.md` alongside context folders is
+  its context folder. A `docs/design/CONTEXT.typ` alongside context folders is
   an orphan.
 
 ### `COVERAGE.md`
@@ -137,8 +146,14 @@ Two consequences follow, both machine-checked:
 `docs/COVERAGE.md` is the coverage map: a table with one row per meaningful
 system part, each row carrying a status that says whether the design covers it.
 Its **name, its home, and the integrity of its links** are machine-checked like
-any other layer artifact — a row linking a design section that does not exist
-fails the gate.
+any other layer artifact — a row pointing at a design section that does not
+exist fails the gate.
+
+The same breadth axis can also be carried **inside** a design document, as a
+`#coverage(…)` call (§3). There the statuses are machine-checked by the
+renderer: a row must be `captured`, `standard`, or `out-of-scope`, and a row
+that is not `captured` must state a reason, so an absence is a recorded
+decision rather than an oversight.
 
 What earns a part one status rather than another is a judgment call this
 specification does not make. The file is optional; a layer without one is
@@ -155,35 +170,86 @@ direction:
 `separate ways`
 
 A term shared across contexts names exactly one **owning** context. Every other
-context links to the owner's anchor and never redefines it. The map owns
+context cites the owner's slug and never redefines it. The map owns
 context-level relationships only — fine-grained structural relations, module
 seams, and flows live in the root design document's system-at-a-glance section.
 
 ---
 
-## 2 · Anchors
+## 2 · Declarations and references
 
-Two anchor forms are declared, and the gate resolves every reference against
-them.
+### A design document is a module
 
-### Term anchors — `CONTEXT.md`
+`design.typ` is a Typst module. It imports the projected library and exports
+its content as bindings the aggregate reads:
 
-```markdown
-### Pending ledger {#term-pending-ledger}
+```typst
+#import "../.render/designlib.typ": *
 
-The single section of a design document holding every intentionally-open state.
+#let title = [Scheduling]
 
-_Avoid_: backlog — implies work queued rather than design running ahead.
+#let body = [
+  #section(title: "00 Foundation", lead: "What this context is for.", body: [
+    #goal(title: "Onboard any repository")[…]
+  ])
+]
 ```
 
-- **Form**: `### <Term> {#term-<slug>}` — heading level three, exactly.
+| Binding      | Contract                                                                                                       |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| `title`      | the chapter's display title; a content block. Optional — the directory name stands in when it is absent        |
+| `body`       | the document's whole content, placed under the chapter heading. This is what the aggregate renders             |
+| `index_only` | optional boolean; legal on a multi-context **root** and changes what the foundation contract requires — see §4 |
+
+**The page shell is not the document's to apply.** The aggregate supplies one
+shell for the whole layer — the title page, the table of contents, the running
+footer, the per-chapter front pages. A `design.typ` exports `body` and calls no
+`design-doc`, so a context cannot decide page size, numbering, or colour.
+
+A **standalone reference page** that is not part of any layer is the one
+exception: it is compiled on its own, so it applies its own shell with
+`#show: design-doc.with(eyebrow: …, hero_title: …, lede: …, footer: …)`. That
+is how `fixtures/gallery.typ` is written.
+
+### A glossary declares a `terms` array
+
+`CONTEXT.typ` exports one binding, `terms`: an array of entries, each carrying
+a slug, a title, and a body, **in that order**.
+
+```typst
+#let terms = (
+  (
+    slug: "term-pending-ledger",
+    title: [Pending ledger],
+    body: [
+      The single section of a design document holding every intentionally-open
+      state.
+
+      _Avoid_: backlog — implies work queued rather than design running ahead.
+    ],
+  ),
+  (
+    slug: "term-behavior-rule",
+    title: [Behavior rule],
+    body: [A conditional rule stating what a surface does, cited from
+      #term("term-pending-ledger") where it runs ahead.],
+  ),
+)
+```
+
 - **Slug**: lowercase; runs of non-alphanumeric characters collapse to single
   hyphens; leading and trailing hyphens stripped. Machine-checked against
   `^term-[a-z0-9]+(-[a-z0-9]+)*$`.
-- **One term per anchor**, and a slug is **never repurposed** for a different
+- **One term per slug**, and a slug is **never repurposed** for a different
   concept. Retire the term and mint a new slug; rebinding silently rewrites
-  every link that trusted it. Duplicate term ids in one glossary are
+  every citation that trusted it. Duplicate slugs across the layer are
   machine-checked.
+- **Order is fixed and machine-checked**: `slug`, then `title`, then `body`. An
+  entry whose `body` does not follow its `title` is reported by name.
+- **`title` and `body` are content blocks**, so they may carry markup — and
+  they may cite other terms and contexts, because the aggregate splices them
+  into a document where the library is already in scope. **`CONTEXT.typ`
+  imports nothing**; adding an import there is not how the scope arrives.
 - **Definition shape** (convention): one or two sentences stating what the
   concept **is** — never what the system does with it.
 - **`_Avoid_:` line** (optional, convention): names the rejected synonyms with
@@ -207,43 +273,68 @@ declared home under `docs/`.
 - **Anchor**: `<a id="adr-NNNN"></a>` on its own line, under the file's first
   `# ` title. Exactly one per file — zero, two, or a malformed one each fail.
 - **Lockstep, machine-checked**: the `NNNN` is identical in the filename, in
-  the anchor id, and in every reference to it.
+  the anchor id, and in every citation of it.
 - **Title shape** (convention): the title **is** the decision statement. No
   `ADR-NNNN:` prefix in the title text — the number lives in the filename and
   the anchor.
 - **Append-only** (convention): a decision is superseded by a **new** ADR that
   links the old one, never rewritten in place. The design document and
-  `CONTEXT.md` are present-tense snapshots; the ADR set is the history.
+  `CONTEXT.typ` are present-tense snapshots; the ADR set is the history.
 
 ### Section anchors
 
-A link into a section of a design document uses the rendered id the generator
-derives from the numbered heading: lowercase the heading text, collapse runs of
+A pointer into a section of a design document uses the id derived from the
+numbered section title: lowercase the title text, collapse runs of
 non-alphanumerics to single hyphens, and drop the numbering's dot.
 
-| Heading                       | Anchor                    |
-| ----------------------------- | ------------------------- |
-| `## 02 The artifact trio`     | `#02-the-artifact-trio`   |
-| `### 02.1 The pending ledger` | `#021-the-pending-ledger` |
+| `section(title: …)`     | Anchor                 |
+| ----------------------- | ---------------------- |
+| `"02 The artifact set"` | `#02-the-artifact-set` |
+| `"02.1 Pending ledger"` | `#021-pending-ledger`  |
 
-### References are relative paths
+### A reference is a call
 
-The design document links by relative path, and the gate resolves each one:
+Cross-references are function calls rather than paths, and that is what makes a
+rename a compile error at the citing line instead of a dangling pointer someone
+finds later.
 
-```markdown
-the [pending ledger](CONTEXT.md#term-pending-ledger) is read first
-recorded in [the homing decision](../adr/0004-layer-homing.md#adr-0004)
-see [the artifact trio](design.md#02-the-artifact-trio)
+```typst
+The #term("term-pending-ledger") is read first, and it is owned by
+#ctx("scheduling"). A judgement axis renders as #lens-pill("depth").
+
+The decision that homed the layer is #adr(4).
 ```
+
+| Call                  | Names                          | Resolves against                                                         |
+| --------------------- | ------------------------------ | ------------------------------------------------------------------------ |
+| `#term("term-slug")`  | a glossary term                | every `CONTEXT.typ` in the layer; renders the term's declared **title**  |
+| `#ctx("name")`        | a bounded context              | the context directories the layer holds                                  |
+| `#adr(64)`            | a recorded decision, by number | the ADR directory on disk, checked by the gate                           |
+| `#lens-pill("depth")` | one of the six judgement axes  | the declared lens enum                                                   |
+| `#lnk("dest")[text]`  | an external or markdown target | nothing at compile time; the gate's integrity check resolves it          |
+| `#pill("a", "b")`     | a lens combo as one gradient   | the lens enum, auto-sorted into the fixed order                          |
+| `#chip[text]`         | a bare inline token            | nothing — the honest rendering of a name that is not declared vocabulary |
+
+**A citation panics at the citing line.** `#term("term-typo")` names a slug no
+`CONTEXT.typ` declares, so the compile stops there rather than printing a raw
+identifier into running prose that no comparison of the output would catch.
+The same holds for `#ctx` against the layer's context directories.
+
+**An ADR is cited by NUMBER, never by path.** Write `#adr(64)`; it renders as
+`ADR-0064`, and the gate refuses a number the ADR directory holds no file for.
+The number is the whole citation because the ADRs are markdown files outside
+the rendered document — there is nothing to jump to inside it, and a hand-typed
+path would rot silently the moment a file is renamed while a wrong number is
+caught at the citing line.
 
 ---
 
 ## 3 · The authored format
 
-### The source is markdown; the document is generated
+### The author calls the library — there is no translation step
 
-`design.md` is the **authored source** — markdown extended with container
-directives. The PDF is **generated** and never hand-edited.
+`design.typ` is the **authored source**, and it calls the projected library
+directly. The PDF is **generated** and never hand-edited.
 
 Build it, then gate it:
 
@@ -252,43 +343,52 @@ nix run github:lostbean/design-layer#aggregate -- docs/design docs/design/design
 nix run github:lostbean/design-layer#check     -- docs/design .
 ```
 
-The renderer reads the authored markdown through a **fence router**: every
-fenced block reaches its own handler with the block's declared language intact.
-That is what keeps the authored file plain markdown a human reviews in a diff,
-while the contracts are enforced in the renderer's own language.
+Nothing stands between what the author wrote and what is checked. There is no
+converter reading the source and deciding what call it meant, so a construct
+outside the grammar cannot half-convert into something that renders differently
+from what it says — an unknown name is an unknown variable, reported at its own
+line. A rule that would otherwise have been a second parse over the source is
+instead a function signature the compiler enforces where the author writes it.
 
 Generation is deliberately two things at once:
 
-- **Validation** — it fails closed on an unknown block, a missing or
-  mis-ordered foundation, a malformed pending entry, or a broken diagram. A
-  design that does not render clean produces **no document at all**. There is
-  no partial credit and no warning-only mode.
-- **Normalization** — typesetting and styling come from the renderer's own
-  visual system, applied uniformly. Authors write content; the renderer owns
-  the look.
+- **Validation** — it fails closed on a missing required argument, an illegal
+  enum value, a mis-ordered foundation, mis-ordered clauses, or a malformed
+  pending entry. A design that does not compile clean produces **no document at
+  all**. There is no partial credit and no warning-only mode.
+- **Normalization** — typesetting and styling come from the library's own
+  visual system, applied uniformly. Authors write content; the library owns the
+  look.
 
-### Block anatomy — structured fields, not free blobs
+### Block anatomy — named arguments, not free blobs
 
 Every statement block — `goal`, `no-goal`, `principle`, `invariant` — shares
-one anatomy:
+one anatomy: named arguments carrying the declared fields, then a content block
+carrying the body.
 
-```markdown
-:::invariant {title="Every booking names an existing resource" enforcement=mechanism}
-No booking may reference a resource that has been withdrawn. An invariant
-declaring `enforcement=mechanism` must name the script that enforces it.
-:::
+```typst
+#invariant(
+  title: "Every booking names an existing resource",
+  enforcement: "mechanism",
+)[
+  No booking may reference a resource that has been withdrawn.
+]
 ```
 
-- **`title=` is required and machine-checked**: plain text, at most **64
-  characters**, no links. A missing or over-length title fails the render.
-  (The cap counts grapheme clusters, so an accented character costs one.)
-- **The body** is the long description in markdown. For an `invariant` the body
-  **is** the checkable statement. Only `no-goal` may omit a body.
-- **Attributes are always brace-wrapped.** `:::invariant {title="…"}` is
-  correct; a bare `key=value` after the kind is a violation.
-- **The footer is a declared slot.** `lens` and `enforcement`
-  come from attributes and render as furniture in the block's footer. Never
-  scatter them through the body, and never fake them as markup in the heading.
+- **`title:` is required and machine-checked for presence**: plain text, no
+  links. A missing title is a compile failure naming the field. Its **64
+  character cap is a guideline** — a long title makes a worse document, never a
+  wrong one, so it fires under `lint` and never blocks an ordinary render. (The
+  cap counts grapheme clusters, so an accented character costs one.)
+- **The body** is the trailing content block, the long description. For an
+  `invariant` the body **is** the checkable statement.
+- **An unknown argument is a compile failure.** The named parameters _are_ the
+  allowed set, so `lense:` for `lens:` stops the render naming the argument,
+  rather than being dropped silently into a block that looks right and is
+  missing what you wrote.
+- **The footer is a declared slot.** `lens` and `enforcement` come from
+  arguments and render as furniture in the block's footer. Never scatter them
+  through the body, and never fake them as markup in the head row.
 
 A block contract declares the information that must be captured at that point
 of a design. When the design needs to capture a new kind of information
@@ -297,80 +397,93 @@ checkable.
 
 ### Titles are the scannable claim
 
-**Convention, not machine-checked** beyond presence and length. The title is
-what a reader sees before reading the body, so it should carry the whole
-statement at a glance. State the assertion, not the topic. Roughly four to ten
-words — long enough to mean something, under the 64-character cap.
+**Convention**, beyond the machine-checked presence and the length guideline.
+The title is what a reader sees before reading the body, so it should carry the
+whole statement at a glance. State the assertion, not the topic. Roughly four
+to ten words — long enough to mean something, under the 64-character cap.
 
-- Weak: `title="Concern"` — a topic word; the reader learns nothing until they
+- Weak: `title: "Concern"` — a topic word; the reader learns nothing until they
   read the body.
-- Strong: `title="One home per concern"` — the claim itself; the body only
-  elaborates. Likewise `title="Make illegal states unrepresentable"` over
-  `title="Invariants"`.
+- Strong: `title: "One home per concern"` — the claim itself; the body only
+  elaborates. Likewise `title: "Make illegal states unrepresentable"` over
+  `title: "Invariants"`.
 
-A `**Bold first line**` in the body is **not** a title. It renders as body
-text. Titles live in `title=` only.
+A `*Bold first line*` in the body is **not** a title. It renders as body text.
+Titles live in `title:` only.
+
+### A block kind is a function name
+
+The kind and the function that renders it carry **the same name**, spelled
+kebab-case: `no-goal` is `#no-goal`, `stat-grid` is `#stat-grid`. There is no
+translation table between them, and nothing to look up.
+
+The **one exception** is `figure`, whose function is `#figure-block`, because
+`figure` is a Typst builtin and shadowing it would break every document that
+uses the builtin.
 
 ### The block vocabulary
 
-Twenty block kinds are declared. Each row names its required attributes; the
-gallery shows each one written out.
+Each row names its required arguments; the gallery shows each one written out.
 
-| Block                                           | Required attrs                                       | Use it for                                                                                                                                                              |
-| ----------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `:::goal`                                       | `title=`                                             | a pragmatic, practical objective. `lens=` optional                                                                                                                      |
-| `:::no-goal`                                    | `title=`                                             | an explicit exclusion. Body optional — the only block where it is                                                                                                       |
-| `:::principle`                                  | `title=`                                             | an aspirational value guiding judgment; `lens=` optional                                                                                                                |
-| `:::invariant`                                  | `title=`, `enforcement=`                             | a property that holds at all times. `enforcement=` is the honest label for HOW it is held, never which check holds it                                                   |
-| `::::behavior` + `:::given` `:::when` `:::then` | `title=`, `level=`                                   | one conditional rule — a context, one event, observable outcomes. Body is clauses, never prose (§5)                                                                     |
-| `::::entity` + `:::attribute` `:::relates`      | `title=`, `kind=`, `owner=`, `lifecycle=`, `domain=` | one entry of a core model's entity census (§5)                                                                                                                          |
-| `:::pending`                                    | `title=`, `kind=`, `since=`                          | one pending-ledger entry (§4)                                                                                                                                           |
-| `:::cards`                                      | —                                                    | **the workhorse grid**: items are `###` headings inside the block. `cols=2\|3\|4`, `tint=`, `size=md\|sm`                                                               |
-| `:::stat-grid` wrapping `:::stat-tile`          | `value=`, `label=` on each tile                      | a row of KPI numbers read at a glance                                                                                                                                   |
-| `:::info` · `:::warning`                        | —                                                    | a titled notes panel. `title=` and `tint=` optional; with no tint it falls back to the kind's own colour                                                                |
-| ` ```mermaid `                                  | —                                                    | flowcharts, sequence diagrams, state machines. Declare nodes and edges only, never coordinates                                                                          |
-| `:::chart`                                      | `type=bar\|line\|pie`                                | a chart drawn from a small markdown table immediately inside the block. First column category, second value                                                             |
-| `:::embedded-svg`                               | `caption=`                                           | a placeholder frame naming a sibling SVG in `file=`. **The file is not read or embedded** — the renderer draws a labelled box, so a missing file does not fail the gate |
-| `:::figure`                                     | `caption=`, `uses=`                                  | a self-contained drawing carrying renderer markup, for a shape no diagram carrier covers                                                                                |
+| Function                               | Required arguments                                   | Use it for                                                                                                                                                              |
+| -------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `#goal`                                | `title:`                                             | a pragmatic, practical objective. `lens:` optional                                                                                                                      |
+| `#no-goal`                             | `title:`                                             | an explicit exclusion. The one block whose body may be empty — write `[]`                                                                                               |
+| `#principle`                           | `title:`                                             | an aspirational value guiding judgment; `lens:` optional                                                                                                                |
+| `#invariant`                           | `title:`, `enforcement:`                             | a property that holds at all times. `enforcement:` is the honest label for HOW it is held, never which check holds it                                                   |
+| `#behavior` + `#given` `#when` `#then` | `title:`, `level:`                                   | one conditional rule — a context, one event, observable outcomes. The body is clause calls, never prose (§5)                                                            |
+| `#entity` + `#attribute` `#relates`    | `title:`, `kind:`, `owner:`, `lifecycle:`, `domain:` | one entry of a core model's entity census (§5)                                                                                                                          |
+| `#pending-ledger` + `#pending-entry`   | `title:`, `kind:`, `since:` on each entry            | the pending ledger (§4)                                                                                                                                                 |
+| `#cards`                               | `items:`                                             | **the workhorse grid**: `items:` is an array of `(title: …, body: …)`. `cols:`, `tint:`, `size:` optional                                                               |
+| `#stat-grid` wrapping `#stat-tile`     | `value:`, `label:` on each tile                      | a row of KPI numbers read at a glance. Tiles are passed positionally                                                                                                    |
+| `#info` · `#warning`                   | —                                                    | a titled notes panel. `title:` and `tint:` optional; with no tint it falls back to the kind's own colour                                                                |
+| `#notes`                               | `title:`                                             | a muted aside beside a section's argument, for a caveat that would break the run of prose                                                                               |
+| `#points`                              | —                                                    | bullets, one property each, passed positionally. Three sentences per bullet is a guideline                                                                              |
+| `#diagram-native`                      | `altitude:`, `nodes:`                                | flowcharts and structure diagrams. Declare nodes and edges as data, never coordinates. Every edge endpoint must name a declared node                                    |
+| `#diagram-source`                      | positional kind and source                           | a diagram shape with no carrier — the source stays visible rather than vanishing                                                                                        |
+| `#chart`                               | `type:` (`bar`\|`line`\|`pie`)                       | a chart drawn from a small table in the body. First column category, second value                                                                                       |
+| `#md-table`                            | positional column count and cells                    | a plain table; the first row is the header                                                                                                                              |
+| `#code-block`                          | positional language and source                       | a literal snippet, syntax-highlighted by its language                                                                                                                   |
+| `#embedded-svg`                        | `caption:`                                           | a placeholder frame naming a sibling SVG in `file:`. **The file is not read or embedded** — the renderer draws a labelled box, so a missing file does not fail the gate |
+| `#figure-block`                        | `caption:`, `uses:`                                  | a self-contained drawing carrying renderer markup, for a shape no diagram carrier covers                                                                                |
+| `#coverage`                            | positional rows                                      | the breadth axis in the document: `(part, status, why)` per row                                                                                                         |
+| `#components` + `#component`           | `name:`, `mission:` on each                          | a unit map: one card per component, each optionally answering the five questions                                                                                        |
+| `#answers`                             | —                                                    | the five questions for one unit, written out: responsibility, interface, interactions, invariants, failure                                                              |
+| `#section` · `#subsection`             | `title:`                                             | the spine's structure. A section takes an optional `lead:`, `visual:`, `notes:`, and `body:`                                                                            |
+| `#how-to-read`                         | —                                                    | the generated legend panel — it shows each mark rather than naming it                                                                                                   |
 
-Note the fence depth. A block that **nests** other blocks opens with four
-colons (`::::behavior`, `::::entity`, `::::stat-grid`) so its children can use
-three. Mismatched depth is the most common authoring error.
+Three things a writer might reach for **do not exist and will not render**: raw
+HTML of any kind; stylesheet theming (there are no CSS custom properties
+anywhere in the pipeline); and any rendered artifact other than the PDF.
 
-Three things a writer might reach for **do not exist and will not render**:
-raw HTML of any kind beyond the id-carrying `<a id="…"></a>` anchor (no
-`<details>`, no inline `<svg>`); stylesheet theming (there are no CSS custom
-properties anywhere in the pipeline); and any rendered artifact other than the
-PDF.
+### `#figure-block` is a figure, not an escape hatch
 
-### `:::figure` is a figure, not an escape hatch
-
-`:::figure` is the one declared way to carry renderer markup directly, for a
-drawing no diagram carrier covers — interface mass, band thickness, a marked
+`#figure-block` is the one declared way to carry renderer markup directly, for
+a drawing no diagram carrier covers — interface mass, band thickness, a marked
 grid of illegal states.
 
-**Machine-checked**: it requires a `caption=` and a `uses=` list, and every
-package named in `uses=` must be one the framework **vendors**. An import
+**Machine-checked**: it requires a `caption:` and a non-empty `uses:` list, and
+every package named in `uses:` must be one the framework **vendors**. An import
 outside that set fails the render, which is what keeps a design layer
 reproducible offline. It renders inside a visibly distinct frame naming those
 packages, so the exception is legible in the rendered document and not only in
 the source.
 
 It is not a way to restyle a statement block, and never a second path for a
-node-and-edge graph — that belongs in a ` ```mermaid ` fence, where the gate
-validates it and the projected tokens colour it.
+node-and-edge graph — that belongs in `#diagram-native`, where the library
+validates every endpoint and the projected tokens colour it.
 
 ### Inline pills, accents, and lenses
 
-A code span `` `lens:depth` `` renders as that lens's pill mid-sentence. A
-combo `` `lens:state+composition` `` renders one gradient pill, with the
-contributing lenses **auto-sorted into the schema's fixed order** — never the
-order you wrote them. The same `lens=` attribute is accepted on statement
-blocks.
+`#lens-pill("depth")` renders that lens's pill mid-sentence. `#pill("state",
+"composition")` renders one gradient pill, with the contributing lenses
+**auto-sorted into the schema's fixed order** — never the order you wrote them.
+The same `lens:` argument is accepted on statement blocks, where it takes
+either one name or an array of them.
 
 The six lenses, in their fixed order: `modeling` · `depth` · `composition` ·
 `state` · `invariants` · `robustness`. An unknown lens name is
-**machine-checked** and fails the render.
+**machine-checked** and fails the render, as does a combo repeating a member.
 
 The six accent tints: `teal` · `violet` · `amber` · `blue` · `rose` · `slate`.
 
@@ -378,37 +491,39 @@ The six accent tints: `teal` · `violet` · `amber` · `blue` · `rose` · `slat
 binds one tint and keeps it stable across every document that mentions it. A
 **lens pill** marks judgment.
 
-### Frontmatter — page identity
+### The document shell — page identity
 
-Four keys the generator renders, at the top of every `design.md`:
+A standalone document that is compiled on its own applies the shell itself.
+Four arguments carry its identity:
 
-```yaml
----
-eyebrow: Domain overview · Scheduling · [root](../design.md)
-hero_title: Scheduling
-lede: How a booking is placed, confirmed, and released.
-footer: Scheduling · design owned here, vocabulary in CONTEXT.md, rationale in docs/adr/.
----
+```typst
+#show: design-doc.with(
+  eyebrow: [Domain overview · Scheduling],
+  hero_title: [Scheduling],
+  lede: [How a booking is placed, confirmed, and released.],
+  footer: [Scheduling · design owned here, vocabulary in CONTEXT.typ, rationale in docs/adr/.],
+)
 ```
 
 - **`eyebrow`** — a micro-caps identity line: the document's position in the
-  layer hierarchy, with links up.
+  layer hierarchy.
 - **`hero_title`** — the display title, rendered as the hero heading inside the
-  masthead. It is carried in frontmatter rather than as a body `# ` heading so
-  the whole hero composes as one unit.
+  masthead. It is an argument rather than a body heading so the whole hero
+  composes as one unit.
 - **`lede`** — a muted one-to-three-line summary.
-- **`footer`** — a colophon line restating the ownership split, linking back up.
+- **`footer`** — a colophon line restating the ownership split.
 
-A fifth key, `index_only: true`, is legal on a multi-context **root** document
-and changes what the foundation contract requires — see §4.
+**A `design.typ` inside a layer calls none of this.** It exports `title` and
+`body`; the aggregate supplies the shell for the whole layer (§2).
 
 ### Numbers and data read at a glance
 
-**Convention.** A stat value and a chart are glances, not ledgers.
+**Guideline and convention.** A stat value and a chart are glances, not
+ledgers.
 
 - **Abbreviate large numbers** in a stat tile: `2.4M`, `1.2B`, `3.5×10⁹` —
   never `2,400,000`. The value is a magnitude the eye takes in, not an
-  accountant's figure.
+  accountant's figure. An accountant's figure is caught by a guideline.
 - **Chart data stays small** — a handful of rows. A chart illustrates one
   point. Many series in one chart reads as noise; a paragraph plus one focused
   chart beats one dense chart.
@@ -417,9 +532,11 @@ and changes what the foundation contract requires — see §4.
 
 ## 4 · Document-level contracts
 
-The per-block contracts above are checked by the renderer as each block draws.
-These are checked by a separate fold over the whole document, before it
-compiles — they are properties no single block can see.
+The per-block contracts above are checked as each block is called. These are
+checked across calls, by state the library carries from one call to the next —
+they are properties no single block can see. Each is scoped to **one context**,
+so a chapter is judged on its own and never on the strength of the previous
+chapter's statements.
 
 ### The spine
 
@@ -436,27 +553,34 @@ Pending updates        unnumbered, immediately after the foundation; omitted whe
 Three parts of this are enforced:
 
 1. **Foundation cardinality** — at least one `goal`, at least one `invariant`,
-   at least one `principle`. Zero or more `no-goal`s.
+   at least one `principle`. Zero or more `no-goal`s. A kind missing from the
+   context's finished run of foundation calls is a kind nobody wrote, and the
+   compile names it.
 2. **Foundation order** — the four kinds appear in the declared order. A
-   `principle` before an `invariant` is a violation naming the line.
-3. **Spine order** — the numbered sections ascend, and the spine opens with
-   section `00`.
+   `#principle` called before an `#invariant` is a violation naming the
+   offending statement's title.
+3. **Spine order** — the numbered sections ascend. A `#section` whose leading
+   number falls below the one before it is a violation naming both titles.
+   Only a **numbered** title takes part; an unnumbered section is simply not on
+   the axis this orders.
 
-The foundation contract binds the section actually numbered `00` **and titled
-Foundation**. A document with no foundation at all — a behavior-rule document,
-say — is not held to the per-kind minimum.
+The foundation contract binds a document that **declares a foundation at all**.
+A document carrying no foundation — a behavior-rule sheet, a reference page —
+is not held to the per-kind minimum, because it is not a document that failed
+the minimum; it is a document not carrying a foundation.
 
 **The pending section is unnumbered on purpose**: its appearance and
-disappearance never renumber the rest of the spine.
+disappearance never renumber the rest of the spine, and it stays off the
+ascending-order axis.
 
 **The `index_only` exemption.** A multi-context **root** that only indexes its
-child contexts may declare `index_only: true` in frontmatter and is waived from
-the per-kind minimum. It then carries only genuinely cross-context foundation
-and points down to each context for the rest, never restating a context-owned
-goal or invariant. The flag is legal **only** on a document that links at least
-one child `<context>/design.md`; on a single-context document it is itself a
-violation, so a leaf can never skip its own foundation. The **order** rule still
-binds whatever foundation the root does carry.
+child contexts exports `#let index_only = true` and is waived from the per-kind
+minimum. It then carries only genuinely cross-context foundation and points
+down to each context for the rest, never restating a context-owned goal or
+invariant. The waiver is a declaration rather than a guess, because nothing in
+a document's own text distinguishes an index root from a leaf that forgot its
+foundation. The **order** rule still binds whatever foundation the root does
+carry.
 
 ### Principles and goals are never conflated
 
@@ -473,25 +597,39 @@ after the foundation — never as badges scattered through the page. The section
 is omitted entirely when empty; an absent ledger states "this page is the
 present".
 
-Each entry is a `:::pending` block:
+The ledger is one `#pending-ledger` call taking `#pending-entry` values
+positionally:
 
-```markdown
-:::pending {title="Release withdraws a confirmed booking" kind=build since=2026-08-16}
-The release transition is designed but not built. See
-[the release decision](../adr/0012-release-transition.md#adr-0012).
-:::
+```typst
+#pending-ledger(
+  pending-entry(
+    title: "Release withdraws a confirmed booking",
+    kind: "build",
+    since: "2026-08-16",
+    adr: [#adr(12)],
+  )[
+    The release transition is designed but not built.
+  ],
+  pending-entry(
+    title: "Who owns a cancelled booking's audit trail",
+    kind: "ruling",
+    since: "2026-08-20",
+  )[],
+)
 ```
+
+Note that the entries are written **without** a leading `#` — inside the
+call's argument list they are ordinary expressions, not markup.
 
 Entry fields, all **machine-checked** except the summary:
 
-| Field         | Contract                                                                           |
-| ------------- | ---------------------------------------------------------------------------------- |
-| `title=`      | required; ≤64 characters, plain text                                               |
-| `kind=`       | required; one of `build` · `verify` · `foundation` · `ruling`                      |
-| `since=`      | required; exactly `YYYY-MM-DD`                                                     |
-| ADR link      | **required in the body of a `build` entry** — a link whose fragment is `#adr-NNNN` |
-| tracker issue | optional                                                                           |
-| body          | otherwise optional — a `ruling` entry may be title-only                            |
+| Field    | Contract                                                                        |
+| -------- | ------------------------------------------------------------------------------- |
+| `title:` | required, plain text; the ≤64-character cap is a guideline                      |
+| `kind:`  | required; one of `build` · `verify` · `foundation` · `ruling`                   |
+| `since:` | required; exactly `YYYY-MM-DD`                                                  |
+| `adr:`   | **required on a `build` entry** — the citation of the decision that designed it |
+| body     | otherwise optional — a `ruling` entry may be title-only, written `[]`           |
 
 The four kinds:
 
@@ -503,7 +641,7 @@ The four kinds:
 | `ruling`     | an open owner decision the layer cannot settle                             |
 
 Only `build` must cite an ADR. The other three may predate any decision record,
-so their link is optional.
+so their citation is optional.
 
 **`since` is load-bearing, not decorative.** The ledger renders on a **time
 axis**: entries place by their date, so aging design debt is visible at a glance
@@ -520,7 +658,11 @@ A design is a recursively self-similar tree of units, and a unit is the same
 shape at every altitude: an overview, its child units, and a pointer to its
 parent. `context`, `component`, and an `NN.M` subsection are **depth labels on
 one node type**, not different things. The root indexes contexts, a context
-indexes its components, a component indexes its `NN.M` sub-parts.
+indexes its components, a component indexes its `NN.M` sub-parts. The same
+ladder names a diagram's altitude — `L1` boundary, `L2` contexts, `L3`
+components, `L4` internals — which `#diagram-native` requires on every drawing,
+so a reader can tell which zoom level they are looking at before reading the
+caption.
 
 Two rules follow, both **convention**:
 
@@ -532,7 +674,7 @@ Two rules follow, both **convention**:
   and say which.
 - **Recursion is not the file split.** A unit recurses deeply inside one file
   via `NN.M.K` without any split. Where the recursion breaks into separate
-  `design.md` files is the second-real-vocabulary judgment of §1 — a semantic
+  `design.typ` files is the second-real-vocabulary judgment of §1 — a semantic
   call, not a depth counter.
 
 Overlaid on the tree is a **lateral reference graph**: terms owned by one unit
@@ -543,58 +685,54 @@ the context map. Those edges are cross-references, not the recursion.
 
 ## 5 · Block reference
 
-Two block families carry nested clauses rather than prose. Their bodies are
-**not** free markdown, and the renderer validates the presence, count, and order
-of their children.
+Two block families carry nested clause calls rather than prose. Their bodies
+are **not** free content, and the library validates the presence, count, and
+order of their children.
 
-### `:::behavior` — the conditional rule
+### `#behavior` — the conditional rule
 
-`:::behavior` captures what an `invariant` cannot. An invariant holds at all
-times, with no trigger and no actor — "cross-links resolve". A behavior rule has
-a context, an event, and an outcome. That distinction is the whole test for
-which block to reach for.
+`#behavior` captures what an `#invariant` cannot. An invariant holds at all
+times, with no trigger and no actor — "cross-references resolve". A behavior
+rule has a context, an event, and an outcome. That distinction is the whole
+test for which block to reach for.
 
-```markdown
-::::behavior {title="A duplicate address is refused without disclosure" level=interface}
-
-:::given
-a visitor is not signed in
-:::
-
-:::when
-they submit a sign-up whose address is already registered
-:::
-
-:::then
-the sign-up is refused and the offending field is named
-:::
-
-:::then
-the response never reveals that the address is already registered
-:::
-
-::::
+```typst
+#behavior(
+  title: "A duplicate address is refused without disclosure",
+  level: "interface",
+)[
+  #given[a visitor is not signed in]
+  #when[they submit a sign-up whose address is already registered]
+  #then[the sign-up is refused and the offending field is named]
+  #then[the response never reveals that the address is already registered]
+]
 ```
+
+**`level:` is required and machine-checked.** The fence that forbids naming a
+mechanism is defined per level, so a rule carrying no level is a rule no fence
+applies to. Omitting it is a compile failure naming the field.
 
 **Clause cardinality and order, machine-checked:**
 
-| Clause     | Count     | Holds                                                             |
-| ---------- | --------- | ----------------------------------------------------------------- |
-| `:::given` | 0..n      | one context each. A rule needing no setup carries none            |
-| `:::when`  | exactly 1 | the actor's action. Two events are **two rules**, not two clauses |
-| `:::then`  | 1..n      | one observable outcome each, so each is separately checkable      |
+| Clause   | Count     | Holds                                                             |
+| -------- | --------- | ----------------------------------------------------------------- |
+| `#given` | 0..n      | one context each. A rule needing no setup carries none            |
+| `#when`  | exactly 1 | the actor's action. Two events are **two rules**, not two clauses |
+| `#then`  | 1..n      | one observable outcome each, so each is separately checkable      |
 
-They render and validate in the fixed order `given`, `when`, `then`. A `then`
-before a `when` is a violation.
+They render and validate in the fixed order `given`, `when`, `then`. A `#then`
+before a `#when` is a violation naming both. Each rule's clauses are counted
+against that rule and no other, so two sibling behavior blocks never confuse
+each other's clauses.
 
 **A rule states the rule, never an example of it.** No concrete values: write
 "a baby animal younger than its selling age", not "a rabbit called Fluffy who is
 1½ months old". The layer holds the durable rule; concrete values belong in
 whatever executable scenarios are derived from it.
 
-#### `level=` — two levels, and a rule belongs to exactly one
+#### `level:` — two levels, and a rule belongs to exactly one
 
-| `level=`    | States                                                               | Only this level can express                                                                                                  |
+| `level:`    | States                                                               | Only this level can express                                                                                                  |
 | ----------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `interface` | what a person perceives, chooses, and is told — including on failure | interaction over time: progress is visible, an action stays cancellable, the user is never left unable to tell what happened |
 | `boundary`  | behavior at the application boundary, in the domain's own language   | integrity: an operation is atomic, idempotent, ordered                                                                       |
@@ -617,13 +755,13 @@ This is **enforced, fail-closed, per clause** — and it is honestly declared
 `enforcement=partial`, because it is a denylist plus a small set of patterns
 rather than a proof.
 
-- At `level=interface` it rejects widget and element ids, CSS selectors and
+- At `level: "interface"` it rejects widget and element ids, CSS selectors and
   class names, component / controller / presenter / view-model / repository /
   DTO names, HTTP status codes, and exact UI copy quoted as the outcome. "the
   offending field is named" is admitted; "the SignupController returns 409" and
   "`#email-input` gains `.is-invalid`" are violations.
-- At `level=boundary` it rejects the transport and the storage — HTTP verbs and
-  status codes, SQL, table and column names, queue and topic names, wire
+- At `level: "boundary"` it rejects the transport and the storage — HTTP verbs
+  and status codes, SQL, table and column names, queue and topic names, wire
   formats. The domain's **own** operation and entity names are the correct
   vocabulary here and are admitted: "the registration operation rejects the
   request" is fine; "INSERT into users fails the unique index" is a violation.
@@ -632,67 +770,75 @@ rather than a proof.
 button in the top right" passes the check and is still a fence violation. The
 mechanical check raises the floor; a reviewer catches the rest.
 
-### `::::entity` — the census of a core model
+### `#entity` — the census of a core model
 
 A **core model context** is the bounded context owning the application's core
 entities, their relationships, and the state and logic flowing over them. It is
-homed at the declared path `docs/design/core-model/`, with its own `design.md`
-and `CONTEXT.md`. The path is fixed rather than author-named so the core is
+homed at the declared path `docs/design/core-model/`, with its own `design.typ`
+and `CONTEXT.typ`. The path is fixed rather than author-named so the core is
 findable in any repo without reading the map first.
 
-Its census is written one `::::entity` block per entity. The body is the
-attribute clauses, then the relates clauses — nothing else.
+Its census is written one `#entity` call per entity. The body is the attribute
+clauses, then the relates clauses — nothing else.
 
-```markdown
-::::entity {title="Booking" kind=aggregate owner="scheduling" lifecycle=stateful domain="scheduling" tint=violet}
-
-:::attribute {provenance=authored}
-the requested time window, stated by the person booking
-:::
-
-:::attribute {provenance=derived}
-the duration, computed from the requested window
-:::
-
-:::relates {cardinality="n : 1"}
-belongs to one **Customer**
-:::
-
-::::
+```typst
+#entity(
+  title: "Booking",
+  kind: "aggregate",
+  owner: "scheduling",
+  lifecycle: "stateful",
+  domain: "scheduling",
+  tint: "violet",
+)[
+  #attribute(provenance: "authored")[
+    the requested time window, stated by the person booking
+  ]
+  #attribute(provenance: "derived")[
+    the duration, computed from the requested window
+  ]
+  #relates(cardinality: "n : 1")[belongs to one *Customer*]
+]
 ```
 
-**Entity attributes, all required except `tint` and `lens`:**
+**Entity arguments, all required except `tint` and `lens`:**
 
-| Attr         | Values                                      | Means                               |
-| ------------ | ------------------------------------------- | ----------------------------------- |
-| `title=`     | the entity's name                           | required                            |
-| `kind=`      | `entity` `value-object` `aggregate` `event` | see below                           |
-| `owner=`     | free text                                   | the unit responsible for it         |
-| `lifecycle=` | `immutable` `append-only` `stateful`        | how it changes over time            |
-| `domain=`    | free text                                   | the discovered domain it belongs to |
-| `tint=`      | one of the six accents                      | optional; the domain's colour       |
+| Argument     | Values                                      | Means                                         |
+| ------------ | ------------------------------------------- | --------------------------------------------- |
+| `title:`     | the entity's name                           | required                                      |
+| `kind:`      | `entity` `value-object` `aggregate` `event` | required; see below                           |
+| `owner:`     | free text                                   | required; the unit responsible for it         |
+| `lifecycle:` | `immutable` `append-only` `stateful`        | required; how it changes over time            |
+| `domain:`    | free text                                   | required; the discovered domain it belongs to |
+| `tint:`      | one of the six accents                      | optional; the domain's colour                 |
+
+Omitting any of the five required arguments is a compile failure naming the
+field. That is deliberate: a card missing one renders as a card that simply
+does not answer that question, which reads as "not applicable" rather than
+"never stated".
 
 The four kinds: an **entity** has identity persisting as its attributes change;
 a **value object** is defined only by its attributes; an **aggregate** is a
 cluster with one root owning its invariants; an **event** is a thing that
 happened. The card is filled by its kind, so a reader identifies an entity's
 type before reading a word. None of that colouring is authored — it follows
-from `kind=` and `lifecycle=`.
+from `kind:` and `lifecycle:`. The two groups inside a card label themselves
+from the run of clauses, so the authored source names neither heading.
 
-**Every relationship declares its cardinality** in the `1 : 0..n` vocabulary —
-`1`, `0..1`, `n`, `0..n` on either side, written `<this> : <other>` — rather
-than describing it in a sentence. The shape of the model then scans down one
-column.
+**Every relationship declares its cardinality**, and it is machine-checked:
+`cardinality:` is written `<this> : <other>` and each side must be one of `1`,
+`0..1`, `n`, `0..n`. A missing `cardinality:`, a value with no colon, or a side
+outside that vocabulary each fail the render naming the offending value. The
+shape of the model then scans down one column.
 
 **Conventions for the census as a whole:**
 
 - **Group by domain, and name the domain even when there is one.** Every entity
-  carries `domain=`, and the census's subsections follow those groups. A
+  carries `domain:`, and the census's subsections follow those groups. A
   single-domain census still says "this is one domain, and here is what holds it
   together" — otherwise a reader cannot tell whether the question was asked or
   skipped.
 - **Give each domain an accent and use it everywhere.** Every entity of one
-  domain declares the same `tint=`. Which domain takes which accent is your
+  domain declares the same `tint:`. Which domain takes which accent is your
   call — domains are discovered per repo, so nothing predefines them — but once
   chosen it is that domain's colour in the census, in the whole-model graph, and
   in any later diagram drawing those entities.
@@ -706,10 +852,12 @@ column.
 
 #### Provenance — the field that earns the block
 
-Every `:::attribute` declares **how its fact arises**. It is a validated
-attribute rather than a table cell precisely so the contract can check it.
+Every `#attribute` declares **how its fact arises**. `provenance:` is required
+and machine-checked against the three values; an attribute with no provenance
+makes no claim about how it arises, so its absence is a compile failure rather
+than a default.
 
-| `provenance=` | Means                                                                             |
+| `provenance:` | Means                                                                             |
 | ------------- | --------------------------------------------------------------------------------- |
 | `authored`    | a human stated it, so it can be wrong and it drifts                               |
 | `derived`     | computed from other facts, so it cannot desynchronize                             |
@@ -735,13 +883,14 @@ contracts move with it.
   can change how a block draws even when no contract moved, so the re-render is
   part of the bump, not a follow-up to it. Review the rendered diff before
   accepting it.
-- **The widget gallery is the drift tripwire.** `fixtures/widget-gallery.md`
-  exercises every declared block kind, and a self-test renders it on every
-  change, so an upstream change that alters the look fails there rather than
-  silently in a host's document. It is the reference to diff against.
-- **A block kind absent from the gallery is not covered by that tripwire** —
-  which is why the gallery is kept complete: every kind, and every important
-  variant.
+- **The gallery is the drift tripwire.** `fixtures/gallery.typ` calls
+  every function the library projects for authoring, and a self-test renders it
+  on every change and reads the marks back off the page, so an upstream change
+  that alters the look fails there rather than silently in a host's document.
+  It is the reference to diff against.
+- **A function absent from the gallery is not covered by that tripwire** —
+  which is why the gallery is kept complete: every function, and every
+  important variant.
 
 The gate proves the rendered PDF is fresh by regenerating it and comparing,
 so a stale artifact is reported rather than trusted:
@@ -752,18 +901,23 @@ nix run github:lostbean/design-layer#check -- docs/design .
 
 That composite runs three things in sequence and exits 0 clean, 1 on a
 violation, 2 on an error: render freshness, token coverage, and layer
-integrity. Two lower-level entry points back it — one document at a time, and
-the schema-to-library projection:
+integrity. Two further entry points sit beside it — the author-requested
+guideline sweep, and the schema-to-library projection:
 
 ```sh
-nix run github:lostbean/design-layer#render  -- docs/design/design.md [--check]
+nix run github:lostbean/design-layer#lint    -- docs/design
 nix run github:lostbean/design-layer#project -- <schema.json> <out-dir>
 ```
 
+`lint` compiles the layer with every guideline promoted to an error and reports
+the first that fires. It is deliberately not part of `check`: a guideline names
+a document that could read better, and blocking a commit on one would make the
+distinction between the two classes of rule meaningless.
+
 The declared vocabulary — every block contract, every enum, the anchor patterns
-— lives in one schema, which travels inside the same bundle. Nothing is copied
-into a host repo, so there is no local copy to drift. To read the schema this
-skill describes:
+— lives in one schema, which travels inside the same bundle and is **projected**
+into the library each compile imports. Nothing is copied into a host repo, so
+there is no local copy to drift. To read the schema this skill describes:
 
 ```sh
 cat "$(nix build --no-link --print-out-paths github:lostbean/design-layer#gate-bundle)/schema/design-schema.json"

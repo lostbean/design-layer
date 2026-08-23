@@ -14,16 +14,22 @@
 #
 # SCOPE, declared honestly. The library carries every PER-BLOCK contract: field
 # presence, title length, enum legality, and the cross-field rules that live
-# inside one block (an invariant's enforcement value; a lens
-# combo with no repeats). It does NOT carry the DOCUMENT-level contracts —
-# foundation order and cardinality, spine order, the ADR citation a pending
-# build entry must carry. Those cannot be expressed as a per-block function,
-# because a function only runs when it is CALLED and therefore cannot see a
-# block that was never written. A document with no goals at all would compile
-# clean. Those contracts are asserted after the compile, by design-render.
+# inside one block (an invariant's enforcement value; a lens combo with no
+# repeats).
 #
-# So `typst compile` exiting 0 does NOT mean a design is valid. design-render
-# is the gate; the compiler is one of its two phases.
+# It ALSO carries the DOCUMENT-level contracts, which is not obvious, because a
+# function only runs when it is CALLED and therefore cannot see a block that was
+# never written. A STATE closes that gap: each call appends to a trail, and an
+# assertion the aggregate places at the end of the scope reads the finished
+# trail back. A kind missing from a finished trail was never called, which is
+# how a contract notices an absence. Three trails do this — the foundation
+# (order and per-kind minimum), a behavior block's clauses (cardinality and
+# order), and the numbered spine (ascending order).
+#
+# What the library still cannot see is anything ACROSS ARTIFACTS — a link into
+# another file, an ADR that exists on disk, a term another context declares.
+# That is layer-integrity's half, and the split is by what is visible from
+# inside one compile.
 #
 # Every vocabulary the library carries is DERIVED FROM the schema (lens members,
 # enforcement values, pending kinds, entity kinds and lifecycles, behavior
@@ -101,6 +107,26 @@ try:
     entity_lifecycles = _entity_lifecycle_m.group(1).split("|")
     tint_values = schema["design_doc"]["accents"]["values"]
     declared_blocks = list(schema["design_doc"]["blocks"].keys())
+    # WHICH ATTRIBUTES ARE REQUIRED, read from the block declarations rather
+    # than restated here, so a schema edit moves the requirement with it.
+    #
+    # This is the difference between a contract declared and a contract
+    # enforced. The shared `_statement` body cannot express a per-kind
+    # requirement — one signature serves goal, no-goal, principle and
+    # invariant, and only invariant requires `enforcement` — so the permissive
+    # `_enum` was the only validation those attrs got, and omitting one
+    # compiled clean. An invariant whose whole purpose is an honest claim about
+    # HOW a property is held accepted no claim at all. The requirement is
+    # therefore enforced in each kind's OWN wrapper, where the kind is known.
+    #
+    # Two shapes appear in the declarations and both mean required:
+    #   level=interface|boundary (required)      a field with its vocabulary
+    #   owner (required, the unit responsible)   a bare field
+    _ATTR_REQ = _re.compile(r"\b([a-z_]+)\s*(?:=[^;(]*?)?\((?:required)\b")
+    required_attrs = {}
+    for _kind, _decl in schema["design_doc"]["blocks"].items():
+        if isinstance(_decl, str):
+            required_attrs[_kind] = list(dict.fromkeys(_ATTR_REQ.findall(_decl)))
     # foundation kinds (the four statement blocks) and their fixed order are
     # both DECLARED in the schema — never hardcoded here. The four kinds are the
     # subjects of block_fields.statement_blocks ("goal, no-goal, principle,
@@ -138,6 +164,24 @@ try:
         }
         for lv in behavior_levels
     }
+    # THE CLAUSE CARDINALITY AND ORDER, read from the declared prose rather
+    # than restated here. "when: exactly 1" and "then: 1..n" name the two
+    # constraints; the order is the fixed given/when/then the same prose
+    # states. Both were DECLARED and enforced nowhere: a clause renders as an
+    # independent call, so no clause ever meets its siblings and none can know
+    # it is the second `when`.
+    _card = str(_behavior_contract["clause_cardinality"])
+    clause_order = ["given", "when", "then"]
+    clause_exactly_one = [c for c in clause_order
+                          if _re.search(r"\b%s:\s*exactly 1" % c, _card)]
+    clause_at_least_one = [c for c in clause_order
+                           if _re.search(r"\b%s:\s*1\.\." % c, _card)]
+    if not clause_exactly_one and not clause_at_least_one:
+        sys.stderr.write(
+            "render-project: error: schema behavior_contract.clause_cardinality "
+            "states neither an 'exactly 1' nor a '1..n' constraint — the clause "
+            "rule would project as an assertion over an empty set\n")
+        sys.exit(2)
 except (KeyError, TypeError, IndexError) as e:
     sys.stderr.write("render-project: error: schema missing a required key: %s\n" % e)
     sys.exit(2)
@@ -241,6 +285,21 @@ if _order_a is None or _order_b is None or _order_a != _order_b:
     sys.exit(2)
 foundation_order = _order_a
 
+# WHICH FOUNDATION KINDS MUST APPEAR AT LEAST ONCE, read from the same declared
+# prose the order comes from ("at least one goal, zero or more no-goals, at
+# least one invariant, at least one principle"), never restated here.
+foundation_required = [
+    k for k in foundation_order
+    if _re.search(r"at least one %ss?\b" % _re.escape(k),
+                  foundation_cardinality_prose)
+]
+if not foundation_required:
+    sys.stderr.write(
+        "render-project: error: schema design_doc.foundation_cardinality "
+        "names no required foundation kind ('at least one <kind>') — the "
+        "cardinality rule would project as an assertion over an empty set\n")
+    sys.exit(2)
+
 # card grid geometry — declared in the blocks.cards prose (cols=2|3|4, size=md|sm)
 # and mirrored by the renderer. These are a fixed, small vocabulary the schema
 # states in design_doc.blocks.cards; kept in lockstep with that entry.
@@ -254,9 +313,10 @@ card_sizes = ["md", "sm"]
 # The library is a GENERATED artifact, never hand-edited: the schema stays the
 # one source of truth and a schema edit re-projects. It carries the per-block
 # contracts (required fields, enum legality, cross-field rules) as functions
-# that panic; the DOCUMENT-level contracts (foundation order and cardinality,
-# spine order, pending validity) are NOT expressible as per-block functions and
-# are emitted separately for the assert phase — see scripts/design-render.
+# that panic, and the DOCUMENT-level contracts as trails: a state records each
+# call, and an assertion placed at the end of the scope reads the trail back.
+# That is how a rule notices a block that was NEVER WRITTEN, which no single
+# function call can do — a kind absent from a finished trail was never called.
 # ---------------------------------------------------------------------------
 
 def q(s):
@@ -288,10 +348,20 @@ w("// Never hand-edit: a schema edit re-projects this file, and the gate")
 w("// byte-compares a fresh projection against the committed one.")
 w("//")
 w("// Carries the PER-BLOCK contracts as functions that panic fail-closed.")
-w("// Document-level contracts (foundation order and cardinality, spine order,")
-w("// pending validity) cannot be expressed by a per-block function — a")
-w("// function only runs when it is called, so it cannot see a block that was")
-w("// never written. Those live in the assert phase of scripts/design-render.")
+w("//")
+w("// A DOCUMENT-LEVEL contract compares one block against another, or notices")
+w("// a block nobody wrote, and a per-block function can do neither: it only")
+w("// runs when it is called. Two of them are nonetheless enforced HERE, by a")
+w("// state that carries the fact across calls. _foundation-trail records each")
+w("// foundation statement as it is called; assert-foundation-order reads the")
+w("// trail back for the ORDER, and assert-foundation-cardinality reads it for")
+w("// the per-kind MINIMUM — a kind absent from the finished trail is a kind")
+w("// nobody wrote. Both are scoped to one context, reset before each body.")
+w("//")
+w("// The SPINE ORDER is not enforced anywhere, and that is stated rather than")
+w("// left to be discovered: a section heading carries its own number, and")
+w("// nothing reads the numbers back to compare them. See the note on")
+w("// assert-foundation-cardinality below.")
 w("")
 
 # ---- the declared vocabularies --------------------------------------------
@@ -304,7 +374,11 @@ w("#let PROVENANCES = " + tuple_of(provenance_values))
 w("#let ENTITY-KINDS = " + tuple_of(entity_kinds))
 w("#let ENTITY-LIFECYCLES = " + tuple_of(entity_lifecycles))
 w("#let BEHAVIOR-LEVELS = " + tuple_of(behavior_levels))
+w("#let CLAUSE-ORDER = " + tuple_of(clause_order))
+w("#let CLAUSE-EXACTLY-ONE = " + tuple_of(clause_exactly_one))
+w("#let CLAUSE-AT-LEAST-ONE = " + tuple_of(clause_at_least_one))
 w("#let FOUNDATION-ORDER = " + tuple_of(foundation_order))
+w("#let FOUNDATION-REQUIRED = " + tuple_of(foundation_required))
 w("#let COVERAGE-STATUSES = " + tuple_of(coverage_statuses))
 w("#let TITLE-MAX = 64")
 w("")
@@ -523,10 +597,19 @@ w("""// ---- contract helpers — every block's checks route through these -----
 // violation, and the rendered order follows the schema's fixed lens order.
 #let _lenses(kind, lens) = {
   if lens == none { return () }
-  let parts = lens.split("+").map(p => p.trim())
+  // The two authoring surfaces spell a combo differently and both are legal:
+  // the markdown router passes the authored attr through as a "a+b" STRING,
+  // while a native document writes the array it means. Accepting both here is
+  // what lets one validation rule serve both, rather than a second copy that
+  // could drift.
+  let parts = if type(lens) == array {
+    lens
+  } else {
+    lens.split("+").map(p => p.trim())
+  }
   for p in parts { _enum(kind, "lens", p, LENSES) }
   if parts.dedup().len() != parts.len() {
-    _fail(kind, "lens combo repeats a member: " + lens)
+    _fail(kind, "lens combo repeats a member: " + repr(lens))
   }
   LENSES.filter(l => parts.contains(l))
 }
@@ -595,6 +678,94 @@ w("""// ---- the behavior fence — design_doc.behavior_contract.fence ---------
 // _census-group already uses for the entity census's two groups.
 #let _behavior-level = state("behavior-level", none)
 
+// ---- the foundation order, enforced ---------------------------------------
+// FOUNDATION-ORDER states the order the four foundation kinds must appear in.
+// That is a DOCUMENT-LEVEL rule: it compares one block against another, which
+// no per-block function can do, since a function only runs when it is called
+// and cannot see what was called before it.
+//
+// On the markdown side the aggregate's own fold reads the parsed block list and
+// checks this. That fold parses markdown, so it sees nothing in a Typst layer,
+// which left the order DECLARED AND UNENFORCED here: the vocabulary was
+// projected, it read as enforcement to anyone who grepped for it, and nothing
+// ran. A rule the schema declares and no home runs is worse than an undeclared
+// one, so the gap is closed rather than documented.
+//
+// A state closes it, because in this mode the author calls the library directly
+// and the call ORDER is the document's own. Each foundation statement appends
+// its kind to the trail; the assertion reads the finished trail and panics on
+// the first inversion. The scope is one CONTEXT, not the whole aggregate: a
+// layer renders many chapters into one document, and a later chapter opening on
+// a goal does not follow the previous chapter's principle.
+#let _foundation-trail = state("foundation-trail", ())
+
+#let _note-foundation(kind, title) = {
+  if FOUNDATION-ORDER.contains(kind) {
+    _foundation-trail.update(t => t + ((kind: kind, title: title),))
+  }
+}
+
+// Open a fresh scope. The aggregate calls this before each context's body, so
+// every context's foundation is judged on its own.
+#let foundation-scope-reset = _foundation-trail.update(())
+
+// Read the trail as it stands HERE and refuse an inversion. The read is
+// `.get()`, not `.final()`, and the difference is the whole scoping story:
+// `.final()` returns the state at the END of the document, which after the next
+// context's reset is that context's trail, so a single final assertion would
+// judge the last chapter four times and the others never. `.get()` inside a
+// `context` block sees the trail accumulated up to this point, so an assertion
+// placed after each chapter's body judges exactly that chapter.
+#let assert-foundation-order = context {
+  let rank = (:)
+  for (i, k) in FOUNDATION-ORDER.enumerate() { rank.insert(k, i) }
+  let prev = -1
+  let prev-kind = none
+  for e in _foundation-trail.get() {
+    let r = rank.at(e.kind)
+    if r < prev {
+      _fail("foundation", "out of order: " + e.kind + " " + repr(e.title)
+            + " follows " + prev-kind + " — the declared order is "
+            + FOUNDATION-ORDER.join(", "))
+    }
+    prev = r
+    prev-kind = e.kind
+  }
+}
+
+// THE PER-KIND MINIMUM, read off the same trail. This is the one document-level
+// contract that must notice a block NOBODY WROTE, and a function cannot report
+// its own absence — but the trail can, because it is complete once the context's
+// body has been laid out: a kind missing from the finished trail was never
+// called.
+//
+// `index-only` waives the minimum for a multi-context ROOT that merely indexes
+// its children. Such a root carries only genuinely cross-context foundation and
+// points down to each context for the rest; holding it to the full minimum would
+// force it to restate a goal a context already owns, which is the restatement
+// the layer exists to prevent. The waiver is an ARGUMENT rather than a guess:
+// nothing in the document's own text distinguishes an index root from a leaf
+// that forgot its foundation, so the author declares which one it is.
+#let assert-foundation-cardinality(index-only: false) = context {
+  if not index-only {
+    let present = _foundation-trail.get().map(e => e.kind).dedup()
+    // A document carrying NO foundation at all is not a document that failed
+    // the minimum — it is a document not carrying a foundation, a behavior-rule
+    // sheet or a reference page. The minimum binds a document that declares a
+    // foundation, and no other.
+    if present.len() > 0 {
+      for k in FOUNDATION-REQUIRED {
+        if not present.contains(k) {
+          _fail("foundation", "declares no " + k + " — the cardinality rule "
+                + "requires at least one of each of: "
+                + FOUNDATION-REQUIRED.join(", ")
+                + " (design_doc.foundation_cardinality)")
+        }
+      }
+    }
+  }
+}
+
 // A clause's body is markdown already routed through cmarker.render, so its
 // content tree is a call, not literal text — this walks it down to the
 // characters the author actually wrote, the same structural walk _len (below)
@@ -637,6 +808,9 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
                 since: none, level: none, adr: none,
                 ..rest, body) = {
   _title(kind, title)
+  // Record the call for the document-level order check. A foundation kind is
+  // the only kind that lands in the trail; every other statement passes through.
+  _note-foundation(kind, title)
   // EVERY unrecognized attribute fails, not just the retired two. A block
   // signature ends `..rest`, so an unknown name is silently dropped: `lense=`
   // for `lens=`, a plain typo — the block renders without it and looks
@@ -697,15 +871,48 @@ w("""// ---- the statement block: accent rule, title, body, FOOTER furniture ---
 """)
 
 # per-kind statement wrappers, one per declared foundation kind
+#
+# THE WRAPPER IS WHERE A PER-KIND REQUIREMENT CAN LIVE. `_statement` is one
+# shared body serving every statement kind, so it cannot demand `enforcement`
+# without demanding it of goal, no-goal and principle too — which is why the
+# requirement sat declared and unenforced. Here the kind is known, so each
+# wrapper asserts exactly what its own declaration marks (required).
 w("// one wrapper per declared statement kind")
 for k in foundation_kinds:
     # the kind IS the function name (design_doc.function_naming): a block kind
     # and the function rendering it carry one name, so nothing is translated
-    w("#let " + k + "(..a, body) = _statement(" + q(k) + ", ..a, body)")
+    #
+    # `title` is already required by _statement for every kind, so only the
+    # kind-specific attrs are asserted here; asserting title twice would report
+    # one omission as two violations.
+    req = [f for f in required_attrs.get(k, []) if f != "title"]
+    if not req:
+        w("#let " + k + "(..a, body) = _statement(" + q(k) + ", ..a, body)")
+        continue
+    w("#let " + k + "(..a, body) = {")
+    w("  let _named = a.named()")
+    for f in req:
+        w("  _need(" + q(k) + ", " + q(f) + ", _named.at("
+          + q(f) + ", default: none))")
+    w("  _statement(" + q(k) + ", ..a, body)")
+    w("}")
 w("")
 
 # ---- the remaining block kinds + the document shell ------------------------
 w("""// ---- clause + census blocks --------------------------------------------
+// ---- the clause trail -----------------------------------------------------
+// CLAUSE CARDINALITY AND ORDER are document-level rules inside one block:
+// given/when/then each render as an INDEPENDENT call, so a clause never meets
+// its siblings and cannot know it is the second `when` or that it preceded
+// one. The rules were declared in behavior_contract and enforced by nothing.
+//
+// The same state pattern the foundation uses closes it: each clause appends
+// its kind as it is called, and the behavior block reads the trail back once
+// its body has been laid out. The scope is ONE behavior block — the trail is
+// cleared as the block opens — because two sibling rules are two rules, and a
+// `when` in the next block does not follow this one's `then`.
+#let _clause-trail = state("clause-trail", ())
+
 #let _clause(word, body) = context {
   let level = _behavior-level.get()
   let flat = _flatten-text(body)
@@ -719,14 +926,60 @@ w("""// ---- clause + census blocks --------------------------------------------
   }
   block(inset: (left: 10pt), [*#word* #body])
 }
-#let given(..a, body) = _clause("Given", body)
-#let when(..a, body) = _clause("When", body)
-#let then(..a, body) = _clause("Then", body)
+// The trail update sits OUTSIDE the `context` block above, because a context
+// block is laid out lazily and an update inside it would not be visible to a
+// read that happens later in the same body.
+#let _note-clause(kind) = _clause-trail.update(t => t + (kind,))
+#let given(..a, body) = { _note-clause("given"); _clause("Given", body) }
+#let when(..a, body) = { _note-clause("when"); _clause("When", body) }
+#let then(..a, body) = { _note-clause("then"); _clause("Then", body) }
 
-#let behavior(..a, body) = _statement("behavior", ..a, body)
-#let pending(kind: none, ..a, body) = {
-  _enum("pending", "kind", kind, PENDING-KINDS)
-  _statement("pending", ..a, body)
+#let _assert-clauses = context {
+  let seq = _clause-trail.get()
+  // A behavior block whose body carries no clause at all is left to the
+  // cardinality rule below; an empty sequence means the author wrote prose
+  // where clauses belong, which `then: 1..n` already reports.
+  for c in CLAUSE-EXACTLY-ONE {
+    let n = seq.filter(x => x == c).len()
+    if n != 1 {
+      _fail("behavior", "has " + str(n) + " " + c + " clause(s), expected "
+            + "exactly 1 (design_doc.behavior_contract.clause_cardinality)")
+    }
+  }
+  for c in CLAUSE-AT-LEAST-ONE {
+    if seq.filter(x => x == c).len() == 0 {
+      _fail("behavior", "has no " + c + " clause, expected at least 1 "
+            + "(design_doc.behavior_contract.clause_cardinality)")
+    }
+  }
+  let rank = (:)
+  for (i, c) in CLAUSE-ORDER.enumerate() { rank.insert(c, i) }
+  let prev = -1
+  let prev-c = none
+  for c in seq {
+    let r = rank.at(c)
+    if r < prev {
+      _fail("behavior", "clauses out of order: " + c + " follows " + prev-c
+            + " — the declared order is " + CLAUSE-ORDER.join(", ")
+            + " (design_doc.behavior_contract.clause_order)")
+    }
+    prev = r
+    prev-c = c
+  }
+}
+
+// A behavior block's `level` is REQUIRED — the fence that forbids naming a
+// mechanism is defined per level, so a rule carrying no level is a rule no
+// fence applies to. The check is here rather than in `_statement`, which is
+// shared with kinds that carry no level at all.
+//
+// The clause trail is cleared as the block opens and judged after its body, so
+// each rule's clauses are counted against that rule and no other.
+#let behavior(..a, body) = {
+  _need("behavior", "level", a.named().at("level", default: none))
+  _clause-trail.update(())
+  _statement("behavior", ..a, body)
+  _assert-clauses
 }
 // ---- the entity census card ----------------------------------------------
 // The two groups inside a card label THEMSELVES, from the run of clauses rather
@@ -755,10 +1008,19 @@ w("""// ---- clause + census blocks --------------------------------------------
 // body does — loses the distinction that makes a census a model.
 #let entity(title: none, kind: none, owner: none, lifecycle: none,
             domain: none, tint: none, ..a, body) = {
+  // The census's four classifying facts are REQUIRED by the block's own
+  // declaration: what the thing is, who owns it, how it changes, and which
+  // domain it belongs to. A card missing one renders as a card that simply
+  // does not answer that question, which reads as "not applicable" rather
+  // than "never stated". `tint` stays optional — it is presentation.
+  _need("entity", "title", title)
+  _need("entity", "kind", kind)
+  _need("entity", "owner", owner)
+  _need("entity", "lifecycle", lifecycle)
+  _need("entity", "domain", domain)
   _enum("entity", "kind", kind, ENTITY-KINDS)
   _enum("entity", "lifecycle", lifecycle, ENTITY-LIFECYCLES)
   _enum("entity", "tint", tint, TINTS)
-  _need("entity", "title", title)
   let kc = if kind != none { ENTITY-KIND-COLOR.at(kind) } else { luma(120) }
   let lc = if lifecycle != none { ENTITY-LIFECYCLE-COLOR.at(lifecycle) } else { none }
   block(width: 100%, breakable: false, radius: 3pt, inset: 0pt, clip: true,
@@ -790,6 +1052,10 @@ w("""// ---- clause + census blocks --------------------------------------------
 // unchanged.
 // An attribute's keyword IS its provenance, so the keyword carries the tone.
 #let attribute(provenance: none, ..a, body) = {
+  // Provenance is the load-bearing field of the census: it says whether the
+  // value was authored, derived, or observed, and an attribute with no
+  // provenance makes no claim about how it arises. Required, not defaulted.
+  _need("attribute", "provenance", provenance)
   _enum("attribute", "provenance", provenance, PROVENANCES)
   _census-enter("attributes")
   let c = if provenance != none { PROVENANCE-COLOR.at(provenance) } else { none }
@@ -800,8 +1066,26 @@ w("""// ---- clause + census blocks --------------------------------------------
 
 // A relationship's cardinality is the shape of the edge, so it is set in a
 // monospaced capsule: `1 : 0..n` scans down the column as a column of shapes.
+#let CARDINALITY = ("1", "0..1", "n", "0..n")
+
 #let relates(cardinality: none, ..a, body) = {
   _census-enter("relationships")
+  // The cardinality is DECLARED rather than written into the body precisely so
+  // it can be checked: the census states the shape of every relation uniformly
+  // instead of burying it in a sentence, and a shape nothing validates is a
+  // claim the reader has to take on trust.
+  _need("relates", "cardinality", cardinality)
+  let sides = cardinality.split(":").map(p => p.trim())
+  if sides.len() != 2 {
+    _fail("relates", "cardinality " + repr(cardinality) +
+          " must be written `<this> : <other>`, for example " + repr("1 : 0..n"))
+  }
+  for side in sides {
+    if side not in CARDINALITY {
+      _fail("relates", "cardinality side " + repr(side) + " must be one of " +
+            repr(CARDINALITY))
+    }
+  }
   block(width: 100%, inset: (left: 2pt, y: 2.5pt),
     grid(columns: (58pt, 1fr), column-gutter: 7pt, align: (right + top, left),
       box(inset: (x: 4pt, y: 1.5pt), radius: 3pt, baseline: 2pt,
@@ -853,12 +1137,32 @@ w("""// ---- clause + census blocks --------------------------------------------
   v(0.45em)
 }
 #let stat-grid(cols: "3", tiles: (), ..a) = {
-  block(width: 100%, grid(columns: (1fr,) * int(cols), gutter: 6pt,
-    ..tiles.map(t => block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(246),
+  // The two surfaces hand the tiles over differently and both are legal: the
+  // markdown router collects the nested :::stat-tile blocks into `tiles:`,
+  // while a native document passes them positionally. Accepting both matters
+  // more than it looks — passing tiles positionally to a tiles:-only signature
+  // renders an EMPTY GRID and exits 0, which is a blank page that reports
+  // success.
+  let ts = if tiles.len() > 0 { tiles } else { a.pos() }
+  if ts.len() == 0 {
+    _guide("stat-grid() holds at least one tile; an empty grid renders nothing")
+    return
+  }
+  block(width: 100%, grid(columns: (1fr,) * calc.min(ts.len(), int(cols)),
+    gutter: 6pt,
+    ..ts.map(t => block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(246),
       [
         #text(size: 16pt, weight: "bold", t.at("value", default: ""))
         #linebreak()
         #text(size: 7pt, fill: luma(110), t.at("label", default: ""))
+        #if t.at("delta", default: none) != none [
+          #linebreak()
+          #text(size: 6.8pt, weight: "bold",
+                fill: if t.at("dir", default: none) == "up" {
+                  TINT-COLOR.at("teal")
+                } else { TINT-COLOR.at("rose") },
+                t.delta)
+        ]
       ]))))
   v(0.45em)
 }
@@ -1174,9 +1478,46 @@ w("""// ---- the native authoring surface --------------------------------------
 // notes. `visual` is OPTIONAL, and that is a contract rather than a taste
 // call: the spine mandates an end-to-end walkthrough, and a walkthrough is a
 // narrative. A required visual would make a mandated section illegal to write.
+// ---- the spine order ------------------------------------------------------
+// The spine's sections are numbered and must appear in ascending order — the
+// document goes gross to fine, and a section out of sequence means the
+// breakdown doubles back. That is a rule ACROSS sections, so no single
+// `section` call can see it; the same trail pattern the foundation uses
+// carries the numbers forward and the aggregate reads them back per context.
+//
+// Only a NUMBERED title takes part. A section titled "Pending updates" is
+// unnumbered by the spine's own rule, and an unnumbered heading is simply not
+// on the axis this orders.
+#let _spine-trail = state("spine-trail", ())
+#let _spine-number(title) = {
+  let t = _flatten-text(title).trim()
+  let m = t.match(regex("^([0-9]+)"))
+  if m == none { none } else { int(m.captures.at(0)) }
+}
+#let spine-scope-reset = _spine-trail.update(())
+#let assert-spine-order = context {
+  let prev = -1
+  let prev-t = none
+  for e in _spine-trail.get() {
+    if e.n < prev {
+      _fail("spine", "sections are out of order: " + repr(e.title)
+            + " follows " + repr(prev-t)
+            + " — a numbered spine runs gross to fine, ascending")
+    }
+    prev = e.n
+    prev-t = e.title
+  }
+}
+
 #let section(title: none, lead: none, visual: none, notes: none, body: none) = {
   _need("section", "title", title)
   _max-lead("section lead", lead)
+  {
+    let n = _spine-number(title)
+    if n != none {
+      _spine-trail.update(t => t + ((n: n, title: _flatten-text(title).trim()),))
+    }
+  }
   heading(level: 1)[#title]
   if lead != none {
     block(text(size: 9.4pt, fill: luma(70))[#lead]); v(0.3em)
@@ -1203,16 +1544,117 @@ w("""// ---- the native authoring surface --------------------------------------
   v(0.45em)
 }
 
-// CROSS REFERENCES — a reference is a call over declared data, so a rename is
-// a compile error rather than a dangling path a link checker finds later.
+// CROSS REFERENCES — a reference RESOLVES against declared data, so a rename
+// is a compile error rather than a dangling path a link checker finds later.
+//
+// THE REGISTRY IS WHAT MAKES THAT CLAIM TRUE. Both registries are supplied by
+// the aggregate, which reads every CONTEXT.typ and every context directory
+// before it compiles: TERM-TITLES maps each declared slug to the title its
+// glossary entry carries, and CONTEXT-NAMES lists every context the layer
+// holds. A citation looks its subject up and renders the TITLE, so the reader
+// sees the phrase the term names rather than the identifier the author typed.
+// A slug with no declaration panics AT THE CITING CALL, which is the
+// referential integrity this notation exists for: renaming a term at its
+// declaration fails every stale use site during the compile, instead of
+// printing a dead identifier into running prose that no byte-compare of the
+// output can detect.
+//
+// AN EMPTY REGISTRY DISABLES THE LOOKUP, and only that case. A context
+// compiled ALONE — an author previewing one document — has no aggregate to
+// supply a registry, and panicking there would make a single file
+// unrenderable. That fallback prints the slug, as this function always did.
+// The aggregate additionally asserts its registry is non-empty, so the empty
+// case can never arise in the render that gates and silently restore the old
+// unchecked behavior.
+#let TERM-TITLES = state("design-term-titles", (:))
+#let CONTEXT-NAMES = state("design-context-names", ())
+#let CITED-TERMS = state("design-cited-terms", ())
+
 #let ctx(name, accent: "teal") = {
   _req-enum("accent", accent, TINTS)
-  chip(name, TINT-COLOR.at(accent))
+  context {
+    let declared = CONTEXT-NAMES.final()
+    if declared.len() > 0 and name not in declared {
+      panic("ctx(" + repr(name) + ") names no context this layer declares. " +
+            "Declared: " + declared.join(", ") + ". A context reference " +
+            "resolves against the directories the layer holds, so a renamed " +
+            "or misspelled context fails here rather than rendering a dead " +
+            "identifier into the prose.")
+    }
+    chip(name, tone: TINT-COLOR.at(accent))
+  }
 }
-#let term(slug) = chip(slug, luma(110))
+
+// AN ADR CITATION, by number. The number IS the whole citation: the ADRs are
+// markdown files outside this document, so there is nothing here to resolve
+// against and nothing to jump to inside the render. What the call buys is that
+// the NUMBER is checkable at the citing line — layer-integrity reads every
+// adr(N) and refuses one the ADR directory has no file for, where a hand-typed
+// path would silently rot the moment a file is renamed.
+//
+// The rendered form is a chip carrying the padded id, so a citation reads the
+// same way a term or a context reference does.
+#let adr(n) = {
+  if type(n) != int {
+    _fail("adr citation", "takes the ADR NUMBER as an integer, got " + repr(n)
+          + " — the number is the citation, and a path would rot on a rename")
+  }
+  if n < 0 {
+    _fail("adr citation", "takes a positive ADR number, got " + repr(n))
+  }
+  let padded = str(n)
+  while padded.len() < 4 { padded = "0" + padded }
+  chip("ADR-" + padded, tone: TINT-COLOR.at("slate"))
+}
+
+#let term(slug) = {
+  CITED-TERMS.update(xs => xs + (slug,))
+  context {
+    let titles = TERM-TITLES.final()
+    if titles.len() == 0 {
+      chip(slug, tone: luma(110))
+    } else if slug in titles {
+      chip(titles.at(slug), tone: luma(110))
+    } else {
+      panic("term(" + repr(slug) + ") cites a term no CONTEXT.typ declares. " +
+            "A term citation renders the declared TITLE, so an undeclared " +
+            "slug has no text to render and would print the raw identifier " +
+            "into the prose. Declare the term in a CONTEXT.typ, or correct " +
+            "the slug.")
+    }
+  }
+}
+
+// The aggregate declares the layer's vocabulary before any body renders.
+//
+// A layer that declares NO term is legal — a layer may be written before its
+// glossary is. That case leaves the term registry empty and the lookup falls
+// back to printing the slug, so the aggregate refuses a citation it cannot
+// resolve rather than resolving it wrongly: `assert-references-resolvable`
+// below runs at the end of the document and fails if any citation was made
+// against an empty registry.
+#let declare-vocabulary(terms: (:), contexts: ()) = {
+  TERM-TITLES.update(terms)
+  CONTEXT-NAMES.update(contexts)
+}
+
+// The empty-registry fallback is a real hole, so it is closed by an assertion
+// rather than by trust: a layer declaring no term at all renders, and a layer
+// that CITES a term while declaring none stops here. Without this, deleting
+// every CONTEXT.typ would silently restore the old unchecked behavior for the
+// whole document.
+#let assert-references-resolvable = context {
+  let cited = CITED-TERMS.final()
+  if cited.len() > 0 and TERM-TITLES.final().len() == 0 {
+    panic("the document cites " + str(cited.len()) + " term(s) — including " +
+          repr(cited.first()) + " — while the layer declares no term at all, " +
+          "so no citation could be resolved and each one printed its raw " +
+          "slug. Declare the terms in a CONTEXT.typ.")
+  }
+}
 #let lens-pill(name) = {
   _req-enum("lens", name, LENSES)
-  chip(name, TINT-COLOR.at("violet"))
+  chip(name, tone: LENS-COLOR.at(name))
 }
 
 // THE DIAGRAM — nodes and edges are DATA and the library lays them out, so the

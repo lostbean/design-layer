@@ -205,6 +205,17 @@ assert_invariant component-missionless "is missing required field: mission" \
 assert_invariant stat-tile-valueless "is missing required field: value" \
   '#stat-tile(label: "things")'
 
+# The census's relationship shape is a DECLARED field precisely so it can be
+# checked; a shape nothing validates is a claim the reader takes on trust.
+assert_invariant relates-bad-side "cardinality side" \
+  '#relates(cardinality: "many : 1")[other]'
+
+assert_invariant relates-bad-shape "must be written" \
+  '#relates(cardinality: "1")[other]'
+
+assert_invariant relates-no-cardinality "is missing required field: cardinality" \
+  '#relates[other]'
+
 # --- guidelines: silent by default, named under strict ------------------------
 assert_guideline title-length "title exceeds 64 characters" \
   '#goal(title: "This title is deliberately far longer than the sixty-four character budget")[b]'

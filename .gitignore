@@ -3,9 +3,8 @@
 result
 result-*
 
-# Python bytecode. The gate scripts are extensionless python programs imported
-# by their siblings (design-aggregate loads md-to-typst as a module), so running
-# the gate writes a __pycache__ beside them.
+# Python bytecode. The gate scripts are extensionless python programs, so a
+# run that imports one writes a __pycache__ beside them.
 __pycache__/
 *.py[cod]
 
@@ -15,9 +14,8 @@ __pycache__/
 # do not depend on that generated file being present.
 .ruff_cache/
 
-# Rendered output of the fixture render, and the schema's projected library a
-# local `render-project` run against fixtures/ writes beside it (see the
-# "How this file is rendered" section of fixtures/widget-gallery.md) — both
+# Rendered output of the gallery render, and the schema's projected library a
+# local `render-project` run against fixtures/ writes beside it — both
 # regenerated on demand, never committed.
 fixtures/*.pdf
 fixtures/.render/

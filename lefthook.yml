@@ -28,10 +28,10 @@ pre-commit:
         nix develop --command bash -c '
           set -e
           bash ./scripts/layer-integrity.test.sh
-          bash ./scripts/design-render.test.sh
           bash ./scripts/widget-coverage.test.sh
           bash ./scripts/vendored-offline.test.sh
           bash ./scripts/designlib-native.test.sh
+          bash ./scripts/typst-layer.test.sh
         '
     projection-determinism:
       # The seam `nix flake check`'s projection-freshness check also proves:

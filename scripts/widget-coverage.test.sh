@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 #
-# widget-coverage.test.sh — every declared block kind renders, and the widget
-# gallery exercises every one of them.
+# widget-coverage.test.sh — every declared block kind is projected, and the
+# gallery exercises every function the projection offers an author.
 #
 # WHY THIS TEST EXISTS. The block vocabulary is declared in the schema,
-# projected into a Typst library, and demonstrated in the widget gallery. Those
-# three can drift independently, and each drift is SILENT: a block declared but
-# not projected fails only when someone writes it; a block projected but not
+# projected into a Typst library, and demonstrated in the gallery. Those three
+# can drift independently, and each drift is SILENT: a block declared but not
+# projected fails only when someone writes it; a function projected but not
 # demonstrated is never exercised, so a regression in it ships. This test binds
 # the three together.
 #
 # It checks three things:
 #   1. every block kind the SCHEMA declares has a function in the PROJECTION
-#      (or is deliberately exempt — a fenced diagram language, not a directive)
-#   2. every block kind renders — a generated page using all of them compiles
-#   3. the widget GALLERY uses every declared kind, so the reference is complete
+#      (or is deliberately exempt — a fenced diagram language, not a call)
+#   2. the GALLERY calls every function projected for authoring
+#   3. the gallery RENDERS, and its marks reach the page — a function can be
+#      declared, projected, present in the gallery, and still fail to compile,
+#      and a page that draws nothing still exits 0
 #
 # Usage: widget-coverage.test.sh [repo-root]
 # Exit: 0 all pass, 1 a check failed.
@@ -36,9 +38,6 @@ fail_line() {
 }
 
 SCHEMA="schema/design-schema.json"
-# The widget gallery is this repo's TEMPLATE FIXTURE — the document that
-# exercises every declared block kind and so is the renderer-drift tripwire.
-GALLERY="fixtures/widget-gallery.md"
 
 # The library is PROJECTED FRESH from the one declared schema. This repo ships
 # the gate and holds no design layer of its own, so there is no committed
@@ -104,40 +103,94 @@ else
   printf '       %s\n' $missing
 fi
 
-# --- 2. the gallery exercises every declared kind -----------------------------
+# --- 2. the gallery exercises every projected function -----------------------
+# THE GALLERY IS THE RENDERER-DRIFT TRIPWIRE. A function projected for authoring
+# and absent from the gallery is never exercised, so a regression in it ships
+# unnoticed. The exemptions below are the functions no author ever writes.
+GALLERY="fixtures/gallery.typ"
 if [ -f "$GALLERY" ]; then
-  ungalleried=$(
-    python3 - "$SCHEMA" "$GALLERY" <<'PY'
-import json, re, sys
-schema, gallery = sys.argv[1], sys.argv[2]
-declared = list(json.load(open(schema))["design_doc"]["blocks"].keys())
-src = open(gallery).read()
-used = set(re.findall(r"^:{3,}\s*([a-z-]+)", src, re.M))
-used |= set(re.findall(r"^```+\s*([a-z-]+)", src, re.M))
-print("\n".join(k for k in declared if k not in used))
+  uncovered=$(
+    python3 - "$LIB" "$GALLERY" <<'PY'
+import re, sys
+lib, gallery = sys.argv[1], sys.argv[2]
+src = open(lib).read()
+used = open(gallery).read()
+
+# The functions that make up the authoring surface. A private helper (_x) is
+# exercised through its callers; a vocabulary constant is data, not a call.
+public = set(re.findall(r"^#let ([a-z][a-z0-9-]*)\(", src, re.M))
+# AGGREGATE INFRASTRUCTURE, not authoring widgets. The aggregate emits each of
+# these itself, from data it read out of the layer — the document shell, a
+# chapter's front page, a glossary entry's owner chip, and the vocabulary
+# registry. An author never writes one, so a gallery page demonstrating them
+# would demonstrate nothing a reader could copy. Their behavior is covered
+# where it is real: the aggregate assertions in typst-layer.test.sh.
+#
+# THE LIST IS SHORT ON PURPOSE. Every name here is a function this check stops
+# looking at, so an exemption granted loosely is coverage silently withdrawn.
+AGGREGATE_EMITTED = {
+    "aggregate-doc", "chapter-page", "context-owner", "declare-vocabulary",
+    # The document-level assertions. The aggregate places each one around a
+    # chapter's body — an author never writes one, and a gallery page calling
+    # one would assert against the gallery rather than demonstrate anything.
+    # They are covered where they are real: the foundation-contract assertions
+    # in typst-layer.test.sh, which drive them through the aggregate and check
+    # that each one FAILS on a layer that violates it.
+    "assert-foundation-cardinality",
+}
+missing = []
+for fn in sorted(public - AGGREGATE_EMITTED):
+    # \b does not end a hyphenated name the way it ends a word: in `#stat-tile`
+    # the boundary after `stat` matches, so `#stat` would look present. The
+    # trailing guard is therefore "not another name character", hyphen included.
+    if not re.search(r"[#(\s]" + re.escape(fn) + r"(?![a-z0-9-])", used):
+        missing.append(fn)
+print("\n".join(missing))
 PY
   )
-  if [ -z "$ungalleried" ]; then
-    pass_line "the gallery exercises every declared block kind"
+  if [ -z "$uncovered" ]; then
+    pass_line "the gallery exercises every projected function"
   else
-    fail_line "declared but NOT in the gallery:"
-    printf '       %s\n' $ungalleried
+    fail_line "projected for authoring but NOT in the gallery:"
+    printf '       %s\n' $uncovered
   fi
-else
-  fail_line "no widget gallery at $GALLERY"
-fi
 
-# --- 3. the gallery renders ---------------------------------------------------
-# This is the real proof: a kind can be declared, projected, and present in the
-# gallery, and still fail to render. Only a render says it works.
-if [ -f "$GALLERY" ]; then
-  if ./scripts/design-render "$GALLERY" >/dev/null 2>/tmp/wc-render.err; then
-    pass_line "the gallery renders clean (every kind in it compiles)"
+  # And it must RENDER. A function can be projected, present in the gallery,
+  # and still fail to compile; only a render says it works. The rendered text
+  # is then read back, because a page that draws nothing still exits 0.
+  NG_TMP="$WC_TMP/gallery"
+  mkdir -p "$NG_TMP"
+  cp "$GALLERY" "$NG_TMP/gallery.typ"
+  cp -r "$WC_TMP/.render" "$NG_TMP/.render"
+  if "${TYPST:-typst}" compile --root "$NG_TMP" \
+    "$NG_TMP/gallery.typ" "$NG_TMP/out.pdf" 2>"$WC_TMP/ng.err"; then
+    pass_line "the gallery renders clean"
+    if command -v pdftotext >/dev/null 2>&1; then
+      ngtext="$(pdftotext "$NG_TMP/out.pdf" - 2>/dev/null)"
+      ngmissing=""
+      # one mark per structure that could silently render empty: the diagram's
+      # own labels, a coverage reason, a stat value, a pending entry.
+      for mark in designlib "called directly" LICENSE "2.4M" "Pending updates" \
+        "ADR-0065"; do
+        case "$ngtext" in
+        *"$mark"*) ;;
+        *) ngmissing="$ngmissing [$mark]" ;;
+        esac
+      done
+      if [ -z "$ngmissing" ]; then
+        pass_line "the gallery's diagram, table, and ledger reach the page"
+      else
+        fail_line "the gallery rendered but these marks are absent:$ngmissing"
+      fi
+    else
+      fail_line "no pdftotext: the gallery's marks could not be asserted"
+    fi
   else
     fail_line "the gallery does NOT render:"
-    sed 's/^/       /' /tmp/wc-render.err | head -6
+    sed 's/^/       /' "$WC_TMP/ng.err" | head -6
   fi
-  rm -f /tmp/wc-render.err
+else
+  fail_line "no gallery at $GALLERY"
 fi
 
 # --- 4. the schema's vendored set equals the flake's --------------------------
@@ -172,6 +225,12 @@ PYEOF
     fail_line "the schema's vendored package set has drifted from the flake:"
     sed 's/^/       /' /tmp/wc-vendor.err 2>/dev/null | head -4
   fi
+else
+  # The flake is what actually vendors the package set, so its absence does not
+  # make this check inapplicable — it makes the check IMPOSSIBLE, which is a
+  # different thing and must not read as a pass. Without this branch the
+  # assertion count fell 7 to 6 and the suite still exited 0.
+  fail_line "no $ROOT/flake.nix: the vendored set could not be compared"
 fi
 
 echo

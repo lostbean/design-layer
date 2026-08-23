@@ -95,9 +95,9 @@
             '';
 
         # The runtime PATH the gate scripts need: bash (render-project and the
-        # shell gates), python3 (design-render, design-aggregate,
-        # token-coverage, layer-integrity), git (layer-integrity's staleness
-        # advisory), and the vendored renderer (the typst compile).
+        # shell gates), python3 (design-aggregate, token-coverage,
+        # layer-integrity), git (layer-integrity's staleness advisory), and the
+        # vendored renderer (the typst compile).
         gateRuntime = [
           pkgs.bash
           pkgs.python3
@@ -109,7 +109,7 @@
         # that let a script find its half of the bundle:
         #
         #   $DESIGN_SCHEMA   the ONE declared schema (already honored by
-        #                    design-render and layer-integrity)
+        #                    design-aggregate and layer-integrity)
         #   $DESIGN_LIB_DIR  the directory holding designlib.typ, so the compile
         #                    imports the BUNDLED library instead of looking for
         #                    a `.render/` inside the target directory
@@ -156,10 +156,10 @@
           # spawning a process per match. Python, so ruff formats it, not shfmt.
           #
           # The other extensionless python programs (design-aggregate,
-          # design-render, md-to-typst, token-coverage) are deliberately NOT
-          # listed, so treefmt cannot see their language and they go
-          # unformatted. Adding them here is a one-line change that rewrites
-          # ~320 lines across four files; that reformat is a separate
+          # token-coverage) are deliberately NOT listed, so treefmt cannot see
+          # their language and they go unformatted. Adding them here is a
+          # one-line change that rewrites a few hundred lines across those
+          # files; that reformat is a separate
           # decision from whatever else touches this config, and making it
           # here would bury it in an unrelated diff.
           settings.formatter.ruff-format.includes = [
@@ -202,15 +202,13 @@
         # The gate, callable against ANY directory from outside this repo, with
         # nothing copied into that directory.
         #
-        #   nix run <flake>#render    -- <design.md> [--check]
         #   nix run <flake>#project   -- <schema.json> <out-dir>
         #   nix run <flake>#aggregate -- <layer-root> <out.pdf>
         #   nix run <flake>#check     -- <layer-root> [repo-root]
         #
-        # render, project, and aggregate are thin pass-throughs to one script
-        # each. check is the COMPOSITE: the freshness check, token coverage,
-        # and layer integrity in sequence.
-        apps.render = gateApp "design-render" "design-render";
+        # project and aggregate are thin pass-throughs to one script each.
+        # check is the COMPOSITE: the freshness check, token coverage, and
+        # layer integrity in sequence.
         apps.project = gateApp "render-project" "render-project";
 
         # The aggregate, callable on its own. `check` VERIFIES the rendered
@@ -270,6 +268,73 @@
             program = "${checkWrapper}/bin/design-check";
           };
 
+        # THE GUIDELINE PASS — reference, deliberately NOT a gate.
+        #
+        # The library holds two classes of rule. An INVARIANT is a hard error
+        # in every render: a statement block with no title is a claim nobody
+        # can cite. A GUIDELINE is advice about the document a reader will
+        # get — a title running long, a bullet running to five sentences, an
+        # empty grid — and it is silent by default, because a design document
+        # is read by someone who did not write it and cannot act on a lint
+        # note.
+        #
+        # Guidelines therefore render nothing and, until this app existed,
+        # could be reached by NOTHING: `strict` appeared in no app, no check,
+        # and no hook, so all twelve were unreachable code that read as
+        # enforcement to anyone who grepped for them.
+        #
+        # This app is the reachable door, and it stays OUT of `check` and out
+        # of the commit hook on purpose. A guideline names a document that
+        # could read better, never one that is wrong, so blocking a commit on
+        # one would impose a house style through a mechanism meant for
+        # correctness. An author runs it when they want the sweep:
+        #
+        #   nix run <flake>#lint -- <layer-root>
+        #
+        # Exit: 0 no guideline fires, 1 at least one does (named, with its
+        # source line), 2 usage error.
+        apps.lint =
+          let
+            lintWrapper = pkgs.writeShellApplication {
+              name = "design-lint";
+              runtimeInputs = gateRuntime;
+              text = ''
+                if [ "$#" -lt 1 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+                  cat >&2 <<'USAGE'
+                usage: design-lint <layer-root>
+
+                  <layer-root>  the directory holding the root design document
+                                and the per-context subdirectories
+
+                Renders the layer with every GUIDELINE promoted to an error and
+                reports the first one that fires. Guidelines are advisory: this
+                is a pass an author asks for, never part of the gate.
+
+                Exit: 0 clean, 1 a guideline fired, 2 usage error.
+                USAGE
+                  exit 2
+                fi
+
+                export DESIGN_SCHEMA="''${DESIGN_SCHEMA:-${gateBundle}/schema/design-schema.json}"
+                export DESIGN_LIB_DIR="''${DESIGN_LIB_DIR:-${gateBundle}/render}"
+                export DESIGN_STRICT=1
+
+                out="$(mktemp -d)"
+                trap 'rm -rf "$out"' EXIT
+                if ${gateBundle}/scripts/design-aggregate \
+                  "$1" "$out/lint.pdf"; then
+                  echo "design-lint: no guideline fired in $1"
+                else
+                  exit 1
+                fi
+              '';
+            };
+          in
+          {
+            type = "app";
+            program = "${lintWrapper}/bin/design-lint";
+          };
+
         # `nix fmt` runs treefmt across the repo.
         formatter = treefmtEval.config.build.wrapper;
 
@@ -305,13 +370,14 @@
               patchShebangs scripts
               bash ./scripts/layer-integrity.test.sh
               bash ./scripts/widget-coverage.test.sh
-              bash ./scripts/design-render.test.sh
               # The offline guarantee, asserted where it is REAL: the build
               # sandbox has no network, so a package the vendored set failed to
               # carry cannot be silently fetched the way it can on a laptop
               # with a warm cache.
               bash ./scripts/vendored-offline.test.sh
               bash ./scripts/designlib-native.test.sh
+              bash ./scripts/typst-layer.test.sh
+              bash ./scripts/token-coverage.test.sh
               touch $out
             '';
 

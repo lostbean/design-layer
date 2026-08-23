@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """design-aggregate — compile the whole design layer into ONE navigable PDF.
 
-The per-context `design.md` files stay the unit of authoring, review, and
+The per-context `design.typ` files stay the unit of authoring, review, and
 ownership. That is a claim about the SOURCE, and it is the reason the layer is
 N files: making the source one file would make every write a write to the same
 artifact, so two agents could not reconcile two contexts at once.
@@ -12,12 +12,10 @@ document with a table of contents, the contexts as chapters, and every glossary
 gathered into one alphabetised section.
 
 THIS IS THE LAYER'S RENDERED DOCUMENT, not one artifact among several. A
-context's design.md renders into it as a chapter and emits no sibling PDF of
-its own. A host that keeps a standalone reference document outside the
-aggregate — a vocabulary gallery it wants adopters to browse on its own,
-say — renders that one document separately with design-render instead of
-folding it in here; this repo's own fixtures/widget-gallery.md is exactly
-that shape; see its "How this file is rendered" section.
+context's design.typ renders into it as a chapter and emits no sibling PDF of
+its own. A standalone reference document a host keeps outside the aggregate —
+a vocabulary gallery it wants adopters to browse on its own, say — is compiled
+by the renderer directly, the way fixtures/gallery.typ is.
 
 Inside one document a citation of a CONTEXT term is an INTRA-document reference,
 so the compiler resolves it and a missing term fails the build with a source
@@ -30,14 +28,12 @@ Usage:
   design-aggregate <layer-root> <out.pdf>            build the document
   design-aggregate <layer-root> <out.pdf> --check    regenerate and compare
 
-  <layer-root> is the directory holding the root design.md and the per-context
+  <layer-root> is the directory holding the root design.typ and the per-context
   subdirectories (conventionally docs/design).
 
 Exit: 0 clean, 1 the aggregate failed to compile or is stale, 2 error.
 """
 
-import importlib.machinery
-import importlib.util
 import os
 import re
 import subprocess
@@ -46,390 +42,56 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# the router owns the markdown->typst inline conversion; the aggregate reuses
-# it rather than keeping a second copy that could drift.
-_spec = importlib.util.spec_from_loader(
-    "md_to_typst",
-    importlib.machinery.SourceFileLoader("md_to_typst",
-                                         os.path.join(HERE, "md-to-typst")))
-_router = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_router)
-inline = _router.inline
-prose = _router.prose
-
-# the renderer-warning rule has ONE home, in the gate; the aggregate composes it
-# rather than keeping a second copy that could drift.
-_gspec = importlib.util.spec_from_loader(
-    "design_render",
-    importlib.machinery.SourceFileLoader("design_render",
-                                         os.path.join(HERE, "design-render")))
-_gate = importlib.util.module_from_spec(_gspec)
-_gspec.loader.exec_module(_gate)
-warns = _gate.warns
-
-def _term_re_from_schema():
-    """Derive the glossary term heading pattern from the ONE declared schema,
-    never a hardcoded copy.
-
-    A hardcoded `^###` here once disagreed with layer-integrity, which reads
-    the schema's anchors.term.heading_regex directly and — before that regex
-    was tightened to match anchors.term.heading_form — accepted a term anchor
-    at ANY heading level. A layer authored at the level layer-integrity
-    accepted passed that gate clean while this aggregate silently counted
-    zero terms and rendered an empty glossary: two readers of one declared
-    vocabulary, disagreeing, with no error either side. Deriving the level
-    from heading_form here closes that gap structurally — a future schema
-    edit to the term heading's level re-derives this pattern instead of
-    leaving a second copy to fall out of step.
-    """
-    schema = _gate.load_schema()
-    form = schema["anchors"]["term"]["heading_form"]
-    m = re.match(r"^(#+)\s", form)
-    if not m:
-        sys.stderr.write(
-            "design-aggregate: error: anchors.term.heading_form %r does not "
-            "open with a markdown heading prefix\n" % form)
-        sys.exit(2)
-    prefix = re.escape(m.group(1))
-    return re.compile(
-        r"^%s\s+(?P<title>.+?)\s*\{#(?P<slug>term-[a-z0-9]+(?:-[a-z0-9]+)*)\}\s*$"
-        % prefix)
-
-
-TERM_RE = _term_re_from_schema()
-H1_RE = re.compile(r"^#\s+(.*)$")
 
 # ---------------------------------------------------------------------------
-# internal links — a relative path is a FILE reference, and this is one document
+# the renderer's own warnings — a warning means the page is not what was written
 # ---------------------------------------------------------------------------
-# The layer's links are authored as relative markdown paths, which is correct on
-# the source side: `CONTEXT.md#term-pending-ledger` resolves in a diff, on a
-# forge, and in an editor. Inside ONE rendered document those paths have no
-# meaning — a PDF viewer treats them as external URIs and offers to open another
-# application, so every cross-reference in the layer's 200+ term citations dead-
-# ends. The aggregate therefore rewrites a destination that HAS an internal
-# target into a Typst label reference, and leaves the rest alone.
+# The compiler reports a whole class of corruption on every build, and the gate
+# used to throw it away: the compile site ran with capture_output=True and wrote
+# proc.stderr ONLY when the return code was non-zero. So a document that
+# rendered "successfully" while Typst said `warning: no text within stars`
+# passed the gate with its bold silently dropped.
 #
-# Four destination shapes carry an internal target:
-#   CONTEXT.md#term-x          a glossary term      -> <term-x>
-#   ../<ctx>/CONTEXT.md#term-x another context's    -> <term-x>   (one glossary)
-#   <ctx>/design.md            a chapter            -> <ctx-...>
-#   design.md#NN-heading       a section            -> <sec-...>
-# An ADR link stays external: the ADRs are not part of this document, so there is
-# nothing to jump to and a live external link is the honest result.
-# The SOURCE-side rewrite. A prose link stays ordinary markdown all the way to
-# cmarker, so its destination is resolved HERE, in the authored text, before any
-# conversion runs: `[t](CONTEXT.md#term-x)` becomes `[t](@term-x)`. A `@`-prefixed
-# destination is still a plain markdown link, so cmarker pairs surrounding
-# emphasis normally — which injecting a Typst call into the text does not, because
-# a raw-typst span makes cmarker escape every `**` after it.
-# The projected library's `show link:` rule turns an `@name` destination into a
-# real label reference at render time.
-MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+# A warning is not advisory here. The author calls the library directly, so a
+# warning means the compiler had to read something loosely — the page is not
+# what the author wrote.
+WARN_RE = re.compile(r"^warning: (.+)$", re.M)
 
 
-def rewrite_md_links(md, stem, known_labels):
-    """Rewrite authored markdown destinations to @label where one exists."""
-    def sub(m):
-        label = resolve_dest(m.group(2), stem, known_labels)
-        if label is None:
-            return m.group(0)
-        return "[%s](@%s)" % (m.group(1), label)
-    return MD_LINK_RE.sub(sub, md)
+def warns(stderr_text, src_path, report):
+    """Report Typst warnings. Returns True when any were found."""
+    found = WARN_RE.findall(stderr_text or "")
+    if not found:
+        return False
+    for w in found:
+        report("design-aggregate: violation: %s: the renderer warned: %s\n"
+               % (src_path, w))
+    report("design-aggregate: %d renderer warning(s) — the rendered page is "
+           "not what the author wrote.\n" % len(found))
+    return True
 
 
-def resolve_dest(dest, stem, known_labels):
-    """Map an authored relative destination to an internal label, or None."""
-    anchor = None
-    if "#" in dest:
-        path, anchor = dest.split("#", 1)
-    else:
-        path = dest
-    # a term or ADR anchor names its target directly, wherever it was cited from
-    if anchor and anchor.startswith("term-"):
-        return anchor if anchor in known_labels else None
-    if anchor and anchor.startswith("adr-"):
-        return None            # ADRs are not in this document
-    # a bare in-page anchor: `#00-foundation` names a section of the CITING
-    # chapter, so it resolves against that chapter's own scoped labels.
-    if not path and anchor:
-        cand = "sec-%s-%s" % (stem, anchor.lstrip("#"))
-        return cand if cand in known_labels else None
-    # a design.md path names a chapter; with an anchor it names a section there,
-    # and the section belongs to the chapter the PATH points at, not the citer.
-    base = os.path.basename(path)
-    if base == "design.md":
-        d = os.path.dirname(path.rstrip("/"))
-        parent = os.path.basename(d)
-        if parent not in ("", ".", ".."):
-            target_stem = parent          # `../lifecycle/design.md`
-        elif d in ("..", "../"):
-            target_stem = "root"          # `../design.md` — up out of a context
-        elif d == "":
-            # a bare `design.md`, cited from inside a context's own folder
-            # (a CONTEXT.md pointing at its sibling document): the target is the
-            # CITING context, not the root.
-            target_stem = stem
-        else:
-            target_stem = "root"
-        if anchor:
-            cand = "sec-%s-%s" % (target_stem, anchor)
-            return cand if cand in known_labels else None
-        target = "ctx-" + target_stem
-        return target if target in known_labels else None
-    return None
+
+class LegacyMarkdownLayer(Exception):
+    """A layer still authored as design.md, after markdown authoring was removed."""
 
 
-def read_frontmatter(path):
-    fm = {}
-    text = open(path, encoding="utf-8").read()
-    if text.startswith("---\n"):
-        end = text.index("\n---\n", 3)
-        for line in text[4:end].split("\n"):
-            if ":" in line:
-                k, v = line.split(":", 1)
-                fm[k.strip()] = v.strip()
-    return fm
+class TermParseError(Exception):
+    """A declared term the glossary scan could not read.
 
-
-def contexts_of(root):
-    """The root document plus each context directory, in a stable order."""
-    found = []
-    root_doc = os.path.join(root, "design.md")
-    if os.path.exists(root_doc):
-        found.append((None, root_doc))
-    for name in sorted(os.listdir(root)):
-        d = os.path.join(root, name)
-        if name.startswith(".") or not os.path.isdir(d):
-            continue
-        doc = os.path.join(d, "design.md")
-        if os.path.exists(doc):
-            found.append((name, doc))
-    return found
-
-
-def glossary_terms(root):
-    """Every term the layer declares, with its owning context.
-
-    Both glossary homes are read. A multi-context layer puts each glossary at
-    <root>/<context>/CONTEXT.md; a SINGLE-context layer puts its one glossary
-    at <root>/CONTEXT.md, which the schema declares in
-    layer_layout.single_context.files. Walking only the subdirectories dropped
-    that one silently — the smallest layer, which is the shape a first adopter
-    creates, rendered with no glossary at all and exit 0.
+    Raised rather than skipped. Every path this replaces dropped the term and
+    carried on, so the document rendered without it and the summary line
+    reported the smaller count as though it were the whole vocabulary.
     """
-    homes = []
-    root_ctx = os.path.join(root, "CONTEXT.md")
-    if os.path.exists(root_ctx):
-        homes.append((os.path.basename(os.path.dirname(os.path.abspath(root)))
-                      or "design", root_ctx))
-    for name in sorted(os.listdir(root)):
-        ctx = os.path.join(root, name, "CONTEXT.md")
-        if name.startswith(".") or not os.path.exists(ctx):
-            continue
-        homes.append((name, ctx))
-
-    terms = []
-    for name, ctx in homes:
-        body, cur = [], None
-        for line in open(ctx, encoding="utf-8").read().split("\n"):
-            m = TERM_RE.match(line)
-            if m:
-                cur = {"title": m.group("title"), "slug": m.group("slug"),
-                       "context": name, "body": []}
-                terms.append(cur)
-                continue
-            if cur is not None:
-                if line.startswith("#"):
-                    cur = None
-                else:
-                    cur["body"].append(line)
-    return terms
 
 
-def main():
-    args = [a for a in sys.argv[1:] if a != "--check"]
-    check = "--check" in sys.argv[1:]
-    if len(args) != 2:
-        sys.stderr.write("usage: design-aggregate <layer-root> <out.pdf> [--check]\n")
-        return 2
-    root, out_pdf = args
-    if not os.path.isdir(root):
-        sys.stderr.write("design-aggregate: error: no layer root at %s\n" % root)
-        return 2
+def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
+                       n_contexts, n_terms):
+    """Render the assembled document, then build-or-verify it.
 
-    # $DESIGN_LIB_DIR wins so the projected library can live outside the layer
-    # — in a read-only bundle, say — with the layer-root copy as the fallback.
-    lib_dir = os.environ.get("DESIGN_LIB_DIR") or os.path.join(root, ".render")
-    lib = os.path.join(lib_dir, "designlib.typ")
-    if not os.path.exists(lib):
-        sys.stderr.write("design-aggregate: error: no projected library at %s "
-                         "(run render-project, or set DESIGN_LIB_DIR)\n" % lib)
-        return 2
-
-    docs = contexts_of(root)
-    if not docs:
-        sys.stderr.write("design-aggregate: error: no design.md under %s\n" % root)
-        return 2
-
-    # The scratch directory for the generated Typst stays under the LAYER ROOT,
-    # never beside the library: $DESIGN_LIB_DIR may point at a read-only store,
-    # and the renderer refuses a source file outside its project root anyway.
-    gen_dir = os.path.join(root, ".render")
-    os.makedirs(gen_dir, exist_ok=True)
-    # the library is imported by a path RELATIVE to the generated .typ, which
-    # sits in gen_dir: an absolute path is resolved against the renderer's
-    # project root, not the filesystem, so it would not be found.
-    rel_lib = os.path.relpath(os.path.abspath(lib), os.path.abspath(gen_dir))
-    parts, cleanup = [], []
-
-    # The label set is computed from the AUTHORED sources, before any
-    # conversion, because the link rewrite now happens on the markdown itself.
-    # Sections are labelled `sec-<stem>-<slug>`, matching the scoping applied to
-    # the generated Typst below — every context carries a "00 Foundation", so an
-    # unscoped label would be defined five times and Typst rejects a duplicate.
-    # The DOCUMENT-LEVEL contracts — foundation cardinality and order, spine
-    # ordering, pending-entry validity — are asserted per chapter, here, before
-    # anything is rendered. The projected library cannot see them: it validates
-    # one block at a time and cannot know a principle preceded an invariant, or
-    # that a build entry cites no ADR. design-render carries the fold; the
-    # aggregate used to import it only for `warns`, so a layer gated solely
-    # through the aggregate — which is what a host's `check` runs — was never
-    # asked these questions at all, and an out-of-order foundation rendered
-    # clean. Fail closed: report every violation, emit nothing.
-    _schema = _gate.load_schema()
-    _violations = []
-    for _name, _doc in docs:
-        _gate.assert_document(_doc, _schema, _violations.append)
-    if _violations:
-        for v in _violations:
-            sys.stderr.write("design-aggregate: violation: %s\n" % v)
-        return 1
-
-    known = {"ctx-" + ("root" if n is None else n) for n, _d in docs}
-    known |= {t["slug"] for t in glossary_terms(root)}
-    for name, doc in docs:
-        stem = "root" if name is None else name
-        for m in re.finditer(r"^#{1,6}\s+(.*)$",
-                             open(doc, encoding="utf-8").read(), re.M):
-            known.add("sec-%s-%s" % (stem, _router.slug(m.group(1).strip())))
-
-    # each context's design document, converted through the same router the
-    # per-context render uses, so the aggregate and the parts cannot diverge.
-    for name, doc in docs:
-        stem = "root" if name is None else name
-        gen = os.path.join(gen_dir, "_agg_%s.typ" % stem)
-        # resolve the destinations FIRST, in the markdown, then convert
-        src_md = rewrite_md_links(open(doc, encoding="utf-8").read(), stem, known)
-        md_tmp = os.path.join(gen_dir, "_agg_%s.md" % stem)
-        with open(md_tmp, "w", encoding="utf-8") as f:
-            f.write(src_md)
-        cleanup.append(md_tmp)
-        rc = subprocess.call([sys.executable, os.path.join(HERE, "md-to-typst"),
-                              md_tmp, gen, "--lib", rel_lib])
-        if rc != 0:
-            return 2
-        cleanup.append(gen)
-        # strip the per-document shell: the aggregate supplies one shell for
-        # the whole layer, and a nested page-setup would fight it.
-        src = open(gen, encoding="utf-8").read()
-        src = re.sub(r'^#import "[^"]*": \*\n', "", src, count=1)
-        src = re.sub(r"^#show: design-doc\.with\((?:.|\n)*?^\)\n", "", src,
-                     count=1, flags=re.M)
-        # A section label is unique only WITHIN its document — every context has
-        # a "00 Foundation" — so inside one document it must carry its chapter.
-        # Typst rejects a duplicate label outright, so this is a build error, not
-        # a cosmetic clash.
-        src = re.sub(r"<sec-([^>]+)>", r"<sec-%s-\1>" % stem, src)
-        fm = read_frontmatter(doc)
-        title = fm.get("hero_title") or (stem + " context")
-        # the chapter front page shows what the chapter contains, read from the
-        # authored spine rather than from a hand-kept list.
-        index = [_router.strip_spine_number(m.group(1))
-                 for m in re.finditer(r"^##\s+(.+?)\s*$",
-                                      open(doc, encoding="utf-8").read(), re.M)]
-        parts.append((title, stem, src, fm.get("lede"), fm.get("accent"), index))
-
-    terms = glossary_terms(root)
-
-    # ---- assemble one document --------------------------------------------
-    L = ['#import "%s": *' % rel_lib, ""]
-    L.append("#show: aggregate-doc.with(")
-    L.append('  title: [Design layer],')
-    L.append('  subtitle: [the whole layer, as one document],')
-    L.append(")")
-    L.append("")
-    for title, stem, src, lede, accent, index in parts:
-        # the front page first, then the heading it announces: the heading stays
-        # the renderer's (numbered, in the outline), the page is the separation.
-        #
-        # The lede and the section titles are authored markdown — they carry
-        # bold, links, and code spans — so they go through the router and are
-        # emitted as CONTENT blocks. Passing them as quoted strings would print
-        # the raw markup on the page, which is the corruption class the router's
-        # own span discipline exists to prevent.
-        L.append("#chapter-page(%s, lede: %s, accent: %s, index: %s, kind: %s)"
-                 % ("[" + inline(title) + "]",
-                    "[" + inline(lede) + "]" if lede else "none",
-                    _typ_str(accent) if accent else "none",
-                    "(" + ", ".join("[" + inline(s) + "]" for s in index)
-                    + ("," if len(index) == 1 else "") + ")",
-                    _typ_str("root design" if stem == "root" else "context")))
-        L.append("#pagebreak()")
-        # The context's OWN `# Title` is the chapter. A synthetic `= title` was
-        # emitted here once, purely to carry the <ctx-stem> label that a
-        # cross-document link resolves against — and it cost a chapter number:
-        # every context showed twice in the outline, an empty divider chapter
-        # followed by the real one, both on the same page. A Typst label
-        # attaches to a heading that already exists, so the label moves onto the
-        # authored H1 and the extra heading goes away.
-        #
-        # A document with no H1 of its own still needs the anchor, so the
-        # synthetic heading remains its fallback.
-        # Typst permits ONE label per element, and the authored H1 already
-        # carries its section label. A cross-document link may name the chapter
-        # either way — by context (<ctx-stem>) or by that section anchor — so a
-        # zero-width metadata anchor carries the context label beside the
-        # heading rather than competing for its slot.
-        m_h1 = re.search(r"^= .*$", src, re.M)
-        if m_h1:
-            src = (src[:m_h1.end()]
-                   + "\n#metadata(none) <ctx-%s>" % stem
-                   + src[m_h1.end():])
-        else:
-            L.append("= %s <ctx-%s>" % (inline(title), stem))
-        L.append(src)
-    if terms:
-        L.append("= Glossary <glossary>")
-        L.append("Every term the layer declares, with the context that owns it.")
-        L.append("")
-        for t in sorted(terms, key=lambda x: x["title"].lower()):
-            # The term heading stays a real heading — it keeps its label, so
-            # every #term- citation still jumps here, and it keeps its place in
-            # the numbering. It is only kept OUT OF THE OUTLINE: 81 of the
-            # document's 121 outline entries were term names, so the table of
-            # contents was two pages of glossary with the design's own 40
-            # sections buried inside it. The Glossary chapter itself stays
-            # listed, which is what a reader navigates to.
-            L.append('#heading(level: 2, outlined: false)[%s] %s'
-                     % (inline(t["title"]), "<%s>" % t["slug"]))
-            L.append("#context-owner(%s)" % _typ_str(t["context"]))
-            # A glossary body cites its siblings the same way a design document
-            # does — mostly as a BARE `#term-x` anchor, since inside one
-            # CONTEXT.md the file is implied — so it needs the same rewrite. It
-            # was missed at first, which left the glossary's own cross-references
-            # dead while the design documents' worked.
-            # a term's definition is a prose run; its destinations are resolved
-            # in the markdown, exactly as a design document's are.
-            body = rewrite_md_links("\n".join(t["body"]).strip(),
-                                    t["context"], known)
-            L.append(prose(body))
-            L.append("")
-
-    agg = os.path.join(gen_dir, "_aggregate.typ")
-    open(agg, "w", encoding="utf-8").write("\n".join(L) + "\n")
-    cleanup.append(agg)
-
+    The assembly and the freshness contract are separate concerns, so the part
+    that decides pass or fail has one implementation.
+    """
     typst = os.environ.get("TYPST", "typst")
     # Under --check the fresh render goes to a temp file and the committed
     # document is left alone, so a stale artifact is REPORTED rather than
@@ -444,9 +106,16 @@ def main():
     # accident, the same shape as a read-only package cache standing in for an
     # offline contract.
     env = dict(os.environ, SOURCE_DATE_EPOCH="0")
+    # THE GUIDELINE SWEEP, off unless the caller asks for it. The library's
+    # guidelines are silent in every ordinary render — they describe a document
+    # that could read better, never one that is wrong — and `--input strict=1`
+    # promotes each to an error for an author who wants the pass. It is wired
+    # here rather than in the gate on purpose: a guideline must never decide
+    # whether a commit lands.
+    strict = ["--input", "strict=1"] if os.environ.get("DESIGN_STRICT") else []
     try:
         proc = subprocess.run(
-            [typst, "compile", agg, target,
+            [typst, "compile", agg, target, *strict,
              # the renderer refuses any source outside its project root, and
              # the library may sit outside the layer under $DESIGN_LIB_DIR, so
              # the root must span both the layer and the library.
@@ -478,12 +147,434 @@ def main():
                              "fresh render)\n" % out_pdf)
             return 1
         sys.stdout.write("design-aggregate: %s is fresh (%d context(s), %d "
-                         "term(s))\n" % (out_pdf, len(parts), len(terms)))
+                         "term(s))\n" % (out_pdf, n_contexts, n_terms))
         return 0
 
     sys.stdout.write("design-aggregate: wrote %s (%d context(s), %d term(s))\n"
-                     % (out_pdf, len(parts), len(terms)))
+                     % (out_pdf, n_contexts, n_terms))
     return 0
+
+
+def aggregate_typst(root, out_pdf, check, lib, docs):
+    """Assemble the layer into the one rendered document.
+
+    There is no conversion step: each context's design.typ is imported as a
+    Typst module and its `body` is placed under the chapter heading. Nothing
+    parses the authored file, so no construct can be half-translated.
+
+    The per-document page shell is NOT applied — the aggregate supplies one
+    shell for the whole layer. A context's design.typ therefore exports its
+    content as `body` rather than calling `design-doc` itself.
+
+    WHERE THE DOCUMENT-LEVEL CONTRACTS GO. They belong to the library, which
+    can hold them because the author calls it directly: a `section` cannot omit
+    its title, a `pending-entry` cannot carry a malformed date, and an ordering
+    rule is a call-order the document itself expresses. A second parser over
+    the authored source would be a second reader of one vocabulary, free to
+    disagree with the library about what the document says.
+
+    The foundation ORDER is enforced that way here. Each foundation statement
+    records its kind in a state as it is called, and `assert-foundation-order`
+    reads the trail back. The scope is ONE CONTEXT — the trail is cleared before
+    each chapter's body and judged at the end of it — because a layer renders
+    many chapters into one document, and a chapter opening on a goal does not
+    follow the previous chapter's principle.
+    """
+    gen_dir = os.path.join(root, ".render")
+    os.makedirs(gen_dir, exist_ok=True)
+    rel_lib = os.path.relpath(os.path.abspath(lib), os.path.abspath(gen_dir))
+    cleanup = []
+
+    terms = typst_glossary_terms(root, docs)
+
+    L = ['#import "%s": *' % rel_lib, ""]
+    L.append("#show: aggregate-doc.with(")
+    L.append('  title: [Design layer],')
+    L.append('  subtitle: [the whole layer, as one document],')
+    L.append(")")
+    L.append("")
+
+    # THE LAYER'S VOCABULARY, declared before any body renders. `term()` and
+    # `ctx()` resolve against this registry, so a citation prints the term's
+    # TITLE and an undeclared slug stops the compile at the citing line. It is
+    # emitted here rather than beside the glossary because a citation appears
+    # in the very first chapter, long before the glossary is assembled.
+    #
+    # The title is taken as PLAIN TEXT. A title carrying markup would need the
+    # markup evaluated to be placed inline, and a chip renders a short phrase;
+    # the plain reading is what a reader sees either way.
+    _titles = ", ".join(
+        "%s: %s" % (_typ_str(t["slug"]), _typ_str(t["title_text"]))
+        for t in sorted(terms, key=lambda x: x["slug"]))
+    _ctx_names = ", ".join(
+        _typ_str(name) for name, _doc in docs if name is not None)
+    L.append("#declare-vocabulary(")
+    L.append("  terms: (%s)," % (_titles if _titles else ":"))
+    L.append("  contexts: (%s)," % _ctx_names)
+    L.append(")")
+    L.append("")
+
+    for name, doc in docs:
+        stem = "root" if name is None else name
+        rel_doc = os.path.relpath(os.path.abspath(doc),
+                                  os.path.abspath(gen_dir))
+        mod = "_ctx_%s" % re.sub(r"[^A-Za-z0-9]", "_", stem)
+        L.append('#import %s as %s' % (_typ_str(rel_doc), mod))
+        # The chapter heading carries the context label, so a cross-document
+        # reference resolves to it. A document declaring its own `title` names
+        # the chapter; otherwise the directory name does. A Typst module is not
+        # a dictionary, so the presence test goes through dictionary(), which
+        # is the conversion that lets a missing binding fall back rather than
+        # fail the build.
+        L.append('#let _m = dictionary(%s)' % mod)
+        L.append('#let _t = if "title" in _m { _m.title } else { %s }'
+                 % _typ_str(stem + " context"))
+        L.append("#chapter-page(_t, kind: %s)"
+                 % _typ_str("root design" if stem == "root" else "context"))
+        L.append("#pagebreak()")
+        L.append("= #_t <ctx-%s>" % stem)
+        # The foundation is judged per context, so the trail is cleared before
+        # each chapter's body. Without the reset a later chapter opening on a
+        # goal would read as following the previous chapter's principle, and a
+        # context with no foundation of its own would pass the per-kind minimum
+        # on the strength of the previous chapter's statements.
+        L.append("#foundation-scope-reset")
+        L.append("#spine-scope-reset")
+        L.append("#%s.body" % mod)
+        # ...and judged at the end of that body, while the trail still holds
+        # this context's calls and no other's. ORDER and the per-kind MINIMUM
+        # both read the same trail.
+        #
+        # `index_only` waives the minimum for a root that merely indexes its
+        # contexts. It is read from the document's own module, the same way its
+        # title is, so the waiver is the author's declaration rather than a
+        # guess this script makes about which documents look like index roots.
+        L.append("#assert-foundation-order")
+        L.append("#assert-spine-order")
+        L.append('#let _io = if "index_only" in _m { _m.index_only } '
+                 'else { false }')
+        L.append("#assert-foundation-cardinality(index-only: _io)")
+        L.append("")
+
+    if terms:
+        L.append("= Glossary <glossary>")
+        L.append("Every term the layer declares, with the context that owns it.")
+        L.append("")
+        # A term's title and body are SPLICED here as the source text the author
+        # wrote, into a document that has already imported the library. That
+        # scope is the whole reason the splice survives: a term body cites its
+        # siblings — `#term("term-unit")`, `#ctx("core")` — and those names
+        # resolve because they are in scope AT THE SPLICE SITE. A CONTEXT.typ
+        # imports nothing and is not expected to; the aggregate supplies the
+        # scope, which is the contract every host was written against.
+        #
+        # Importing CONTEXT.typ as a module instead would evaluate it in its OWN
+        # scope, where those names are unbound, and a Typst module is imported
+        # EAGERLY — so a single cross-reference in any term body fails the whole
+        # build before a page is laid out. That is not a hypothetical: it broke
+        # every layer whose terms cite each other.
+        #
+        # The splice carries a `#` so the captured brackets are the content
+        # block's OWN DELIMITERS. That prefix is the entire bracket fix. The old
+        # code re-wrapped the captured text in a second pair — `[%s]` around an
+        # already-bracketed `[Accent]` — which made the inner pair literal
+        # characters, so every term headed itself `[Accent]` and closed its body
+        # on a stray `]`. Nothing was wrong with the splice; the extra wrap was.
+        for t in sorted(terms, key=lambda x: x["sort_key"]):
+            L.append('#heading(level: 2, outlined: false)[%s] <%s>'
+                     % (_splice(t["title_src"]), t["slug"]))
+            L.append("#context-owner(%s)" % _typ_str(t["context"]))
+            L.append(_splice(t["body_src"]))
+            L.append("")
+
+    # Every citation is resolvable, judged once the whole document has been
+    # laid out and every term() call has recorded itself. This closes the
+    # empty-registry fallback: a layer that cites terms while declaring none
+    # would otherwise print raw slugs and exit 0.
+    L.append("#assert-references-resolvable")
+    L.append("")
+
+    agg = os.path.join(gen_dir, "_aggregate.typ")
+    open(agg, "w", encoding="utf-8").write("\n".join(L) + "\n")
+    cleanup.append(agg)
+    return compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
+                              len(docs), len(terms))
+
+
+def typst_glossary_terms(root, docs):
+    """Every term the layer declares, with its owning context.
+
+    A CONTEXT.typ exports `terms`, an array of (slug, title, body) — the three
+    facts a glossary entry carries: what the concept is called, the id every
+    citation resolves against, and the definition.
+
+    THE SOURCE TEXT IS WHAT GETS RENDERED, and that is deliberate. The title
+    and body are spliced into the generated aggregate exactly as the author
+    wrote them, so they are evaluated where the library is already imported and
+    a citation like `#term("term-unit")` resolves. A CONTEXT.typ imports
+    nothing; the aggregate supplies the scope. Importing it as a module instead
+    evaluates it in its own scope, where every library name is unbound, and the
+    import is EAGER — one cross-reference anywhere fails the entire build.
+
+    The title is additionally read as plain text for ONE purpose, the sort key,
+    and a title carrying markup sorts by the characters it is written with;
+    nothing on the rendered page depends on that reading.
+
+    THE BRACKET SCAN IS NOT DECORATION. A title or body is a Typst content
+    block, and content blocks NEST — `title: [The #emph[X] name]` is ordinary
+    authoring. A regex bounded by the first `]` stops inside such a title,
+    fails to match the term, and silently omits it: the glossary loses an entry
+    and the summary line reports the smaller count as though it were right.
+    Matching brackets by depth is what makes the scan see every term an author
+    actually wrote.
+    """
+    found = []
+    for name, doc in docs:
+        stem = "root" if name is None else name
+        ctx = os.path.join(os.path.dirname(doc), "CONTEXT.typ")
+        if not os.path.exists(ctx):
+            continue
+        src = open(ctx, encoding="utf-8").read()
+        rel = os.path.relpath(ctx, root)
+        # THE DECLARED COUNT, read independently of the parse below. Every
+        # `slug:` in the file is a term the author wrote; the scan that follows
+        # is the only thing that can lose one, so the two numbers are compared
+        # rather than trusted. A slug that stops matching — renamed to a form
+        # the pattern does not accept, or followed by a field the scan cannot
+        # read — used to fall out through one of three `continue` paths, and
+        # the summary reported the smaller count as though it were right.
+        declared = re.findall(r'\bslug:\s*"([^"]*)"', src)
+        parsed = []
+        for m in re.finditer(
+                r'slug:\s*"(?P<slug>term-[a-z0-9-]+)"\s*,\s*title:\s*', src):
+            title = _typst_value_at(src, m.end())
+            if title is None:
+                raise TermParseError(
+                    "%s: term %r declares a title the scan cannot read. A "
+                    "title is a content block `[...]` or a quoted string."
+                    % (rel, m.group("slug")))
+            b = re.compile(r'\s*,\s*body:\s*').match(src, title["end"])
+            if b is None:
+                raise TermParseError(
+                    "%s: term %r has no `body:` after its title. A term "
+                    "carries a slug, a title, and a body, in that order."
+                    % (rel, m.group("slug")))
+            body = _typst_value_at(src, b.end())
+            if body is None:
+                raise TermParseError(
+                    "%s: term %r declares a body the scan cannot read. A body "
+                    "is a content block `[...]` or a quoted string."
+                    % (rel, m.group("slug")))
+            parsed.append(m.group("slug"))
+            found.append({
+                "slug": m.group("slug"),
+                "sort_key": title["text"].lower(),
+                # the title as plain text, which is what an inline citation
+                # renders; the source form is what the glossary heading splices.
+                "title_text": title["text"].strip(),
+                "title_src": title["src"],
+                "body_src": body["src"],
+                "context": stem,
+            })
+        # A slug the file declares and the scan did not reach is a term the
+        # glossary would silently lose. Naming it is the whole point: the
+        # failure it replaces was a count quietly one lower than the truth.
+        if len(parsed) != len(declared):
+            lost = [s for s in declared if s not in parsed]
+            raise TermParseError(
+                "%s declares %d term(s) and only %d parsed; unreachable: %s. "
+                "A term slug is `term-` followed by lowercase words joined by "
+                "single hyphens."
+                % (rel, len(declared), len(parsed), ", ".join(repr(s) for s in lost)))
+    return found
+
+
+def _splice(src):
+    """A captured Typst value, ready to place in content position.
+
+    A content block keeps its own brackets and gains a `#` so they delimit the
+    block rather than printing as characters; a quoted string is placed as the
+    expression it already is. Either way the value is spliced, never re-wrapped
+    — the re-wrap is what put literal brackets on every glossary heading.
+    """
+    return "#" + src
+
+
+def _refuse_divergent_layer_lib(root, lib):
+    """Refuse a layer-local library that disagrees with the one being used.
+
+    THE FAILURE THIS PREVENTS IS SILENT, which is why it is a hard error. A
+    Typst context imports its library by a LAYER-RELATIVE path — `design.typ`
+    opens `#import ".render/designlib.typ"` — while the aggregate compiles
+    against $DESIGN_LIB_DIR, which for a host is a pinned read-only bundle. When
+    those two are the same file nothing is wrong. When the layer's own `.render`
+    is left over from an older pin, every context is validated by the OLD
+    library while the aggregate believes it used the new one.
+
+    Nothing about that looks broken. The document renders, the chapters are all
+    present, the summary line counts them, and the exit status is 0 — while
+    every per-block contract and every document-level assertion that the newer
+    library added is simply absent. A foundation authored out of order rendered
+    clean exactly this way: the check existed, was wired correctly, and was
+    read from a `.render` that predated it.
+
+    `.render` is generated and usually gitignored, so it is the one input no
+    reviewer sees and no commit records. Refusing here — naming both paths and
+    the fix — turns a check that quietly does not run into a build that stops.
+    """
+    local = os.path.join(root, ".render", "designlib.typ")
+    if not os.path.exists(local):
+        return 0
+    if os.path.abspath(local) == os.path.abspath(lib):
+        return 0
+    try:
+        with open(local, "rb") as f:
+            a = f.read()
+        with open(lib, "rb") as f:
+            b = f.read()
+    except OSError as e:
+        sys.stderr.write("design-aggregate: error: cannot compare the layer's "
+                         "projected library with the one in use: %s\n" % e)
+        return 2
+    if a == b:
+        return 0
+    sys.stderr.write(
+        "design-aggregate: error: the layer's own projected library differs "
+        "from the one this run compiles against, so each context would be "
+        "validated by a DIFFERENT library than the document.\n"
+        "  the layer's copy : %s\n"
+        "  the one in use   : %s\n"
+        "A Typst context imports the layer-relative path, so a stale copy "
+        "silently disables every contract the current library added — the "
+        "document still renders and still exits 0. Delete the layer's .render "
+        "(it is generated), or re-run render-project into it.\n"
+        % (local, lib))
+    return 2
+
+
+def _typst_value_at(src, i):
+    """The Typst value starting at `i`, or None if none starts there.
+
+    Returns {"src", "text", "end"} — the value's OWN SOURCE including its
+    delimiters, which is what gets spliced; the text inside them, which is what
+    sorts; and the offset just past it, which is where the caller resumes
+    scanning for the next field.
+
+    Handles the two forms a term field takes — a content block `[...]`, read
+    with BALANCED brackets so a nested block does not end it early, and a
+    quoted string `"..."`.
+    """
+    if i >= len(src):
+        return None
+    if src[i] == '"':
+        j = src.find('"', i + 1)
+        if j < 0:
+            return None
+        return {"src": src[i:j + 1], "text": src[i + 1:j], "end": j + 1}
+    if src[i] != "[":
+        return None
+    depth, j = 0, i
+    while j < len(src):
+        if src[j] == "[":
+            depth += 1
+        elif src[j] == "]":
+            depth -= 1
+            if depth == 0:
+                return {"src": src[i:j + 1], "text": src[i + 1:j],
+                        "end": j + 1}
+        j += 1
+    return None
+
+
+def _homes(root):
+    """Every place a design document may live, in a stable order.
+
+    (context-name-or-None, directory). The root document first, then each
+    context directory alphabetically — the order the chapters render in.
+    """
+    homes = [(None, root)]
+    for name in sorted(os.listdir(root)):
+        d = os.path.join(root, name)
+        if name.startswith(".") or not os.path.isdir(d):
+            continue
+        homes.append((name, d))
+    return homes
+
+
+def contexts_of(root):
+    """The layer's design documents, in chapter order.
+
+    Returns [(context-name-or-None, path), ...] over the design.typ files.
+
+    TYPST IS THE ONLY AUTHORING NOTATION. A layer still carrying design.md is a
+    LEGACY layer, and it is refused by name rather than ignored: walking past it
+    would report "no design layer" against a directory visibly full of design
+    documents, and the reader would look for the wrong fault. The refusal names
+    every markdown file and points at the migration.
+    """
+    md, typ = [], []
+    for name, d in _homes(root):
+        m = os.path.join(d, "design.md")
+        t = os.path.join(d, "design.typ")
+        if os.path.exists(m):
+            md.append((name, m))
+        if os.path.exists(t):
+            typ.append((name, t))
+
+    if md:
+        lines = ["design-aggregate: error: this layer is authored in Markdown, "
+                 "and the framework now authors Typst.\n"]
+        lines.append("  markdown (design.md):\n")
+        for _n, p in md:
+            lines.append("    %s\n" % os.path.relpath(p, root))
+        lines.append("  Markdown authoring was removed: a design document is a "
+                     "design.typ calling the library directly, and its glossary "
+                     "a CONTEXT.typ. See migration 0008.\n")
+        raise LegacyMarkdownLayer("".join(lines))
+
+    return typ
+
+
+def main():
+    args = [a for a in sys.argv[1:] if a != "--check"]
+    check = "--check" in sys.argv[1:]
+    if len(args) != 2:
+        sys.stderr.write("usage: design-aggregate <layer-root> <out.pdf> [--check]\n")
+        return 2
+    root, out_pdf = args
+    if not os.path.isdir(root):
+        sys.stderr.write("design-aggregate: error: no layer root at %s\n" % root)
+        return 2
+
+    # $DESIGN_LIB_DIR wins so the projected library can live outside the layer
+    # — in a read-only bundle, say — with the layer-root copy as the fallback.
+    lib_dir = os.environ.get("DESIGN_LIB_DIR") or os.path.join(root, ".render")
+    lib = os.path.join(lib_dir, "designlib.typ")
+    if not os.path.exists(lib):
+        sys.stderr.write("design-aggregate: error: no projected library at %s "
+                         "(run render-project, or set DESIGN_LIB_DIR)\n" % lib)
+        return 2
+
+    rc = _refuse_divergent_layer_lib(root, lib)
+    if rc:
+        return rc
+
+    try:
+        docs = contexts_of(root)
+    except LegacyMarkdownLayer as exc:
+        sys.stderr.write(str(exc))
+        return 2
+    if not docs:
+        sys.stderr.write("design-aggregate: error: no design.typ under %s\n"
+                         % root)
+        return 2
+
+    try:
+        return aggregate_typst(root, out_pdf, check, lib, docs)
+    except TermParseError as exc:
+        sys.stderr.write("design-aggregate: error: %s\n" % exc)
+        return 2
+
 
 
 def _typ_str(s):

@@ -82,13 +82,35 @@ try:
     # the diagram altitude ladder — the depth labels a native diagram declares
     # itself at, and the name shown beside each. Declared in the schema so a
     # rung added there reaches the library without a second edit.
-    altitudes = list(schema["layer_layout"]["unit_model"]["altitudes"])
-    altitude_names = dict(
-        schema["layer_layout"]["unit_model"]["altitude_names"])
+    #
+    # The ladder is OPEN. `altitudes` is not the set of legal values: it is the
+    # list of NAMED rungs, the default ladder a layer climbs. The legal set is
+    # whatever altitude_pattern admits, because the layer is a recursively
+    # self-similar tree that recurses until a unit passes the reproduction
+    # test — a depth no fixed vocabulary can bound. A rung past the named ones
+    # is legal and unnamed; the library names and tints it by level number.
+    _unit_model = schema["layer_layout"]["unit_model"]
+    altitude_pattern = _unit_model["altitude_pattern"]
+    altitudes = list(_unit_model["altitudes"])
+    altitude_names = dict(_unit_model["altitude_names"])
+    altitude_tints = dict(_unit_model["altitude_tints"])
+    # A NAMED rung must carry both its name and its tint. The check is not
+    # vacuous under an open ladder, because it quantifies over the rungs the
+    # schema chose to name rather than over every value the pattern admits:
+    # naming a rung is what obliges the schema to say what it is called and
+    # what colour it draws in.
     for _a in altitudes:
+        if not _re.match(altitude_pattern, _a):
+            raise KeyError(
+                "layer_layout.unit_model.altitudes lists %r, which the "
+                "declared altitude_pattern %r does not admit"
+                % (_a, altitude_pattern))
         if _a not in altitude_names:
             raise KeyError(
                 "layer_layout.unit_model.altitude_names has no entry for %r" % _a)
+        if _a not in altitude_tints:
+            raise KeyError(
+                "layer_layout.unit_model.altitude_tints has no entry for %r" % _a)
     lens_values = schema["enums"]["lens"]["values"]
     # the entity census's two vocabularies. provenance is a declared enum like
     # enforcement; the entity KIND set is stated, in words, in the entity block's
@@ -464,9 +486,19 @@ PENDING_HUES = {
 # ALTITUDE names an existing TINT rather than a raw hue: a diagram's altitude
 # band shares the document's accent vocabulary, so the ladder climbs through
 # tints a reader already associates with this layer.
-ALTITUDE_TINTS = {
-    "L1": "slate", "L2": "teal", "L3": "amber", "L4": "violet",
-}
+#
+# The mapping is READ FROM THE SCHEMA (layer_layout.unit_model.altitude_tints)
+# rather than kept here. It belongs there because it is the same kind of fact
+# as altitude_names — a per-rung binding into a vocabulary the schema already
+# owns — and keeping it in the projector meant a rung named in the schema and
+# a rung tinted in this file could disagree, with only this loop to catch it.
+# One home, so there is nothing to disagree.
+#
+# The guard below survives that move and is the reason it is safe: a tint is
+# named here as a STRING, so renaming a tint in design_doc.accents would
+# otherwise leave an altitude pointing at a colour that does not exist. The
+# check fails the projection instead, naming both the altitude and the tint.
+ALTITUDE_TINTS = dict(altitude_tints)
 for _a in altitudes:
     if _a not in ALTITUDE_TINTS:
         sys.stderr.write("render-project: error: no tint declared for altitude "
@@ -477,6 +509,20 @@ for _a in altitudes:
                          "which the schema does not declare\n"
                          % (_a, ALTITUDE_TINTS[_a]))
         sys.exit(2)
+# The FALLBACK LADDER for a rung the schema does not name. An unnamed altitude
+# must still draw in a declared accent, and must draw in the SAME accent every
+# time — a band whose colour depended on render order would make two printings
+# of one document disagree. Indexing the declared accent list by level number
+# is therefore the rule: it is a pure function of the level, it can only yield
+# a declared tint, and it agrees with the named rungs wherever the schema's
+# choice happens to coincide. The list is ordered as the schema declares it,
+# so the fallback is stable as long as the accent vocabulary is.
+ALTITUDE_TINT_CYCLE = list(tint_values)
+if not ALTITUDE_TINT_CYCLE:
+    sys.stderr.write("render-project: error: design_doc.accents declares no "
+                     "tint, so an unnamed altitude has no colour to fall "
+                     "back to\n")
+    sys.exit(2)
 
 w("// ---- the semantic token table (the framework owns the semantic look) ----")
 for name, table, keys in (
@@ -1423,13 +1469,80 @@ w("""// ---- the native authoring surface --------------------------------------
 // A design.typ calls these directly. The markdown router never emits them.
 
 // Each altitude carries its own tint, so a diagram's altitude is legible
-// before its caption is read. The ladder and its names are PROJECTED; the
-// tints are this library's own visual decision.
+// before its caption is read. The ladder, its names, and its tints are all
+// PROJECTED from the one schema.
+//
+// THE LADDER IS OPEN. ALTITUDES lists the NAMED rungs, not the legal ones —
+// a design layer is a recursively self-similar tree that recurses until a
+// unit passes the reproduction test, so its depth cannot be capped by a
+// four-word vocabulary. Any `L<n>` for a positive integer n is legal.
+// ALTITUDE-NAMES and ALT-TINT cover the named rungs; the two private
+// resolvers below answer for every other rung, so no lookup can panic on a
+// legal value.
 """ + "#let ALTITUDES = " + tuple_of(altitudes) + """
+""" + "#let ALTITUDE-PATTERN = " + q(altitude_pattern) + """
 """ + "#let ALTITUDE-NAMES = (" + ", ".join(
     "%s: %s" % (a, q(altitude_names[a])) for a in altitudes) + ")" + """
 """ + "#let ALT-TINT = (" + ", ".join(
     "%s: %s" % (a, q(ALTITUDE_TINTS[a])) for a in altitudes) + ")" + """
+""" + "#let ALT-TINT-CYCLE = " + tuple_of(ALTITUDE_TINT_CYCLE) + """
+
+// The LEVEL NUMBER of an altitude, as an integer. `none` when the string is
+// not a well-formed rung — which is how the validator tells a deeper level
+// apart from a typo without a second parse.
+#let _alt-level(value) = {
+  if type(value) != str { return none }
+  let m = value.matches(regex(ALTITUDE-PATTERN))
+  if m.len() == 0 { return none }
+  int(m.first().captures.first())
+}
+
+// A REQUIRED, OPEN altitude. Presence stays mandatory: a drawing whose
+// altitude is unstated leaves a reader unable to tell which zoom level they
+// are looking at, and that is the reason the label exists. Only the CLOSED
+// SET relaxes — the shape is still checked, so `L0`, `L`, `X2`, `L2.5` and
+// `"2"` are refused by name rather than drawn as an unreadable band.
+#let _req-altitude(value) = {
+  if value == none {
+    panic("diagram altitude is required. Every diagram declares the zoom " +
+          "level it is drawn at, as \\"L<n>\\" for a positive whole number n " +
+          "— the named rungs are " + repr(ALTITUDES) + ", and a deeper unit " +
+          "may declare a further one.")
+  }
+  if _alt-level(value) == none {
+    panic("diagram altitude=" + repr(value) + " is not a well-formed " +
+          "altitude. An altitude is written \\"L<n>\\" for a positive whole " +
+          "number n (for example " + repr(ALTITUDES) + "); the ladder is " +
+          "open, so a level past the named rungs is legal, but L0, a bare " +
+          "level number, and a fractional level are not.")
+  }
+}
+
+// The NAME shown in the badge. A named rung reads as its name; a rung the
+// schema does not name reads as its level number, because the badge already
+// says ALTITUDE L5 and inventing a word for a level nobody named would put a
+// term in the reader's head that appears nowhere else in the layer. The
+// number is the honest answer: it says exactly what is known.
+//
+// PRIVATE, like the two resolvers below and above it. An author never calls
+// this: `diagram-native` resolves the badge from the altitude the author
+// already declared, so it carries the leading underscore that marks a helper
+// exercised through its caller rather than demonstrated in the gallery.
+#let _alt-name(altitude) = {
+  ALTITUDE-NAMES.at(altitude, default: "level " + str(_alt-level(altitude)))
+}
+
+// The TINT of the band. A named rung keeps the accent the schema declared for
+// it. An unnamed rung indexes the declared accent list by its level number,
+// which makes the colour a pure function of the level — the same altitude
+// draws the same band on every render, and the band can only ever be an
+// accent this layer already uses. Cycling is deliberate over running out:
+// past the end of the accent list the ladder repeats colours rather than
+// failing, because a level's colour is a reading aid, not an identifier.
+#let _alt-tint(altitude) = {
+  ALT-TINT.at(altitude, default: ALT-TINT-CYCLE.at(
+    calc.rem(_alt-level(altitude) - 1, ALT-TINT-CYCLE.len())))
+}
 
 // GUIDELINE helpers — sentence budgets. Only a plain string can be counted, so
 // content carrying markup passes through; that is the honest limit of it.
@@ -1664,7 +1777,7 @@ w("""// ---- the native authoring surface --------------------------------------
   altitude: none, title: none, caption: none, accent: "teal",
   spacing: (16mm, 11mm), nodes: (), edges: (),
 ) = {
-  _req-enum("diagram altitude", altitude, ALTITUDES)
+  _req-altitude(altitude)
   _req-enum("accent", accent, TINTS)
   if nodes.len() == 0 {
     panic("diagram: a diagram declares at least one node. An empty diagram " +
@@ -1672,7 +1785,7 @@ w("""// ---- the native authoring surface --------------------------------------
           "rather than as the absence of one.")
   }
   let c = TINT-COLOR.at(accent)
-  let ac = TINT-COLOR.at(ALT-TINT.at(altitude))
+  let ac = TINT-COLOR.at(_alt-tint(altitude))
   // Every endpoint must name a declared node; a typo would otherwise draw an
   // edge to nowhere, which renders as a drawing missing a line.
   let ids = nodes.map(n => n.id)
@@ -1713,7 +1826,7 @@ w("""// ---- the native authoring surface --------------------------------------
   block(width: 100%, inset: (x: 7pt, y: 3.5pt), fill: ac.lighten(92%),
         stroke: (left: 2.4pt + ac))[
     #text(size: 6.2pt, weight: "bold", fill: ac, tracking: 0.7pt)[
-      ALTITUDE #altitude · #upper(ALTITUDE-NAMES.at(altitude))
+      ALTITUDE #altitude · #upper(_alt-name(altitude))
     ]
     #if title != none [ #h(0.6em) #text(size: 8pt, fill: luma(70))[#title] ]
   ]

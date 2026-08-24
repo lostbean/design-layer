@@ -171,6 +171,139 @@ else
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
+# --- the altitude ladder renders, named rungs and open rungs alike -----------
+#
+# Asserted by reading the BADGE TEXT back out of the PDF, not by exit code. The
+# badge is the whole point of the label — it is what tells a reader which zoom
+# level the drawing sits at — so "it compiled" proves nothing about it. The
+# fixture is written the way a real design.typ writes it: multi-line, with the
+# altitude on its own line.
+#
+# The four NAMED rungs are the REGRESSION GUARD. Opening the ladder must not
+# move them, so each is asserted against the exact badge it rendered before the
+# ladder opened: L1 · BOUNDARY, L2 · CONTEXTS, L3 · COMPONENTS, L4 · INTERNALS.
+# The unnamed rungs are asserted to read as their level number.
+altitude_badge() {
+  local name="$1" alt="$2"
+  fixture "$name" "#diagram-native(
+  altitude: \"$alt\",
+  title: \"the shape\",
+  nodes: ((id: \"a\", pos: (0,0), label: [Zalpha]),
+          (id: \"b\", pos: (1,0), label: [Zbeta])),
+  edges: ((\"a\",\"b\",\"Zgamma\"),),
+)"
+  local out
+  out="$(compile "$name" plain)"
+  if [ ! -f "$WORK/$name.pdf" ]; then
+    printf '%s\n' "$out" | head -3 | sed 's/^/       /' >&2
+    return 1
+  fi
+  # The extractor breaks the letter-spaced badge across spaces and lines, so
+  # the comparison is made on the text with all whitespace squeezed out.
+  pdftotext "$WORK/$name.pdf" - 2>/dev/null | tr -d ' \n\r'
+}
+
+assert_badge() {
+  local name="$1" alt="$2" want="$3"
+  local squeezed
+  if ! squeezed="$(altitude_badge "$name" "$alt")"; then
+    fail_line "altitude $alt: did not compile"
+    return
+  fi
+  local wantsq
+  wantsq="$(printf '%s' "$want" | tr -d ' ')"
+  case "$squeezed" in
+  *"$wantsq"*) pass_line "altitude $alt renders its badge as '$want'" ;;
+  *)
+    fail_line "altitude $alt: badge is not '$want'"
+    printf '       page text: %s\n' "$(printf '%s' "$squeezed" | head -c 90)"
+    ;;
+  esac
+}
+
+# the named ladder — these four must not move
+assert_badge alt-named-l1 L1 "ALTITUDEL1·BOUNDARY"
+assert_badge alt-named-l2 L2 "ALTITUDEL2·CONTEXTS"
+assert_badge alt-named-l3 L3 "ALTITUDEL3·COMPONENTS"
+assert_badge alt-named-l4 L4 "ALTITUDEL4·INTERNALS"
+
+# the open ladder — a rung past the named ones is legal and reads as its level
+assert_badge alt-open-l5 L5 "ALTITUDEL5·LEVEL5"
+assert_badge alt-open-l7 L7 "ALTITUDEL7·LEVEL7"
+assert_badge alt-open-l12 L12 "ALTITUDEL12·LEVEL12"
+
+# --- the altitude tint is a function of the level, never of render order -----
+#
+# A band whose colour depended on when it was drawn would make two printings of
+# one document disagree, so the tint must be DETERMINISTIC — and it must come
+# from the schema's declared accent vocabulary rather than a raw hue, or the
+# open ladder would smuggle in colours the layer never declared.
+#
+# `_alt-tint` is private (an author never calls it; diagram-native resolves the
+# band itself), and a test reaching a private helper directly is the right call
+# here: the colour is what must be pinned, and it is not recoverable from the
+# rendered page.
+#
+# The tint is not recoverable from extracted PDF text, so the fixture PRINTS
+# what the resolver returned and the assertion reads that back.
+#
+# DETERMINISM IS ASSERTED ACROSS SEPARATE COMPILES, never within one. Calling
+# the resolver twice inside a single render and comparing is the vacuous
+# version of this test: anything that varies per-render — a clock, a document
+# hash, a counter seeded at startup — is constant within one compile, so the
+# two calls agree and the check passes on exactly the input it exists to
+# catch. That was this test's first shape, and a fixture that keyed the tint to
+# a per-render input sailed through it. Two independent compiles are what
+# actually pins the colour to the level.
+alt_tint_table() {
+  local name="$1"
+  fixture "$name" '#let rungs = ALTITUDES + ("L5","L6","L7","L8","L9","L13")
+#for t in rungs.map(a => _alt-tint(a)) {
+  if t not in TINTS {
+    panic("_alt-tint produced " + repr(t) + ", which is not a declared tint")
+  }
+}
+#for a in rungs [ #a=#_alt-tint(a) ]'
+  local out
+  out="$(compile "$name" plain)"
+  if [ ! -f "$WORK/$name.pdf" ]; then
+    printf '%s\n' "$out" | head -5 | sed 's/^/       /' >&2
+    return 1
+  fi
+  pdftotext "$WORK/$name.pdf" - 2>/dev/null | tr -s ' \n' ' '
+}
+
+if tints_a="$(alt_tint_table alt-tint-a)" &&
+  tints_b="$(alt_tint_table alt-tint-b)"; then
+  # every tint the resolver returned is a declared one — asserted inside the
+  # fixture, so reaching this point at all is the proof.
+  pass_line "_alt-tint stays inside the declared tint vocabulary"
+
+  if [ "$tints_a" = "$tints_b" ]; then
+    pass_line "_alt-tint is deterministic across separate renders ($tints_a)"
+  else
+    fail_line "_alt-tint is NOT deterministic across renders"
+    printf '       render 1: %s\n' "$tints_a"
+    printf '       render 2: %s\n' "$tints_b"
+  fi
+
+  # the four named rungs keep the exact accents the schema declares for them
+  named_ok=1
+  for want in "L1=slate" "L2=teal" "L3=amber" "L4=violet"; do
+    case "$tints_a" in
+    *"$want"*) ;;
+    *)
+      named_ok=0
+      fail_line "altitude tint regression: expected $want, page says: $tints_a"
+      ;;
+    esac
+  done
+  [ "$named_ok" -eq 1 ] &&
+    pass_line "the named rungs keep their declared tints"
+else
+  fail_line "the altitude-tint fixture did not compile"
+fi
+
 # --- invariants: a wrong value has no defensible reading ---------------------
 assert_invariant diagram-ghost-edge "not a declared node" \
   '#diagram-native(altitude: "L1",
@@ -180,9 +313,29 @@ assert_invariant diagram-ghost-edge "not a declared node" \
 assert_invariant diagram-empty "at least one node" \
   '#diagram-native(altitude: "L1", nodes: (), edges: ())'
 
-assert_invariant diagram-altitude "diagram altitude" \
-  '#diagram-native(altitude: "L9",
+# THE ALTITUDE LADDER IS OPEN, AND STILL REQUIRED. Two rules that pull in
+# opposite directions, so each gets its own fixture: the set of legal levels is
+# unbounded, and an omitted level is still a hard failure.
+#
+# PRESENCE. A diagram with no altitude leaves the reader unable to tell which
+# zoom level they are looking at, so absence stays an invariant. This is the
+# half that opening the enum could have quietly deleted.
+assert_invariant diagram-altitude-missing "altitude is required" \
+  '#diagram-native(
      nodes: ((id: "a", pos: (0,0), label: [A]),), edges: ())'
+
+# SHAPE. Only the CLOSED SET relaxed; a value that is not `L<n>` for a positive
+# whole n has no defensible reading and must still stop the build, naming what
+# it was given. L0 and L2.5 are the interesting cases: both are "L-and-digits"
+# and both are wrong, so a check that merely looked for a leading L would pass
+# them.
+for bad in '"L0"' '"L"' '"X2"' '"L2.5"' '"2"' '"L-1"'; do
+  assert_invariant "diagram-altitude-malformed-$(printf '%s' "$bad" | tr -cd 'A-Za-z0-9.-')" \
+    "is not a well-formed altitude" \
+    "#diagram-native(
+     altitude: $bad,
+     nodes: ((id: \"a\", pos: (0,0), label: [A]),), edges: ())"
+done
 
 assert_invariant coverage-unreasoned "states no reason" \
   '#coverage(("part/x", "out-of-scope"))'

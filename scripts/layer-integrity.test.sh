@@ -1330,6 +1330,85 @@ else
   fail=$((fail + 1))
 fi
 
+# --- Scenario (rr): design-check derives the REPO from the LAYER --------------
+#
+# THE FOOTGUN THIS PINS. layer-integrity takes a REPO root — it walks a whole
+# repo to find every layer artifact and ADR — while `design-check` is called
+# with a LAYER root. The wrapper therefore has to derive one from the other,
+# and it used to do that by walking two directories up, on the convention that
+# a layer sits at <repo>/docs/design.
+#
+# That guess fails SILENTLY, which is what makes it worth a test. `cd
+# "$layer_root/../.."` succeeds for almost any path, so it never falls through
+# to an error: a layer that does not sit exactly two levels below its repo
+# resolves to whatever directory happens to be two up — the repo's PARENT, a
+# sibling checkout, or a tree holding no layer at all. Checking an out-of-tree
+# layer then reported on a repo the caller never named, and the layer they DID
+# name was never read. That is a false negative: a clean report over an
+# unexamined layer.
+#
+# The fixture makes the two derivations disagree DECISIVELY rather than merely
+# differ. The out-of-tree layer sits one level below its own repo, and that
+# repo is checked out inside a host repo that GITIGNORES the directory holding
+# it. So the old derivation lands on the host's ignored `vendor/`, where the
+# discovery walk prunes the very layer it was asked about and reports "no
+# design layer"; the correct derivation lands on the layer's own repo and finds
+# the violation that is really there.
+RR="$TMP/repo-root-derivation"
+mkdir -p "$RR/host/vendor/theirs/design" "$RR/host/docs/design"
+
+# the HOST repo: its own clean layer, and vendor/ ignored
+(
+  cd "$RR/host"
+  git init -q .
+  echo "vendor/" >.gitignore
+  cat >docs/design/design.typ <<'EOF'
+#context-doc(title: "Host")
+EOF
+  git add -A
+  git commit -qm init
+) >/dev/null 2>&1
+
+# THEIR repo, checked out under the host's ignored vendor/, layer one level
+# down, carrying a real dangling-link violation
+(
+  cd "$RR/host/vendor/theirs"
+  git init -q .
+  cat >design/design.typ <<'EOF'
+#link("../adr/0099-absent.md")[ADR-0099]
+EOF
+  git add -A
+  git commit -qm init
+) >/dev/null 2>&1
+
+RR_LAYER="$RR/host/vendor/theirs/design"
+# the OLD rule: blindly two levels up from the layer
+RR_OLD="$(cd "$RR_LAYER/../.." && pwd)"
+# the NEW rule: the layer's own enclosing git repo
+RR_NEW="$(git -C "$RR_LAYER" rev-parse --show-toplevel)"
+
+if [ "$RR_OLD" != "$RR_NEW" ]; then
+  echo "PASS: the two repo-root derivations disagree on this layout ($RR_OLD vs $RR_NEW)"
+  pass=$((pass + 1))
+else
+  echo "FAIL: fixture does not separate the derivations -- both gave $RR_OLD"
+  fail=$((fail + 1))
+fi
+
+# The old derivation checks the WRONG tree, and says so as an error about a
+# directory the caller never named — the layer they asked about goes unread.
+assert_exit 2 "the two-levels-up derivation lands on a tree with no layer" -- \
+  "$CHECK" "$RR_OLD"
+assert_contains "no design layer" \
+  "the wrong root reports 'no design layer' over the layer it was meant to check"
+
+# The layer-derived root reads the layer that was actually named, and finds the
+# violation that is genuinely in it.
+assert_exit 1 "the layer-derived repo root checks the named layer" -- \
+  "$CHECK" "$RR_NEW"
+assert_contains "0099-absent.md" \
+  "the correct root reports the named layer's own dangling link"
+
 # --- Summary ------------------------------------------------------------------
 echo
 echo "----------------------------------------"

@@ -115,6 +115,7 @@
       }
     },
     "unit_model": {
+      "altitude_pattern": "^L([1-9][0-9]*)$",
       "altitudes": ["L1", "L2", "L3", "L4"],
       "altitude_names": {
         "L1": "boundary",
@@ -122,7 +123,13 @@
         "L3": "components",
         "L4": "internals"
       },
-      "note": "the depth labels a diagram declares itself at. The design layer is a recursively self-similar tree of units — a unit is the same shape at every altitude — so an altitude is a label on ONE node type rather than four different things. The renderer requires the label on every diagram: a drawing whose altitude is unstated leaves a reader unable to tell which zoom level they are looking at, and the tint keyed to it makes the level legible before the caption is read"
+      "altitude_tints": {
+        "L1": "slate",
+        "L2": "teal",
+        "L3": "amber",
+        "L4": "violet"
+      },
+      "note": "the depth labels a diagram declares itself at. The design layer is a recursively self-similar tree of units — a unit is the same shape at every altitude — so an altitude is a label on ONE node type rather than a fixed number of different things. The ladder is OPEN: any `L<n>` for a positive integer n is a legal altitude, per altitude_pattern, because a tree that recurses until its unit passes the reproduction test cannot have its depth capped by a vocabulary. `altitudes` lists the NAMED default rungs — L1..L4, the ladder a layer uses unless its recursion runs deeper — and `altitude_names` and `altitude_tints` declare the name and the accent of each named rung; every tint named here must be a declared design_doc.accents value. A rung past the named ones is legal and unnamed: it renders with its level number in place of a name, and its accent is chosen from the declared accents by level number, so the same altitude always draws the same colour. The renderer requires the label on every diagram: a drawing whose altitude is unstated leaves a reader unable to tell which zoom level they are looking at, and the tint keyed to it makes the level legible before the caption is read"
     }
   },
   "design_doc": {

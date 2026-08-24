@@ -88,9 +88,30 @@ nix develop --command bash scripts/vendored-offline.test.sh
 
 ## What is generated, and what is authored
 
-`designlib.typ` is **projected from the schema** by `scripts/render-project` and
-is never hand-edited. A contract changes in `schema/design-schema.json`, and the
-projection follows.
+The renderer library under **`lib/` is HAND-WRITTEN**, and it **reads
+`schema/design-schema.json` at compile time** through Typst's own `json()`. A
+contract changes in the schema and the library follows with no regeneration
+step: the compile itself is the projection. Change the library by editing the
+`.typ` file that owns the concern.
+
+`scripts/render-project <schema> <dir>` **assembles** a library directory: it
+copies `lib/*.typ` and copies the schema in beside them, so every relative path
+resolves wherever the directory is copied to. A consumer imports
+`<dir>/designlib.typ`, unchanged.
+
+**Nothing is generated any more.** The last generated file was the behavior
+fence's pattern table, which existed only because the schema declared those
+patterns in a dialect Typst's `regex()` — the Rust engine — could not read. The
+schema declares them in that engine's own dialect now, so the fence is read
+straight from the schema like every other vocabulary and no file is left to
+write. A schema pattern that the engine cannot parse fails the compile naming
+the level and the pattern, because `schema.typ` compiles every declared pattern
+up front rather than waiting for a document to author a clause at that level.
+
+Each file under `lib/` owns one concern — `schema.typ` reads the schema and
+holds the coherence checks, `tokens.typ` the colour tables and their totality
+guarantee, `rules.typ` the guideline-versus-failure split, then one file per
+block family. `designlib.typ` is the entry point and lists the whole map.
 
 `fixtures/gallery.typ` is the ONE gallery: it calls every function the
 library projects for authoring, and it is a DRIFT TRIPWIRE rather than
@@ -140,7 +161,8 @@ every contract added here is asserted in both directions.
 
 ## Don't
 
-- Do not hand-edit `designlib.typ` or any rendered PDF.
+- Do not hand-edit `fence.typ` or any rendered PDF. The rest of `lib/`
+  IS the source and is meant to be edited.
 - Do not add ADR citations, references to a sibling framework repo, or its
   skill and primitive names. This repo ships to hosts that have none of them.
 - Do not weaken a check to make something pass.

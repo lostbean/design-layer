@@ -515,28 +515,66 @@ def _refuse_divergent_layer_lib(root, lib):
         return 0
     if os.path.abspath(local) == os.path.abspath(lib):
         return 0
+
+    # EVERY LIBRARY FILE IS COMPARED, not just designlib.typ. The library is a
+    # DIRECTORY of hand-written Typst files now, and designlib.typ is the entry
+    # point that imports the rest — a short, stable file. Comparing it alone
+    # would compare the one file least likely to change while every rule that
+    # actually moved sits in a sibling, which is exactly the silent divergence
+    # this refusal exists to stop.
+    #
+    # THE SCHEMA IS DELIBERATELY EXCLUDED, and that is a different question
+    # rather than an oversight. The assembled directory carries a copy of the
+    # schema so the library can read it by a relative path, but that copy is an
+    # INPUT THE CONSUMER OWNS, not part of the library's identity. A consumer's
+    # schema is legitimately a strict SUPERSET of the bundle's: the public copy
+    # holds only the machine-checkable half the renderer decides, while a host
+    # adds whatever else its own skills cite. Comparing the two would refuse
+    # every correct layer, because no real consumer's schema is byte-identical
+    # to the bundle's.
+    #
+    # Whether the two schemas AGREE where they overlap is a real question, and
+    # it already has an owner: schema-drift-check compares the shared subset and
+    # states outright that a key present on only one side is not drift. Two
+    # checks, two questions, no overlap — this one asks whether the LIBRARY
+    # differs, and answers only that.
+    local_dir = os.path.dirname(local)
+    lib_dir_abs = os.path.dirname(os.path.abspath(lib))
+
+    def _snapshot(d):
+        out = {}
+        for name in sorted(os.listdir(d)):
+            if not name.endswith(".typ"):
+                continue
+            with open(os.path.join(d, name), "rb") as f:
+                out[name] = f.read()
+        return out
+
     try:
-        with open(local, "rb") as f:
-            a = f.read()
-        with open(lib, "rb") as f:
-            b = f.read()
+        a = _snapshot(local_dir)
+        b = _snapshot(lib_dir_abs)
     except OSError as e:
         sys.stderr.write("design-aggregate: error: cannot compare the layer's "
                          "projected library with the one in use: %s\n" % e)
         return 2
     if a == b:
         return 0
+    # Name WHICH files disagree, so the reader is not left diffing two
+    # directories by hand to find out what went stale.
+    differing = sorted(
+        set(a) ^ set(b) | {k for k in set(a) & set(b) if a[k] != b[k]})
     sys.stderr.write(
         "design-aggregate: error: the layer's own projected library differs "
         "from the one this run compiles against, so each context would be "
         "validated by a DIFFERENT library than the document.\n"
         "  the layer's copy : %s\n"
         "  the one in use   : %s\n"
+        "  differing file(s): %s\n"
         "A Typst context imports the layer-relative path, so a stale copy "
         "silently disables every contract the current library added — the "
         "document still renders and still exits 0. Delete the layer's .render "
         "(it is generated), or re-run render-project into it.\n"
-        % (local, lib))
+        % (local_dir, lib_dir_abs, ", ".join(differing)))
     return 2
 
 

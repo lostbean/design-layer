@@ -12,11 +12,17 @@
 #   function signature.
 #
 #   A GUIDELINE must do BOTH things, and asserting only one of them is what
-#   makes the test vacuous. It must COMPILE CLEAN by default — otherwise the
+#   makes the test vacuous. It must NOT BLOCK a default compile — otherwise the
 #   guideline is secretly still a gate — AND it must FAIL UNDER STRICT —
 #   otherwise the rule was not relaxed, it was deleted, and the reference is a
 #   comment nobody checks. assert_guideline asserts both from one fixture, so
 #   neither half can be forgotten.
+#
+#   Note what a default compile does NOT mean here: a guideline still RECORDS
+#   itself on every render, as queryable metadata the aggregate reads back and
+#   prints. This suite compiles single fixtures with `typst` directly, so it
+#   sees only the non-blocking half; that the guidance actually reaches a human
+#   is asserted in typst-layer.test.sh, against the aggregate that reports it.
 #
 # The positive case is asserted too, and not merely that it exits 0: a document
 # that compiles to a blank page is the failure mode a bare exit code misses, so
@@ -171,20 +177,175 @@ else
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
+# --- the altitude ladder renders, named rungs and open rungs alike -----------
+#
+# Asserted by reading the BADGE TEXT back out of the PDF, not by exit code. The
+# badge is the whole point of the label — it is what tells a reader which zoom
+# level the drawing sits at — so "it compiled" proves nothing about it. The
+# fixture is written the way a real design.typ writes it: multi-line, with the
+# altitude on its own line.
+#
+# The four NAMED rungs are the REGRESSION GUARD. Opening the ladder must not
+# move them, so each is asserted against the exact badge it rendered before the
+# ladder opened: L1 · BOUNDARY, L2 · CONTEXTS, L3 · COMPONENTS, L4 · INTERNALS.
+# The unnamed rungs are asserted to read as their level number.
+altitude_badge() {
+  local name="$1" alt="$2"
+  fixture "$name" "#diagram-native(
+  altitude: \"$alt\",
+  title: \"the shape\",
+  nodes: ((id: \"a\", pos: (0,0), label: [Zalpha]),
+          (id: \"b\", pos: (1,0), label: [Zbeta])),
+  edges: ((\"a\",\"b\",\"Zgamma\"),),
+)"
+  local out
+  out="$(compile "$name" plain)"
+  if [ ! -f "$WORK/$name.pdf" ]; then
+    printf '%s\n' "$out" | head -3 | sed 's/^/       /' >&2
+    return 1
+  fi
+  # The extractor breaks the letter-spaced badge across spaces and lines, so
+  # the comparison is made on the text with all whitespace squeezed out.
+  pdftotext "$WORK/$name.pdf" - 2>/dev/null | tr -d ' \n\r'
+}
+
+assert_badge() {
+  local name="$1" alt="$2" want="$3"
+  local squeezed
+  if ! squeezed="$(altitude_badge "$name" "$alt")"; then
+    fail_line "altitude $alt: did not compile"
+    return
+  fi
+  local wantsq
+  wantsq="$(printf '%s' "$want" | tr -d ' ')"
+  case "$squeezed" in
+  *"$wantsq"*) pass_line "altitude $alt renders its badge as '$want'" ;;
+  *)
+    fail_line "altitude $alt: badge is not '$want'"
+    printf '       page text: %s\n' "$(printf '%s' "$squeezed" | head -c 90)"
+    ;;
+  esac
+}
+
+# the named ladder — these four must not move
+assert_badge alt-named-l1 L1 "ALTITUDEL1·BOUNDARY"
+assert_badge alt-named-l2 L2 "ALTITUDEL2·CONTEXTS"
+assert_badge alt-named-l3 L3 "ALTITUDEL3·COMPONENTS"
+assert_badge alt-named-l4 L4 "ALTITUDEL4·INTERNALS"
+
+# the open ladder — a rung past the named ones is legal and reads as its level
+assert_badge alt-open-l5 L5 "ALTITUDEL5·LEVEL5"
+assert_badge alt-open-l7 L7 "ALTITUDEL7·LEVEL7"
+assert_badge alt-open-l12 L12 "ALTITUDEL12·LEVEL12"
+
+# --- the altitude tint is a function of the level, never of render order -----
+#
+# A band whose colour depended on when it was drawn would make two printings of
+# one document disagree, so the tint must be DETERMINISTIC — and it must come
+# from the schema's declared accent vocabulary rather than a raw hue, or the
+# open ladder would smuggle in colours the layer never declared.
+#
+# `_alt-tint` is private (an author never calls it; diagram-native resolves the
+# band itself), and a test reaching a private helper directly is the right call
+# here: the colour is what must be pinned, and it is not recoverable from the
+# rendered page.
+#
+# The tint is not recoverable from extracted PDF text, so the fixture PRINTS
+# what the resolver returned and the assertion reads that back.
+#
+# DETERMINISM IS ASSERTED ACROSS SEPARATE COMPILES, never within one. Calling
+# the resolver twice inside a single render and comparing is the vacuous
+# version of this test: anything that varies per-render — a clock, a document
+# hash, a counter seeded at startup — is constant within one compile, so the
+# two calls agree and the check passes on exactly the input it exists to
+# catch. That was this test's first shape, and a fixture that keyed the tint to
+# a per-render input sailed through it. Two independent compiles are what
+# actually pins the colour to the level.
+alt_tint_table() {
+  local name="$1"
+  fixture "$name" '#let rungs = ALTITUDES + ("L5","L6","L7","L8","L9","L13")
+#for t in rungs.map(a => _alt-tint(a)) {
+  if t not in TINTS {
+    panic("_alt-tint produced " + repr(t) + ", which is not a declared tint")
+  }
+}
+#for a in rungs [ #a=#_alt-tint(a) ]'
+  local out
+  out="$(compile "$name" plain)"
+  if [ ! -f "$WORK/$name.pdf" ]; then
+    printf '%s\n' "$out" | head -5 | sed 's/^/       /' >&2
+    return 1
+  fi
+  pdftotext "$WORK/$name.pdf" - 2>/dev/null | tr -s ' \n' ' '
+}
+
+if tints_a="$(alt_tint_table alt-tint-a)" &&
+  tints_b="$(alt_tint_table alt-tint-b)"; then
+  # every tint the resolver returned is a declared one — asserted inside the
+  # fixture, so reaching this point at all is the proof.
+  pass_line "_alt-tint stays inside the declared tint vocabulary"
+
+  if [ "$tints_a" = "$tints_b" ]; then
+    pass_line "_alt-tint is deterministic across separate renders ($tints_a)"
+  else
+    fail_line "_alt-tint is NOT deterministic across renders"
+    printf '       render 1: %s\n' "$tints_a"
+    printf '       render 2: %s\n' "$tints_b"
+  fi
+
+  # the four named rungs keep the exact accents the schema declares for them
+  named_ok=1
+  for want in "L1=slate" "L2=teal" "L3=amber" "L4=violet"; do
+    case "$tints_a" in
+    *"$want"*) ;;
+    *)
+      named_ok=0
+      fail_line "altitude tint regression: expected $want, page says: $tints_a"
+      ;;
+    esac
+  done
+  [ "$named_ok" -eq 1 ] &&
+    pass_line "the named rungs keep their declared tints"
+else
+  fail_line "the altitude-tint fixture did not compile"
+fi
+
 # --- invariants: a wrong value has no defensible reading ---------------------
 assert_invariant diagram-ghost-edge "not a declared node" \
   '#diagram-native(altitude: "L1",
      nodes: ((id: "a", pos: (0,0), label: [A]),),
      edges: (("a","ghost","x"),))'
 
-assert_invariant diagram-empty "at least one node" \
+assert_guideline diagram-empty "at least one node" \
   '#diagram-native(altitude: "L1", nodes: (), edges: ())'
 
-assert_invariant diagram-altitude "diagram altitude" \
-  '#diagram-native(altitude: "L9",
+# THE ALTITUDE LADDER IS OPEN, AND ITS TWO RULES NOW SPLIT ON SEVERITY. Each
+# gets its own fixture, because they pull in opposite directions: an omitted
+# level GUIDES, while a malformed one still fails.
+#
+# PRESENCE. A diagram with no altitude leaves the reader unable to tell which
+# zoom level they are looking at, which is worse but not wrong — the drawing
+# still renders, under a badge that says the altitude is unstated.
+assert_guideline diagram-altitude-missing "altitude is unstated" \
+  '#diagram-native(
      nodes: ((id: "a", pos: (0,0), label: [A]),), edges: ())'
 
-assert_invariant coverage-unreasoned "states no reason" \
+# SHAPE, and this half STAYS FAIL-CLOSED. A value that is not `L<n>` for a
+# positive whole n has no defensible reading: the library cannot resolve it to a
+# level, a name, or a band colour, so it would have to invent one. Guessing is
+# the one thing a design document must not do, which is why a MALFORMED value
+# fails where a MISSING one guides. L0 and L2.5 are the interesting cases: both
+# are "L-and-digits" and both are wrong, so a check that merely looked for a
+# leading L would pass them.
+for bad in '"L0"' '"L"' '"X2"' '"L2.5"' '"2"' '"L-1"'; do
+  assert_invariant "diagram-altitude-malformed-$(printf '%s' "$bad" | tr -cd 'A-Za-z0-9.-')" \
+    "is not a well-formed altitude" \
+    "#diagram-native(
+     altitude: $bad,
+     nodes: ((id: \"a\", pos: (0,0), label: [A]),), edges: ())"
+done
+
+assert_guideline coverage-unreasoned "states no reason" \
   '#coverage(("part/x", "out-of-scope"))'
 
 assert_invariant coverage-status "coverage status" \
@@ -193,35 +354,51 @@ assert_invariant coverage-status "coverage status" \
 assert_invariant pending-date "must be a YYYY-MM-DD date" \
   '#pending-ledger(pending-entry(title: "T", kind: "verify", since: "soon")[b])'
 
-assert_invariant pending-build-adr "cites no ADR" \
+assert_guideline pending-build-adr "cites no ADR" \
   '#pending-ledger(pending-entry(title: "T", kind: "build", since: "2026-01-02")[b])'
 
-assert_invariant section-untitled "is missing required field: title" \
+assert_guideline section-untitled "section is missing title" \
   '#section(lead: "x", body: [y])'
 
-assert_invariant component-missionless "is missing required field: mission" \
+assert_guideline component-missionless "component is missing mission" \
   '#components(component(name: "C1"))'
 
-assert_invariant stat-tile-valueless "is missing required field: value" \
-  '#stat-tile(label: "things")'
+# A stat tile hands a DICTIONARY to its grid, so it cannot emit its own
+# guidance and defers it to the block that renders it. The fixture therefore
+# goes through `stat-grid`: a bare `stat-tile` returns a value nothing places on
+# the page, and the guidance would have no content position to be emitted from.
+assert_guideline stat-tile-valueless "stat-tile is missing value" \
+  '#stat-grid(stat-tile(label: "things"))'
 
 # The census's relationship shape is a DECLARED field precisely so it can be
-# checked; a shape nothing validates is a claim the reader takes on trust.
-assert_invariant relates-bad-side "cardinality side" \
+# checked. It now GUIDES: an unreadable cardinality still renders in its capsule
+# exactly as the author typed it, so the reader sees what was written and the
+# library says what it expected instead.
+assert_guideline relates-bad-side "cardinality side" \
   '#relates(cardinality: "many : 1")[other]'
 
-assert_invariant relates-bad-shape "must be written" \
+assert_guideline relates-bad-shape "expected to be written" \
   '#relates(cardinality: "1")[other]'
 
-assert_invariant relates-no-cardinality "is missing required field: cardinality" \
+assert_guideline relates-no-cardinality "relates is missing cardinality" \
   '#relates[other]'
 
-# --- guidelines: silent by default, named under strict ------------------------
+# --- guidelines: reported by default, escalated under strict ------------------
 assert_guideline title-length "title exceeds 64 characters" \
   '#goal(title: "This title is deliberately far longer than the sixty-four character budget")[b]'
 
 assert_guideline bullet-sentences "3-sentence bullet guideline" \
   '#points("One sentence. Two sentences. Three sentences. Four sentences.")'
+
+# THE BEHAVIOR FENCE. A then clause naming the mechanism instead of the
+# observable outcome is a WORDING call, so the clause renders exactly as
+# written and the library reports what it found. Asserted here so the rule
+# cannot be deleted silently while the schema still describes it.
+assert_guideline behavior-fence "forbidden term" \
+  '#behavior(title: "Rule", level: "interface")[
+     #when[the form is submitted]
+     #then[the SignupController returns an http status code]
+   ]'
 
 assert_guideline lead-sentences "section lead holds about" \
   '#section(title: "T", lead: "One. Two. Three. Four. Five.", body: [x])'
@@ -239,6 +416,78 @@ assert_guideline stat-tile-figure "accountant" \
 
 assert_guideline stat-tile-dir "carries a delta with no dir" \
   '#stat-grid(tiles: (stat-tile(value: "2.4M", label: "rows", delta: "+3%"),))'
+
+# --- the clause order is DERIVED from the schema, not restated in the code ----
+# The order used to be a hardcoded ["given", "when", "then"] in render-project,
+# sitting beside a cardinality that WAS parsed from the schema. The schema
+# therefore declared an order the projector ignored: editing clause_order
+# changed the declaration and nothing else, and the declared order and the
+# enforced order could disagree with nothing to catch it.
+#
+# Asserting "a then before a when is reported" does NOT catch that — it passes
+# identically under a hardcode. The only assertion that can tell the two apart
+# EDITS THE SCHEMA and demands the projection follow, which is what this does.
+assert_order_follows_schema() {
+  local name="$1" sequence="$2" want="$3"
+  local sdir="$WORK/schema-$name" out
+  mkdir -p "$sdir"
+  if ! python3 - "$sequence" "$sdir/design-schema.json" <<'PY'; then
+import json, sys
+seq, dest = sys.argv[1], sys.argv[2]
+s = json.load(open("schema/design-schema.json"))
+s["design_doc"]["behavior_contract"]["clause_order"] = (
+    "clauses render and validate in the fixed order %s; the order is a "
+    "violation to depart from." % seq)
+json.dump(s, open(dest, "w"))
+PY
+    fail_line "$name: could not write the edited schema"
+    return
+  fi
+
+  if ! bash ./scripts/render-project "$sdir/design-schema.json" "$sdir" \
+    >"$sdir/out" 2>&1; then
+    fail_line "$name: the edited schema did not project"
+    head -3 "$sdir/out" | sed 's/^/       /'
+    return
+  fi
+
+  out="$(grep '^#let CLAUSE-ORDER' "$sdir/designlib.typ")"
+  case "$out" in
+  *"$want"*) pass_line "clause order follows the schema: $sequence" ;;
+  *)
+    fail_line "$name: the projection ignored the schema's declared order"
+    printf '       wanted: %s\n' "$want"
+    printf '       got:    %s\n' "$out"
+    ;;
+  esac
+}
+
+# The real order, and a DIFFERENT one. The second is the load-bearing half: it
+# fails against a hardcode and passes only when the schema is really read.
+assert_order_follows_schema real "given, when, then" '"given", "when", "then"'
+assert_order_follows_schema edited "when, given, then" '"when", "given", "then"'
+
+# A clause_order stating no parseable sequence must ERROR, never fall back to a
+# silent default — a projection over an empty order enforces nothing.
+sdir="$WORK/schema-unparseable"
+mkdir -p "$sdir"
+python3 - "$sdir/design-schema.json" <<'PY'
+import json, sys
+s = json.load(open("schema/design-schema.json"))
+s["design_doc"]["behavior_contract"]["clause_order"] = "the clauses are ordered sensibly"
+json.dump(s, open(sys.argv[1], "w"))
+PY
+if out="$(bash ./scripts/render-project "$sdir/design-schema.json" "$sdir" 2>&1)"; then
+  fail_line "an unparseable clause_order projected anyway — it fell back to a default"
+else
+  case "$out" in
+  *"clause_order"*) pass_line "an unparseable clause_order errors, naming the key" ;;
+  *)
+    fail_line "an unparseable clause_order failed, but the message does not name the key"
+    printf '%s\n' "$out" | head -3 | sed 's/^/       /'
+    ;;
+  esac
+fi
 
 echo
 echo "designlib-native: $PASS passed, $FAIL failed"

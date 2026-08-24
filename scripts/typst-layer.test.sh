@@ -414,12 +414,12 @@ case "$out" in
 esac
 rm -f "$LAYER/drop.pdf" "$LAYER/beta/CONTEXT.typ"
 
-# --- 3c. GUIDELINES are reachable, and reachable ONLY on request -------------
-# The library's guidelines were silent by default and promoted to errors under
-# `--input strict=1`, which no app, no check, and no hook ever passed. All
-# twelve were unreachable code that read as enforcement to anyone who grepped
-# for them. DESIGN_STRICT is the door; both halves are asserted, because a
-# guideline that fires in the ordinary render would block a commit over advice.
+# --- 3c. GUIDELINES ALWAYS PRINT, and never block ----------------------------
+# The guidelines used to be SILENT unless DESIGN_STRICT was set, which made them
+# invisible in practice: a rule nobody reads is the same defect as a check that
+# passes over nothing. They now print on every render and change no exit code,
+# with DESIGN_STRICT kept as the opt-in escalation to failure. All three halves
+# are asserted — printed, non-blocking, and still escalatable.
 cat >"$LAYER/beta/design.typ" <<'EOF'
 #import "../.render/designlib.typ": *
 #let title = [Zbeta context]
@@ -432,11 +432,26 @@ cat >"$LAYER/beta/design.typ" <<'EOF'
   ])
 ]
 EOF
-if python3 ./scripts/design-aggregate "$LAYER" "$LAYER/lint.pdf" >/dev/null 2>&1; then
-  pass_line "a guideline stays silent in an ordinary render"
+lint_out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/lint.pdf" 2>&1)"
+lint_rc=$?
+if [ "$lint_rc" -eq 0 ]; then
+  pass_line "a guideline does not block an ordinary render"
 else
-  fail_line "a guideline fired in the ordinary render — advice blocked the gate"
+  fail_line "a guideline fired as a failure in the ordinary render (exit $lint_rc)"
 fi
+# THE LOAD-BEARING HALF. Without this the change is merely a deleted check.
+case "$lint_out" in
+*"guideline: stat-grid.empty"*)
+  pass_line "the guideline PRINTS in the ordinary render, naming its rule"
+  ;;
+*)
+  fail_line "the guideline did not print — it is invisible, the old defect"
+  ;;
+esac
+case "$lint_out" in
+*"guideline(s):"*) pass_line "the render reports a guideline count summary" ;;
+*) fail_line "no count summary — a reader cannot tell how many fired" ;;
+esac
 rm -f "$LAYER/lint.pdf"
 out="$(DESIGN_STRICT=1 python3 ./scripts/design-aggregate "$LAYER" "$LAYER/lint.pdf" 2>&1)"
 rc=$?
@@ -552,30 +567,68 @@ case "$div_out" in
 *) fail_line "the refusal does not name the two libraries" ;;
 esac
 
-# (b) a misordered foundation is REFUSED, and the message names both kinds.
+# (b) a misordered foundation is GUIDED, not refused. The order is a structural
+# opinion: a design legitimately changes shape, and the library says what it
+# expected rather than refusing to render. All four halves are asserted —
+# the render succeeds, the guidance is PRINTED, it names the offending pair, and
+# the strict ratchet still escalates it — because dropping any one of them would
+# leave a deleted check looking like a converted one.
 fo_layer '#principle(title: "Zap")[p] #goal(title: "Zag")[g]'
 fo_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/b.pdf" 2>&1)"
 fo_rc=$?
-if [ "$fo_rc" -ne 0 ]; then
-  pass_line "a misordered Typst foundation is refused (exit $fo_rc)"
+if [ "$fo_rc" -eq 0 ]; then
+  pass_line "a misordered Typst foundation renders (exit 0)"
 else
-  fail_line "a misordered Typst foundation rendered — the order is unenforced"
+  fail_line "a misordered foundation was refused (exit $fo_rc) — structure now guides"
 fi
 case "$fo_out" in
-*"out of order"*) pass_line "the refusal says the foundation is out of order" ;;
-*) fail_line "the refusal does not name the rule: $(printf '%s' "$fo_out" | head -1)" ;;
+*"guideline: foundation.order"*)
+  pass_line "the guidance names the foundation.order rule"
+  ;;
+*)
+  fail_line "the guidance does not name the rule: $(printf '%s' "$fo_out" | head -1)"
+  ;;
+esac
+case "$fo_out" in
+*"out of order"*) pass_line "the guidance says the foundation is out of order" ;;
+*) fail_line "the guidance does not say what is wrong" ;;
 esac
 if printf '%s' "$fo_out" | grep -q 'goal' && printf '%s' "$fo_out" | grep -q 'principle'; then
-  pass_line "the refusal names the offending pair"
+  pass_line "the guidance names the offending pair"
 else
-  fail_line "the refusal does not name which block followed which"
+  fail_line "the guidance does not name which block followed which"
 fi
+case "$fo_out" in
+*"the declared order is"*)
+  pass_line "the guidance says what order was expected"
+  ;;
+*) fail_line "the guidance does not say what was expected — advice with no remedy" ;;
+esac
+# This fixture carries a principle before a goal AND no invariant, so it trips
+# the order rule and the cardinality rule — the summary counts both under the
+# `foundation` area.
+case "$fo_out" in
+*"2 guideline(s): 2 foundation"*)
+  pass_line "the count summary counts both foundation guidelines"
+  ;;
+*)
+  fail_line "the count summary does not report them: $(printf '%s' "$fo_out" | grep 'guideline(s)' | head -1)"
+  ;;
+esac
 if [ -f "$FO/b.pdf" ]; then
-  fail_line "a misordered foundation still wrote a PDF"
+  pass_line "a misordered foundation still renders its document"
   rm -f "$FO/b.pdf"
 else
-  pass_line "a misordered foundation writes no document"
+  fail_line "a misordered foundation wrote no PDF — the render was blocked"
 fi
+# the strict ratchet still turns it into a failure, for a CI that wants one
+if DESIGN_STRICT=1 python3 ./scripts/design-aggregate "$FO" "$FO/bs.pdf" \
+  >/dev/null 2>&1; then
+  fail_line "DESIGN_STRICT did not escalate the foundation order guideline"
+else
+  pass_line "DESIGN_STRICT escalates the foundation order guideline to a failure"
+fi
+rm -f "$FO/bs.pdf"
 
 # (c) the scope is ONE CONTEXT. The root ends on a principle and alpha opens on
 # a goal, which is legal — every context carries its own foundation. A check
@@ -601,38 +654,62 @@ fi
 # four directions are covered, because a check that only ever passes and a
 # check that only ever fails are equally useless.
 
-# (d) a foundation missing a required kind is refused, and the message names
-# the kind that is missing rather than reporting a generic malformed document.
+# (d) a foundation missing a required kind is GUIDED, not refused. This is the
+# case the flexibility ruling was decided on: a layer may legitimately not carry
+# one of the levels, and failing the whole design over it is the behavior being
+# reversed. The guidance still has to name the missing kind and what was
+# expected, or it is noise.
 fo_layer '#goal(title: "Zdg")[g]
       #invariant(title: "Zdi", enforcement: "convention")[i]'
 fc_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/d.pdf" 2>&1)"
 fc_rc=$?
-if [ "$fc_rc" -ne 0 ]; then
-  pass_line "a foundation missing a required kind is refused"
+if [ "$fc_rc" -eq 0 ]; then
+  pass_line "a foundation missing a required kind renders (exit 0)"
 else
-  fail_line "a foundation with no principle rendered — the minimum is unenforced"
+  fail_line "a short foundation was refused (exit $fc_rc) — the minimum should guide"
 fi
 case "$fc_out" in
-*"declares no principle"*) pass_line "the refusal names the missing kind" ;;
-*) fail_line "the refusal does not say which kind is missing" ;;
+*"guideline: foundation.cardinality"*)
+  pass_line "the guidance names the foundation.cardinality rule"
+  ;;
+*) fail_line "the guidance does not name the cardinality rule" ;;
+esac
+case "$fc_out" in
+*"declares no principle"*) pass_line "the guidance names the missing kind" ;;
+*) fail_line "the guidance does not say which kind is missing" ;;
+esac
+case "$fc_out" in
+*"expects at least one of each"*)
+  pass_line "the guidance says what the cardinality rule expected"
+  ;;
+*) fail_line "the guidance does not say what was expected" ;;
 esac
 if [ -f "$FO/d.pdf" ]; then
-  fail_line "a short foundation still wrote a PDF"
+  pass_line "a short foundation still renders its document"
   rm -f "$FO/d.pdf"
 else
-  pass_line "a short foundation writes no document"
+  fail_line "a short foundation wrote no PDF — the render was blocked"
 fi
-
-# (e) the minimum is scoped PER CONTEXT, exactly as the order is. Without the
-# per-context reset a context carrying no foundation of its own would pass on
-# the strength of the previous chapter's statements — the silent hole the reset
-# exists to close. Alpha carries only a goal here; the root carries a full
-# foundation, so a whole-aggregate fold would call this layer complete.
-fo_layer '#goal(title: "Zeg")[g]'
-if python3 ./scripts/design-aggregate "$FO" "$FO/e.pdf" >/dev/null 2>&1; then
-  fail_line "a context with a partial foundation passed on the root's statements"
+if DESIGN_STRICT=1 python3 ./scripts/design-aggregate "$FO" "$FO/ds.pdf" \
+  >/dev/null 2>&1; then
+  fail_line "DESIGN_STRICT did not escalate the cardinality guideline"
 else
+  pass_line "DESIGN_STRICT escalates the cardinality guideline to a failure"
+fi
+rm -f "$FO/ds.pdf"
+
+# (e) the minimum is still scoped PER CONTEXT. The scoping is what makes the
+# guidance accurate rather than merely absent: without the per-context reset a
+# context carrying no foundation of its own would inherit the previous chapter's
+# statements and the guidance would never fire. Alpha carries only a goal here,
+# so a correctly scoped check reports the two kinds it lacks.
+fo_layer '#goal(title: "Zeg")[g]'
+fe_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/e.pdf" 2>&1)"
+if printf '%s' "$fe_out" | grep -q 'declares no invariant' &&
+  printf '%s' "$fe_out" | grep -q 'declares no principle'; then
   pass_line "the minimum is scoped per context, not across the aggregate"
+else
+  fail_line "a partial foundation inherited the root's statements — no guidance fired"
 fi
 rm -f "$FO/e.pdf"
 
@@ -697,17 +774,34 @@ XEOF
 ]
 EOF
 }
-bc_refuses() { # $1 = label, $2 = body, $3 = expected message fragment
+# A clause-shape violation GUIDES rather than refuses. Both halves are asserted
+# on every case: the document still renders, AND the guidance prints naming the
+# rule and what was expected. Asserting only the first half would let a deleted
+# check pass as a converted one.
+bc_guides() { # $1 = label, $2 = body, $3 = expected message fragment
   bc_layer "$2"
   bc_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/bc.pdf" 2>&1)"
-  if [ -f "$FO/bc.pdf" ]; then
-    fail_line "$1 still wrote a document"
-    rm -f "$FO/bc.pdf"
+  bc_rc=$?
+  if [ "$bc_rc" -ne 0 ]; then
+    fail_line "$1 — the render was refused (exit $bc_rc) instead of guided"
+  elif [ ! -f "$FO/bc.pdf" ]; then
+    fail_line "$1 — no document was written"
+  elif ! printf '%s' "$bc_out" | grep -q 'guideline: behavior\.'; then
+    fail_line "$1 — no behavior guidance printed; the check was deleted, not converted"
   elif printf '%s' "$bc_out" | grep -q "$3"; then
     pass_line "$1"
   else
-    fail_line "$1 — refused for the wrong reason, or not at all"
+    fail_line "$1 — the guidance does not say what was expected"
   fi
+  rm -f "$FO/bc.pdf"
+  # the strict ratchet still escalates the same case to a failure
+  if DESIGN_STRICT=1 python3 ./scripts/design-aggregate "$FO" "$FO/bcs.pdf" \
+    >/dev/null 2>&1; then
+    fail_line "$1 — DESIGN_STRICT did not escalate it"
+  else
+    pass_line "$1 — DESIGN_STRICT escalates it"
+  fi
+  rm -f "$FO/bcs.pdf"
 }
 bc_accepts() { # $1 = label, $2 = body
   bc_layer "$2"
@@ -719,16 +813,16 @@ bc_accepts() { # $1 = label, $2 = body
   rm -f "$FO/bc.pdf"
 }
 
-bc_refuses "two when clauses are two rules" \
+bc_guides "two when clauses are two rules" \
   '#behavior(title: "Zb1", level: "interface")[#when[a] #when[b] #then[c]]' \
   'expected exactly 1'
-bc_refuses "a rule with no when clause is refused" \
+bc_guides "a rule with no when clause is guided" \
   '#behavior(title: "Zb2", level: "interface")[#then[c]]' \
   'expected exactly 1'
-bc_refuses "a rule with no then clause states no outcome" \
+bc_guides "a rule with no then clause states no outcome" \
   '#behavior(title: "Zb3", level: "interface")[#when[a]]' \
   'no then clause'
-bc_refuses "a then before a when is out of order" \
+bc_guides "a then before a when is out of order" \
   '#behavior(title: "Zb4", level: "interface")[#then[c] #when[a]]' \
   'out of order'
 
@@ -791,14 +885,26 @@ sp_layer '#section(title: "00 Foundation", body: [
   #section(title: "05 Later", body: [x])
   #section(title: "02 Earlier", body: [y])'
 sp_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/sp.pdf" 2>&1)"
-if [ -f "$FO/sp.pdf" ]; then
-  fail_line "a doubling-back spine still wrote a document"
-  rm -f "$FO/sp.pdf"
+sp_rc=$?
+if [ "$sp_rc" -ne 0 ]; then
+  fail_line "a doubling-back spine was refused (exit $sp_rc) — the order should guide"
+elif [ ! -f "$FO/sp.pdf" ]; then
+  fail_line "a doubling-back spine wrote no document"
+elif ! printf '%s' "$sp_out" | grep -q 'guideline: spine\.order'; then
+  fail_line "a spine running 05 then 02 rendered with NO guidance — check deleted"
 elif printf '%s' "$sp_out" | grep -q "out of order"; then
-  pass_line "a spine that doubles back is refused"
+  pass_line "a spine that doubles back renders and is guided"
 else
-  fail_line "a spine running 05 then 02 rendered — the order is unenforced"
+  fail_line "the spine guidance does not say what is wrong"
 fi
+rm -f "$FO/sp.pdf"
+if DESIGN_STRICT=1 python3 ./scripts/design-aggregate "$FO" "$FO/sps.pdf" \
+  >/dev/null 2>&1; then
+  fail_line "DESIGN_STRICT did not escalate the spine order guideline"
+else
+  pass_line "DESIGN_STRICT escalates the spine order guideline"
+fi
+rm -f "$FO/sps.pdf"
 
 # An unnumbered section is not on the numbered axis, so it must not be read as
 # a section numbered zero and fail every document that carries one.
@@ -840,6 +946,81 @@ else
   fail_line "adr() does not compile — the gate checks a form nobody can write"
 fi
 rm -f "$FO/adr.pdf"
+
+# --- 4e. REFERENTIAL INTEGRITY IS STILL FAIL-CLOSED ---------------------------
+# The severity policy relaxed every STRUCTURAL rule to guidance. It relaxed
+# nothing about REFERENCES, and that boundary is the thing most at risk of being
+# eroded by a later pass that reads "warnings not gates" as a blanket rule.
+#
+# A broken reference is not a design opinion: a citation resolving to nothing has
+# no text to render, and an edge naming no node draws a line to nowhere. Each
+# would produce a corrupt document that still exits 0. So each is asserted to
+# STILL exit non-zero, one case per reference kind.
+ri_refuses() { # $1 = label, $2 = alpha body, $3 = expected message fragment
+  # The layer declares a real term and a real context, so a dangling citation
+  # is judged by the RESOLVER rather than by the empty-registry guard — which
+  # is a different rule and would mask the one under test.
+  cat >"$FO/alpha/CONTEXT.typ" <<'XEOF'
+#let terms = (
+  (slug: "term-zri", title: [Zri], body: [A declared term.]),
+)
+XEOF
+  cat >"$FO/design.typ" <<'XEOF'
+#import ".render/designlib.typ": *
+#let title = [Zri root]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zrig")[g]
+    #invariant(title: "Zrii", enforcement: "convention")[i]
+    #principle(title: "Zrip")[p]
+  ])
+]
+XEOF
+  cat >"$FO/alpha/design.typ" <<EOF
+#import "../.render/designlib.typ": *
+#let title = [Zri alpha]
+#let body = [
+  #section(title: "01 Refs", body: [
+    $2
+  ])
+]
+EOF
+  ri_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/ri.pdf" 2>&1)"
+  ri_rc=$?
+  if [ "$ri_rc" -eq 0 ]; then
+    fail_line "$1 — a broken reference rendered, integrity was weakened"
+  elif [ -f "$FO/ri.pdf" ]; then
+    fail_line "$1 — refused but still wrote a document"
+  elif ! printf '%s' "$ri_out" | grep -q "$3"; then
+    # A non-zero exit is NOT enough. Relaxing the integrity check let this case
+    # crash further downstream instead — the run still failed, and the test
+    # still passed, while the check it names was gone. The REASON is asserted so
+    # the assertion tracks the check rather than the exit code.
+    fail_line "$1 — refused for the wrong reason: $(printf '%s' "$ri_out" | head -1)"
+  else
+    pass_line "$1"
+  fi
+  rm -f "$FO/ri.pdf"
+}
+
+# a term nothing declares: the citation renders the declared TITLE, so an
+# undeclared slug has no text at all.
+ri_refuses "a dangling term() still hard-fails" \
+  'The #term("no-such-term-anywhere") is cited.' \
+  'cites a term no CONTEXT.typ declares'
+# a context no directory declares
+ri_refuses "a dangling ctx() still hard-fails" \
+  'The #ctx("no-such-context") is cited.' \
+  'names no context this layer declares'
+# an edge naming a node the diagram does not declare
+ri_refuses "a diagram edge to an undeclared node still hard-fails" \
+  '#diagram-native(altitude: "L2", nodes: ((id: "a", label: "A", pos: (0, 0)),),
+     edges: (("a", "ghost"),))' \
+  'is not a declared node'
+# an adr() citation that is not a usable number — the citation IS the number
+ri_refuses "a malformed adr() citation still hard-fails" \
+  'The decision is #adr("7").' \
+  'takes the ADR NUMBER as an integer'
 
 # --- 5. an empty layer is an error, not an empty document ---------------------
 EMPTY="$WORK/empty/docs/design"

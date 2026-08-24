@@ -34,6 +34,7 @@ Usage:
 Exit: 0 clean, 1 the aggregate failed to compile or is stale, 2 error.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -71,6 +72,79 @@ def warns(stderr_text, src_path, report):
     return True
 
 
+# ---------------------------------------------------------------------------
+# the guideline trail — the library GUIDES, so the guidance has to be READ
+# ---------------------------------------------------------------------------
+# The library's structural rules do not stop a build: a layer missing a
+# foundation kind, or ordering its sections differently, renders. What the
+# library must not do is fall silent about it, because a check that passes over
+# nothing is the failure this repo has been bitten by, and an advisory nobody
+# reads is that same failure wearing a different hat.
+#
+# Typst has no author-callable warning, so each guideline records itself as
+# `metadata` tagged <design-guideline> during the compile, and this reads the
+# whole trail back afterwards with `typst query`. Metadata draws nothing, so the
+# guidance never reaches the page — and never disturbs the byte-compare the
+# freshness check rests on.
+#
+# The query is a SECOND compile of the same source. That is the cost of the
+# channel, and it is paid only to report: the render itself has already
+# succeeded by the time this runs.
+def guidelines(typst, agg, root, lib, env):
+    """Read the guideline trail out of a compiled document.
+
+    Returns a list of {rule, message} dicts. A query that fails for any reason
+    returns None, which the caller reports rather than silently treating as a
+    clean run — a reporter that cannot read its own trail must say so.
+    """
+    proc = subprocess.run(
+        [typst, "query", agg, "<design-guideline>", "--field", "value",
+         "--root", os.path.commonpath(
+             [os.path.abspath(os.path.join(root, "..", "..")),
+              os.path.abspath(lib)])],
+        capture_output=True, text=True, env=env)
+    if proc.returncode != 0:
+        return None
+    try:
+        found = json.loads(proc.stdout or "[]")
+    except ValueError:
+        return None
+    return [g for g in found if isinstance(g, dict) and "rule" in g]
+
+
+def report_guidelines(found, report):
+    """Print every guideline, then a count summary naming what fired.
+
+    ALWAYS prints, including the clean case. A run that says nothing leaves a
+    reader unable to tell a clean layer from a reporter that never ran, which is
+    the whole defect this channel exists to avoid.
+    """
+    if found is None:
+        report("design-aggregate: the guideline trail could not be read, so "
+               "this render reports no guidance — treat it as unknown, not as "
+               "clean.\n")
+        return
+    for g in found:
+        # rule, offending item, and what was expected all travel in the
+        # message the library wrote; a guideline that does not say what to do
+        # instead is noise, so the format keeps both halves visible.
+        report("design-aggregate: guideline: %s: %s\n"
+               % (g.get("rule", "?"), g.get("message", "")))
+    if not found:
+        report("design-aggregate: 0 guideline(s) — every structural guideline "
+               "is satisfied.\n")
+        return
+    kinds = {}
+    for g in found:
+        # the rule name is `<area>.<rule>`; the area is what a reader counts by
+        kinds[g.get("rule", "?").split(".")[0]] = kinds.get(
+            g.get("rule", "?").split(".")[0], 0) + 1
+    summary = ", ".join("%d %s" % (n, k) for k, n in sorted(kinds.items()))
+    report("design-aggregate: %d guideline(s): %s — none blocks the render; "
+           "run with DESIGN_STRICT=1 to make them fail.\n"
+           % (len(found), summary))
+
+
 
 class LegacyMarkdownLayer(Exception):
     """A layer still authored as design.md, after markdown authoring was removed."""
@@ -106,13 +180,13 @@ def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
     # accident, the same shape as a read-only package cache standing in for an
     # offline contract.
     env = dict(os.environ, SOURCE_DATE_EPOCH="0")
-    # THE GUIDELINE SWEEP, off unless the caller asks for it. The library's
-    # guidelines are silent in every ordinary render — they describe a document
-    # that could read better, never one that is wrong — and `--input strict=1`
-    # promotes each to an error for an author who wants the pass. It is wired
-    # here rather than in the gate on purpose: a guideline must never decide
-    # whether a commit lands.
+    # THE STRICT RATCHET, off unless the caller asks for it. A guideline REPORTS
+    # on every render and blocks none of them; `--input strict=1` promotes each
+    # to a hard error, for a CI or an author who wants the stricter pass. The
+    # default stays reporting-only on purpose: a structural guideline must never
+    # decide whether a commit lands.
     strict = ["--input", "strict=1"] if os.environ.get("DESIGN_STRICT") else []
+    guides = None
     try:
         proc = subprocess.run(
             [typst, "compile", agg, target, *strict,
@@ -123,6 +197,11 @@ def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
                  [os.path.abspath(os.path.join(root, "..", "..")),
                   os.path.abspath(lib)])],
             capture_output=True, text=True, env=env)
+        # Read the guideline trail while the assembled source still exists —
+        # `cleanup` below deletes it. Only worth reading if the compile itself
+        # succeeded; a failed compile has no trail to report.
+        if proc.returncode == 0:
+            guides = guidelines(typst, agg, root, lib, env)
     finally:
         for f in cleanup:
             if os.path.exists(f):
@@ -132,6 +211,9 @@ def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
         return 1
     if warns(proc.stderr, out_pdf, report=sys.stderr.write):
         return 1
+    # Every guideline prints on EVERY render, before the freshness verdict, and
+    # none of them changes the exit code.
+    report_guidelines(guides, sys.stderr.write)
 
     if check:
         if not os.path.exists(out_pdf):
@@ -206,8 +288,14 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
     _titles = ", ".join(
         "%s: %s" % (_typ_str(t["slug"]), _typ_str(t["title_text"]))
         for t in sorted(terms, key=lambda x: x["slug"]))
-    _ctx_names = ", ".join(
-        _typ_str(name) for name, _doc in docs if name is not None)
+    # A Typst array literal needs a TRAILING COMMA to stay an array at length
+    # one: `("alpha")` is the string "alpha", while `("alpha",)` is the
+    # one-element array. Without it a single-context layer declared its context
+    # list as a string, and `ctx()` then tested membership against that string's
+    # characters and called `.join` on it — so a layer with exactly one context
+    # got a type error instead of the citation check.
+    _ctx_names = "".join(
+        "%s, " % _typ_str(name) for name, _doc in docs if name is not None)
     L.append("#declare-vocabulary(")
     L.append("  terms: (%s)," % (_titles if _titles else ":"))
     L.append("  contexts: (%s)," % _ctx_names)

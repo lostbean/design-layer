@@ -32,13 +32,25 @@ Three words are used precisely throughout:
 
 - **Machine-checked** — the renderer or a gate script decides pass or fail on
   this, fail-closed. Break it and you get a violation naming the file and the
-  line.
-- **Guideline** — the renderer holds the rule but stays silent in an ordinary
-  render. It fires only under the author-requested `lint` sweep (§6), which
-  promotes every guideline to an error. A guideline names a document that could
-  read better, never one that is wrong.
+  line. This severity is reserved for what makes the OUTPUT wrong: a value
+  outside a declared vocabulary, a citation or diagram edge that resolves to
+  nothing, a malformed date or altitude. The renderer would have to invent a
+  meaning to continue, and a design document must never guess.
+- **Guideline** — the renderer holds the rule, REPORTS it on every render, and
+  renders anyway. The report names the rule, the offending item, and what was
+  expected; the run ends with a count summary; the exit code does not change.
+  This is the severity of every STRUCTURAL opinion — which foundation kinds a
+  context declares and in what order, whether a required argument was filled,
+  the shape of a clause or a cardinality — because a design legitimately
+  changes shape and a layer missing one level may be missing it for a good
+  reason. `DESIGN_STRICT=1`, or the `lint` sweep (§6), promotes every guideline
+  to a hard error for a repo that wants the stricter ratchet.
 - **Convention** — no check enforces it at all. It is stated because a layer
   that ignores it reads badly, but nothing will stop you.
+
+The split matters when reading the rest of this document: "required" almost
+always means **guideline-required** — the renderer expects it and says so, and
+your document still renders without it.
 
 Every command below is a `nix run` against the design-layer flake. A host repo
 copies nothing in: the scripts, the schema, and the renderer travel together as
@@ -352,10 +364,14 @@ instead a function signature the compiler enforces where the author writes it.
 
 Generation is deliberately two things at once:
 
-- **Validation** — it fails closed on a missing required argument, an illegal
-  enum value, a mis-ordered foundation, mis-ordered clauses, or a malformed
-  pending entry. A design that does not compile clean produces **no document at
-  all**. There is no partial credit and no warning-only mode.
+- **Validation**, at two severities. It **fails closed** on an illegal enum
+  value, a malformed pending date, a malformed altitude, and any reference that
+  resolves to nothing — a document that breaks one of these produces **no
+  document at all**, because the renderer cannot draw what it cannot read. It
+  **reports a guideline** and renders anyway for a missing required argument, a
+  mis-ordered foundation, a foundation missing one of its kinds, mis-ordered
+  clauses, or a clause naming a mechanism. The guidance names the rule and what
+  was expected on every render; `DESIGN_STRICT=1` turns each into a failure.
 - **Normalization** — typesetting and styling come from the library's own
   visual system, applied uniformly. Authors write content; the library owns the
   look.
@@ -375,11 +391,10 @@ carrying the body.
 ]
 ```
 
-- **`title:` is required and machine-checked for presence**: plain text, no
-  links. A missing title is a compile failure naming the field. Its **64
-  character cap is a guideline** — a long title makes a worse document, never a
-  wrong one, so it fires under `lint` and never blocks an ordinary render. (The
-  cap counts grapheme clusters, so an accented character costs one.)
+- **`title:` is required**: plain text, no links. Both halves of the contract
+  are **guidelines** — a missing title is reported by name and the block still
+  renders, and the **64 character cap** is reported the same way. (The cap
+  counts grapheme clusters, so an accented character costs one.)
 - **The body** is the trailing content block, the long description. For an
   `invariant` the body **is** the checkable statement.
 - **An unknown argument is a compile failure.** The named parameters _are_ the
@@ -540,7 +555,9 @@ chapter's statements.
 
 ### The spine
 
-**Machine-checked.** A design document's sections run in a fixed order.
+**Guideline.** A design document's sections are expected to run in a fixed
+order. Every rule in this section is reported and none of them blocks the
+render — this is the shape a design usually takes, not a shape it must take.
 
 ```
 00 Foundation          goals · no-goals · invariants · principles, in that order
@@ -550,19 +567,24 @@ Pending updates        unnumbered, immediately after the foundation; omitted whe
 0N                     end-to-end walkthrough — one real usage path
 ```
 
-Three parts of this are enforced:
+Three parts of this are checked, each as a guideline that reports and lets the
+render finish:
 
 1. **Foundation cardinality** — at least one `goal`, at least one `invariant`,
    at least one `principle`. Zero or more `no-goal`s. A kind missing from the
    context's finished run of foundation calls is a kind nobody wrote, and the
-   compile names it.
-2. **Foundation order** — the four kinds appear in the declared order. A
-   `#principle` called before an `#invariant` is a violation naming the
-   offending statement's title.
-3. **Spine order** — the numbered sections ascend. A `#section` whose leading
-   number falls below the one before it is a violation naming both titles.
-   Only a **numbered** title takes part; an unnumbered section is simply not on
-   the axis this orders.
+   render names it. If your context has a reason not to carry one of these,
+   that is a legitimate design and the guidance is the whole consequence.
+2. **Foundation order** — the four kinds are expected in the declared order. A
+   `#principle` called before an `#invariant` is reported, naming the offending
+   statement's title.
+3. **Spine order** — the numbered sections are expected to ascend. A `#section`
+   whose leading number falls below the one before it is reported, naming both
+   titles. Only a **numbered** title takes part; an unnumbered section is simply
+   not on the axis this orders.
+
+`DESIGN_STRICT=1` turns all three into hard failures, which is how a repo that
+does want the fixed shape enforces it.
 
 The foundation contract binds a document that **declares a foundation at all**.
 A document carrying no foundation — a behavior-rule sheet, a reference page —
@@ -708,11 +730,11 @@ test for which block to reach for.
 ]
 ```
 
-**`level:` is required and machine-checked.** The fence that forbids naming a
-mechanism is defined per level, so a rule carrying no level is a rule no fence
-applies to. Omitting it is a compile failure naming the field.
+**`level:` is required.** The fence that discourages naming a mechanism is
+defined per level, so a rule carrying no level is a rule no fence applies to.
+Omitting it is reported as a guideline naming the field; the rule still renders.
 
-**Clause cardinality and order, machine-checked:**
+**Clause cardinality and order, reported as guidelines:**
 
 | Clause   | Count     | Holds                                                             |
 | -------- | --------- | ----------------------------------------------------------------- |
@@ -751,9 +773,12 @@ The test is one question: **will this wording need to change if the
 implementation does?** If yes, the clause names a mechanism and must be restated
 as the observable outcome.
 
-This is **enforced, fail-closed, per clause** — and it is honestly declared
-`enforcement=partial`, because it is a denylist plus a small set of patterns
-rather than a proof.
+This is **checked per clause and reported as a guideline** — the clause renders
+exactly as written and the render names what it found. Wording is the author's
+call to make, and the check is honestly declared `enforcement=partial`, because
+it is a denylist plus a small set of patterns rather than a proof. A denylist
+that blocked the build would refuse correct rules over a word it does not
+understand, which is exactly why it reports instead.
 
 - At `level: "interface"` it rejects widget and element ids, CSS selectors and
   class names, component / controller / presenter / view-model / repository /
@@ -811,10 +836,10 @@ clauses, then the relates clauses — nothing else.
 | `domain:`    | free text                                   | required; the discovered domain it belongs to |
 | `tint:`      | one of the six accents                      | optional; the domain's colour                 |
 
-Omitting any of the five required arguments is a compile failure naming the
-field. That is deliberate: a card missing one renders as a card that simply
-does not answer that question, which reads as "not applicable" rather than
-"never stated".
+Omitting any of the five required arguments is reported as a guideline naming
+the field, and the card still renders. The reason to fill them all in anyway: a
+card missing one renders as a card that simply does not answer that question,
+which reads as "not applicable" rather than "never stated".
 
 The four kinds: an **entity** has identity persisting as its attributes change;
 a **value object** is defined only by its attributes; an **aggregate** is a
@@ -824,11 +849,12 @@ type before reading a word. None of that colouring is authored — it follows
 from `kind:` and `lifecycle:`. The two groups inside a card label themselves
 from the run of clauses, so the authored source names neither heading.
 
-**Every relationship declares its cardinality**, and it is machine-checked:
-`cardinality:` is written `<this> : <other>` and each side must be one of `1`,
-`0..1`, `n`, `0..n`. A missing `cardinality:`, a value with no colon, or a side
-outside that vocabulary each fail the render naming the offending value. The
-shape of the model then scans down one column.
+**Every relationship declares its cardinality**: `cardinality:` is written
+`<this> : <other>` and each side is expected to be one of `1`, `0..1`, `n`,
+`0..n`. A missing `cardinality:`, a value with no colon, or a side outside that
+vocabulary is reported as a guideline naming the offending value; the capsule
+renders exactly what you typed, so the reader sees what was written. The shape
+of the model then scans down one column.
 
 **Conventions for the census as a whole:**
 
@@ -852,10 +878,12 @@ shape of the model then scans down one column.
 
 #### Provenance — the field that earns the block
 
-Every `#attribute` declares **how its fact arises**. `provenance:` is required
-and machine-checked against the three values; an attribute with no provenance
-makes no claim about how it arises, so its absence is a compile failure rather
-than a default.
+Every `#attribute` declares **how its fact arises**. `provenance:` is required,
+and the two halves split by severity: a value **outside** the three is
+machine-checked and fails the render, because the library has no badge for it,
+while **omitting** it is reported as a guideline. An attribute with no
+provenance makes no claim about how its fact arises, so the absence is named
+rather than defaulted.
 
 | `provenance:` | Means                                                                             |
 | ------------- | --------------------------------------------------------------------------------- |
@@ -910,9 +938,15 @@ nix run github:lostbean/design-layer#project -- <schema.json> <out-dir>
 ```
 
 `lint` compiles the layer with every guideline promoted to an error and reports
-the first that fires. It is deliberately not part of `check`: a guideline names
-a document that could read better, and blocking a commit on one would make the
-distinction between the two classes of rule meaningless.
+the first that fires — the same escalation `DESIGN_STRICT=1` performs. It is
+deliberately not part of `check`: a guideline names a document that could be
+organized more conventionally, and blocking a commit on one would collapse the
+distinction between the two classes of rule.
+
+`lint` is not how you find out which guidelines fired. `check` and `aggregate`
+already report every one of them, naming the rule, the offending item, and what
+was expected, and end with a count summary. `lint` changes the severity, not
+the visibility.
 
 The declared vocabulary — every block contract, every enum, the anchor patterns
 — lives in one schema, which travels inside the same bundle and is **projected**

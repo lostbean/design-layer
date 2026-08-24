@@ -240,16 +240,38 @@
                 export DESIGN_SCHEMA="''${DESIGN_SCHEMA:-${gateBundle}/schema/design-schema.json}"
                 export DESIGN_LIB_DIR="''${DESIGN_LIB_DIR:-${gateBundle}/render}"
 
-                layer_root="$1"
+                if [ ! -d "$1" ]; then
+                  echo "design-check: error: layer root not found: $1" >&2
+                  exit 2
+                fi
+                layer_root="$(cd "$1" && pwd)"
                 shift
                 if [ "$#" -ge 1 ]; then
                   repo_root="$1"
                   shift
                 else
-                  # the layer conventionally sits at <repo>/docs/design, so the
-                  # grandparent is the repo; if that shape does not hold, the
-                  # cwd is the honest fallback.
-                  if repo_root="$(cd "$layer_root/../.." 2>/dev/null && pwd)"; then
+                  # DERIVE THE REPO FROM THE LAYER, never from the cwd.
+                  #
+                  # layer-integrity takes a REPO root — it walks a whole repo
+                  # to find every layer artifact and ADR — so this wrapper has
+                  # to name the repo the given layer belongs to. It used to
+                  # guess by walking two levels up, on the convention that a
+                  # layer sits at <repo>/docs/design. That guess is silent
+                  # when it is wrong: `cd "$layer_root/../.."` succeeds for
+                  # almost any path, so the $PWD branch below it was very
+                  # nearly unreachable, and a layer that does NOT sit exactly
+                  # two levels down resolved to whatever directory happened to
+                  # be there — the repo's parent, a sibling checkout, or a
+                  # tree with no layer in it at all. Checking an out-of-tree
+                  # layer then reported on a repo the caller never named.
+                  #
+                  # The layer's own enclosing git repo is the answer that
+                  # cannot drift, because it is a property of the layer rather
+                  # than of the caller's shell. The two-levels-up convention
+                  # stays only as the fallback for a layer outside any repo.
+                  if repo_root="$(git -C "$layer_root" rev-parse --show-toplevel 2>/dev/null)"; then
+                    :
+                  elif repo_root="$(cd "$layer_root/../.." 2>/dev/null && pwd)"; then
                     :
                   else
                     repo_root="$PWD"

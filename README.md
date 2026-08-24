@@ -11,10 +11,29 @@ layer of its own.
 
 **Is this `design.typ` well-formed, and what does it render to?**
 
-That is the whole scope. A block either satisfies its declared contract or the
-render fails, fail-closed, naming the violation and its location. There is no
-partial credit and no warning-only mode: a design document either compiles to
-a PDF or it does not.
+That is the whole scope, and the answer comes in two severities, split by what
+a violation breaks.
+
+**Referential integrity is fail-closed.** A reference that resolves to nothing
+is broken output, not a matter of taste: a `term()` no `CONTEXT.typ` declares
+has no text to render, a diagram edge naming no node draws a line to nowhere,
+and a value outside a declared vocabulary is one the renderer would have to
+invent a meaning for. These fail the render, naming the violation and its
+location, and no flag relaxes them.
+
+**Structure is guided by warnings.** Which foundation kinds a context declares,
+what order its sections run in, whether every required attribute was filled —
+these are opinions about how a design is usually organized, and a design
+legitimately changes shape. The renderer says what it expected, names the rule
+and the offending item, and renders anyway. Every guideline prints on every
+render and the run ends with a count summary, so guidance is never silent; none
+of it changes the exit code. Set `DESIGN_STRICT=1` to escalate every guideline
+to a hard failure, for a repo that wants the stricter ratchet in CI.
+
+The reason for the split: a design document that will not render helps nobody,
+and refusing to draw a layer because it carries two of the three foundation
+kinds fails a document a reader may still need. A broken reference is different
+in kind — it produces a document that looks finished and is quietly wrong.
 
 This repo has **no opinion** about:
 
@@ -58,13 +77,14 @@ nix run github:lostbean/design-layer#lint -- docs/design
 ```
 
 `lint` renders the layer with every GUIDELINE promoted to an error and reports
-the first that fires. The library holds two classes of rule, and they are
-reached differently on purpose. An **invariant** is a hard error in every
-render — a statement block with no title is a claim nobody can cite. A
-**guideline** names a document that could read better, never one that is wrong
-— a title running long, a bullet running to five sentences, an empty grid — so
-it is silent in every ordinary render and never blocks a commit. `lint` is the
-sweep an author asks for; it is deliberately not part of `check`.
+the first that fires — the same escalation `DESIGN_STRICT=1` performs, as a
+named entry point. It is deliberately not part of `check`.
+
+Note what `lint` is not needed for: a guideline is **already reported** by an
+ordinary `aggregate` or `check` run, naming its rule, the offending item, and
+what was expected, with a count summary at the end. `lint` changes the
+SEVERITY, not the visibility — it is for a repo that wants a guideline to stop
+a commit, not for finding out which ones fired.
 
 One lower-level entry point backs the composite ones above:
 

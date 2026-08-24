@@ -86,9 +86,16 @@
               cd repo
               patchShebangs scripts
 
-              mkdir -p "$out/scripts" "$out/schema" "$out/lib"
+              mkdir -p "$out/scripts" "$out/schema" "$out/lib" "$out/skills"
               cp -r scripts/. "$out/scripts/"
               cp schema/design-schema.json "$out/schema/"
+              # The skills that travel with the bundle. The format
+              # specification is one of them: a consumer that pins the gate
+              # gets the syntax its authors must write, from the same source
+              # tree as the library that renders it. A bundle shipping the
+              # renderer without the specification would gate a notation it
+              # never taught.
+              cp -r skills/. "$out/skills/"
               # The HAND-WRITTEN library. render-project assembles a library
               # directory out of it, so the bundle has to carry it — a bundle
               # holding only the scripts would leave the assembler with nothing

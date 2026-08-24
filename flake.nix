@@ -86,11 +86,18 @@
               cd repo
               patchShebangs scripts
 
-              mkdir -p "$out/scripts" "$out/schema"
+              mkdir -p "$out/scripts" "$out/schema" "$out/lib"
               cp -r scripts/. "$out/scripts/"
               cp schema/design-schema.json "$out/schema/"
+              # The HAND-WRITTEN library. render-project assembles a library
+              # directory out of it, so the bundle has to carry it — a bundle
+              # holding only the scripts would leave the assembler with nothing
+              # to assemble, and it says so rather than emitting an empty one.
+              cp lib/*.typ "$out/lib/"
 
-              # The projected library, made fresh from the bundled schema.
+              # The assembled library directory, made fresh from the bundled
+              # schema. The library READS that schema at compile time, so the
+              # assembly copies it in beside the .typ files.
               bash ./scripts/render-project schema/design-schema.json "$out/render"
             '';
 

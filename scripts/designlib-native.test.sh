@@ -431,13 +431,20 @@ assert_guideline stat-tile-dir "carries a delta with no dir" \
 # projection that still followed the edited data while the prose said something
 # else is the correct outcome: the data is the contract, the prose documents it.
 
-# Rewrite one schema key to a new JSON value, project, and assert the named
-# projected token carries the wanted text.
+# Rewrite one schema key to a new JSON value, assemble the library against it,
+# and assert the named vocabulary carries the wanted value.
+#
+# THE LIBRARY IS ASKED, NOT GREPPED. This used to read the token out of the
+# generated designlib.typ, which made the assertion a claim about a spelling in
+# emitted text. The library is hand-written now and READS the schema at compile
+# time, so there is no emitted text to read — and grepping the source would be
+# the weaker question anyway. `typst query` compiles the library and reports the
+# value the renderer would actually use, which is the fact these cases mean.
 #   $1 name  $2 dotted path under design_doc  $3 JSON value  $4 token  $5 want
 assert_declared_fact() {
   local name="$1" path="$2" value="$3" token="$4" want="$5"
   local sdir="$WORK/schema-$name" out
-  mkdir -p "$sdir"
+  mkdir -p "$sdir/.render"
   if ! python3 - "$path" "$value" "$sdir/design-schema.json" <<'PY'; then
 import json, sys
 path, value, dest = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -453,18 +460,29 @@ PY
     return
   fi
 
-  if ! bash ./scripts/render-project "$sdir/design-schema.json" "$sdir" \
+  if ! bash ./scripts/render-project "$sdir/design-schema.json" "$sdir/.render" \
     >"$sdir/out" 2>&1; then
-    fail_line "$name: the edited schema did not project"
+    fail_line "$name: the edited schema did not assemble"
     head -3 "$sdir/out" | sed 's/^/       /'
     return
   fi
 
-  out="$(grep "^#let $token" "$sdir/designlib.typ")"
+  printf '#import ".render/designlib.typ": %s\n#metadata(repr(%s))<v>\n' \
+    "$token" "$token" >"$sdir/probe.typ"
+  # `typst query` prints JSON, so the repr's own quotes arrive backslash-escaped.
+  # Unescape them before comparing, so each case states the Typst value a reader
+  # would write rather than its JSON encoding.
+  if ! out="$("${TYPST:-typst}" query --root "$sdir" "$sdir/probe.typ" '<v>' \
+    --field value 2>"$sdir/qerr")"; then
+    fail_line "$name: the assembled library could not be queried for $token"
+    head -3 "$sdir/qerr" | sed 's/^/       /'
+    return
+  fi
+  out="$(printf '%s' "$out" | sed 's/\\"/"/g')"
   case "$out" in
   *"$want"*) pass_line "$token follows the schema: $name" ;;
   *)
-    fail_line "$name: the projection ignored the schema's declared $token"
+    fail_line "$name: the compiled library ignored the schema's declared $token"
     printf '       wanted: %s\n' "$want"
     printf '       got:    %s\n' "$out"
     ;;
@@ -532,10 +550,16 @@ assert_declared_fact entity-lifecycles-edited \
 # Removing the fragile prose parse must not remove the validation with it: a
 # schema that declares no order has no contract to project, and projecting an
 # empty rule would enforce nothing while reporting success.
+# WHERE THE REFUSAL NOW HAPPENS. These checks used to run inside the generator,
+# once per projection. The library is hand-written now and reads the schema at
+# COMPILE time, so the same checks run on every compile — strictly more often —
+# and the refusal is a compile error rather than an assembly error. This asserts
+# the property that matters either way: an incoherent schema must stop the
+# build naming the declaration to fix, never fall back to a silent default.
 assert_schema_rejected() {
   local name="$1" mutation="$2" wantkey="$3"
   local sdir="$WORK/reject-$name" out
-  mkdir -p "$sdir"
+  mkdir -p "$sdir/.render"
   if ! python3 - "$mutation" "$sdir/design-schema.json" <<'PY'; then
 import json, sys
 mutation, dest = sys.argv[1], sys.argv[2]
@@ -547,9 +571,18 @@ PY
     fail_line "$name: could not write the edited schema"
     return
   fi
-  if out="$(bash ./scripts/render-project "$sdir/design-schema.json" "$sdir" 2>&1)"; then
-    fail_line "$name: projected anyway — it fell back to a silent default"
-    return
+  if ! bash ./scripts/render-project "$sdir/design-schema.json" "$sdir/.render" \
+    >"$sdir/out" 2>&1; then
+    # The fence half still refuses at assembly time, so an assembly failure is
+    # a legitimate refusal — check its message and stop here.
+    out="$(cat "$sdir/out")"
+  else
+    printf '#import ".render/designlib.typ": *\n#LENSES.len()\n' >"$sdir/probe.typ"
+    if out="$("${TYPST:-typst}" compile --root "$sdir" "$sdir/probe.typ" \
+      "$sdir/probe.pdf" 2>&1)"; then
+      fail_line "$name: compiled anyway — it fell back to a silent default"
+      return
+    fi
   fi
   case "$out" in
   *"$wantkey"*) pass_line "$name errors, naming $wantkey" ;;

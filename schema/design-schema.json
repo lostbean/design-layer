@@ -197,7 +197,6 @@
       "0N end-to-end walkthrough"
     ],
     "behavior_contract": {
-      "principle": "a behavior rule is a RULE, never an example: it states the durable condition-action-outcome with no concrete values. Keogh's distinction is the contract — acceptance criteria are rules without values, scenarios are examples with values derived from them. The design layer holds the rules; concrete scenarios are PROJECTED from them at build time into the system's own executable test surface, never authored into the layer. This keeps the layer rule-shaped like every other block and keeps the framework free of any one test tool's vocabulary",
       "clause_cardinality": "given: 0..n (a rule needing no setup carries none; each states one context). when: exactly 1 (two events are two rules — a second when clause is a violation, not a compound rule). then: 1..n (independent outcomes each get their own clause, so each is separately checkable)",
       "clause_order": "clauses render and validate in the fixed order given, when, then; a then before a when is a violation. Repeated given or then clauses stay in authored order",
       "levels": {
@@ -252,33 +251,6 @@
           "patterns": []
         },
         "honest_limit": "a denylist plus a small set of id/selector patterns is a partial check, not a proof. It catches the shapes it names — '#submit-btn' and '.is-invalid' by pattern, 'controller' and 'status code' by term — and it misses any mechanism named in ordinary words, such as 'the blue button in the top right'. It is declared enforcement=partial for exactly this reason: the mechanical check raises the floor, the reviewer and the critic pre-pass catch the rest. The term and pattern lists here are the SOURCE the projector reads; the generated rule never forks its own copy"
-      },
-      "projection": "scenarios are generated FROM behavior blocks into the system's executable test surface, in the direction layer -> tests, never back. A generated scenario adds only DATA — concrete values, boundary rows, equivalence-class examples — never behavior absent from a block. A scenario with no owning behavior block is a layer gap: write or fix the block first, then project. Permutations of a rule (boundary values, matrices) belong in the projected scenarios and the inner test loop, never as extra behavior blocks",
-      "populating": {
-        "grounding_first": "a rule is written from QUOTED EVIDENCE, never from an unaided guess about how a surface behaves — ungrounded generation measurably collapses in quality and invents surfaces that do not exist. Evidence is of three kinds, by whether the behavior exists yet: (1) the surface is built and behaves this way today -> the system itself, actual states, real strings, existing types; (2) the surface is built but the behavior must CHANGE -> the system for the current behavior PLUS the signed-off design delta for the intended behavior, both quoted and the difference named; (3) the surface is not built yet -> the signed-off foundation, structure, and design delta that specify it. What is forbidden is the guess, not the future: a rule grounded in a design delta records that it describes intent rather than observed behavior, and a rule grounded in nothing at all is reported as a gap instead of written",
-        "failure_discovery": "unhappy paths have no convention anywhere to import, so the framework declares the discovery procedure: three questions run against every rule written. CONTEXT — is there another context which, when this event happens, produces a different outcome? OUTCOME — given this context and event, is there another outcome that matters, something missed? INTERACTION — is there any point where a human should confirm a choice or decision being made? Each new answer is a candidate rule",
-        "risk_first": "cover the riskiest rules and OMIT the cheap ones — omission, not deferral. A rule a competent builder would satisfy without being told (a plain login succeeds, a well-formed field is accepted) is noise that buries the rules that carry risk",
-        "one_rule_per_block": "a block states one rule. Two events, or two unrelated outcomes with different conditions, are two blocks"
-      },
-      "behavior_areas": {
-        "what": "the confirmed list of behavior areas for a surface — the clusters of behavior that share vocabulary and change together, proposed by an agent and RULED by the user. It is the coverage record for behavior: it makes 'which areas have no rules yet' answerable, and it is what a later session extends rather than re-deriving",
-        "home": "the design unit that owns the surface, as a `cards` grid in that unit's subsection titled 'Behavior areas' — one card per area, its name and one line on what behavior clusters there. Not a new block kind: an area is an index entry over rules, not a statement, and cards is the declared structure for an enumerable set",
-        "struck_areas": "an area the user strikes is recorded with its reason in the same grid (a card noting it is out of scope), so a later session does not re-propose it. A silent omission is indistinguishable from an oversight",
-        "closure": "every rule cites the area it belongs to, and every listed area has at least one rule or an explicit note that it is unspecified. This is the closure the conformance probe's behavior-rule sweep checks; without the declared list the check has nothing to close over"
-      },
-      "quality_criteria": {
-        "note": "declared once here and cited, never re-inlined or forked. Every criterion is judgeable from the rule's TEXT alone — no product knowledge needed, which is what makes it a critic's job rather than the human's",
-        "checks": [
-          "is it a RULE, or did an example smuggle in concrete values? Values belong in the projected scenarios",
-          "is an event-shaped statement sitting in an invariant block (an invariant has no trigger and no actor), or a timeless property sitting in a behavior rule?",
-          "is level= right? interaction-over-time properties exist only at interface; integrity properties only at boundary",
-          "does a clause name a mechanism the fence's partial check missed — a mechanism described in ordinary words rather than an identifier or a listed term?",
-          "are two rules actually one rule, reached from two areas?",
-          "does a rule describe visual appearance (position, spacing, exact wording), which is not design intent?",
-          "does the rule have a failure counterpart, or were the three failure-discovery questions skipped for it?",
-          "is the rule cheap and obvious — one a competent builder satisfies without being told — so that it buries the rules carrying real risk?",
-          "does every rule cite the behavior area it belongs to, and does every listed area have at least one rule?"
-        ]
       }
     },
     "vendored_packages": {

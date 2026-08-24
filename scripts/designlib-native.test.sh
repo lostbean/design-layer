@@ -417,6 +417,78 @@ assert_guideline stat-tile-figure "accountant" \
 assert_guideline stat-tile-dir "carries a delta with no dir" \
   '#stat-grid(tiles: (stat-tile(value: "2.4M", label: "rows", delta: "+3%"),))'
 
+# --- the clause order is DERIVED from the schema, not restated in the code ----
+# The order used to be a hardcoded ["given", "when", "then"] in render-project,
+# sitting beside a cardinality that WAS parsed from the schema. The schema
+# therefore declared an order the projector ignored: editing clause_order
+# changed the declaration and nothing else, and the declared order and the
+# enforced order could disagree with nothing to catch it.
+#
+# Asserting "a then before a when is reported" does NOT catch that — it passes
+# identically under a hardcode. The only assertion that can tell the two apart
+# EDITS THE SCHEMA and demands the projection follow, which is what this does.
+assert_order_follows_schema() {
+  local name="$1" sequence="$2" want="$3"
+  local sdir="$WORK/schema-$name" out
+  mkdir -p "$sdir"
+  if ! python3 - "$sequence" "$sdir/design-schema.json" <<'PY'; then
+import json, sys
+seq, dest = sys.argv[1], sys.argv[2]
+s = json.load(open("schema/design-schema.json"))
+s["design_doc"]["behavior_contract"]["clause_order"] = (
+    "clauses render and validate in the fixed order %s; the order is a "
+    "violation to depart from." % seq)
+json.dump(s, open(dest, "w"))
+PY
+    fail_line "$name: could not write the edited schema"
+    return
+  fi
+
+  if ! bash ./scripts/render-project "$sdir/design-schema.json" "$sdir" \
+    >"$sdir/out" 2>&1; then
+    fail_line "$name: the edited schema did not project"
+    head -3 "$sdir/out" | sed 's/^/       /'
+    return
+  fi
+
+  out="$(grep '^#let CLAUSE-ORDER' "$sdir/designlib.typ")"
+  case "$out" in
+  *"$want"*) pass_line "clause order follows the schema: $sequence" ;;
+  *)
+    fail_line "$name: the projection ignored the schema's declared order"
+    printf '       wanted: %s\n' "$want"
+    printf '       got:    %s\n' "$out"
+    ;;
+  esac
+}
+
+# The real order, and a DIFFERENT one. The second is the load-bearing half: it
+# fails against a hardcode and passes only when the schema is really read.
+assert_order_follows_schema real "given, when, then" '"given", "when", "then"'
+assert_order_follows_schema edited "when, given, then" '"when", "given", "then"'
+
+# A clause_order stating no parseable sequence must ERROR, never fall back to a
+# silent default — a projection over an empty order enforces nothing.
+sdir="$WORK/schema-unparseable"
+mkdir -p "$sdir"
+python3 - "$sdir/design-schema.json" <<'PY'
+import json, sys
+s = json.load(open("schema/design-schema.json"))
+s["design_doc"]["behavior_contract"]["clause_order"] = "the clauses are ordered sensibly"
+json.dump(s, open(sys.argv[1], "w"))
+PY
+if out="$(bash ./scripts/render-project "$sdir/design-schema.json" "$sdir" 2>&1)"; then
+  fail_line "an unparseable clause_order projected anyway — it fell back to a default"
+else
+  case "$out" in
+  *"clause_order"*) pass_line "an unparseable clause_order errors, naming the key" ;;
+  *)
+    fail_line "an unparseable clause_order failed, but the message does not name the key"
+    printf '%s\n' "$out" | head -3 | sed 's/^/       /'
+    ;;
+  esac
+fi
+
 echo
 echo "designlib-native: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

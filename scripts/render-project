@@ -188,12 +188,27 @@ try:
     }
     # THE CLAUSE CARDINALITY AND ORDER, read from the declared prose rather
     # than restated here. "when: exactly 1" and "then: 1..n" name the two
-    # constraints; the order is the fixed given/when/then the same prose
-    # states. Both were DECLARED and enforced nowhere: a clause renders as an
-    # independent call, so no clause ever meets its siblings and none can know
-    # it is the second `when`.
+    # constraints; clause_order names the sequence. Both were DECLARED and
+    # enforced nowhere: a clause renders as an independent call, so no clause
+    # ever meets its siblings and none can know it is the second `when`.
+    #
+    # The ORDER is parsed from clause_order's own prose, not restated here. It
+    # used to be a hardcoded ["given", "when", "then"] sitting beside a
+    # cardinality that WAS parsed, so the schema declared an order the
+    # projector ignored and the two could silently disagree — a schema edit to
+    # the sequence changed the declaration and nothing else. The prose states
+    # "the fixed order given, when, then"; that list is the contract.
     _card = str(_behavior_contract["clause_cardinality"])
-    clause_order = ["given", "when", "then"]
+    _order_prose = str(_behavior_contract["clause_order"])
+    _order_m = _re.search(r"fixed order\s+([a-z]+(?:\s*,\s*[a-z]+)*)",
+                          _order_prose)
+    if not _order_m:
+        sys.stderr.write(
+            "render-project: error: schema behavior_contract.clause_order "
+            "states no 'fixed order <clause>, <clause>, ...' sequence — the "
+            "clause order rule would project over an empty sequence\n")
+        sys.exit(2)
+    clause_order = [c.strip() for c in _order_m.group(1).split(",")]
     clause_exactly_one = [c for c in clause_order
                           if _re.search(r"\b%s:\s*exactly 1" % c, _card)]
     clause_at_least_one = [c for c in clause_order

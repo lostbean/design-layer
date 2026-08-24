@@ -95,16 +95,18 @@ step: the compile itself is the projection. Change the library by editing the
 `.typ` file that owns the concern.
 
 `scripts/render-project <schema> <dir>` **assembles** a library directory: it
-copies `lib/*.typ`, copies the schema in beside them (so every relative path
-resolves wherever the directory is copied to), and generates the one file that
-genuinely needs generating. A consumer imports `<dir>/designlib.typ`, unchanged.
+copies `lib/*.typ` and copies the schema in beside them, so every relative path
+resolves wherever the directory is copied to. A consumer imports
+`<dir>/designlib.typ`, unchanged.
 
-**`fence.typ` is the only generated file.** The schema declares the behavior
-fence's id and selector shapes as LUA patterns; Typst's `regex()` is the Rust
-engine, a different dialect. That translation is a table of individually
-reviewable claims, not a computation the library can do for itself, so
-`render-project` emits it. A pattern the table does not recognize fails the
-assembly rather than being guessed at.
+**Nothing is generated any more.** The last generated file was the behavior
+fence's pattern table, which existed only because the schema declared those
+patterns in a dialect Typst's `regex()` — the Rust engine — could not read. The
+schema declares them in that engine's own dialect now, so the fence is read
+straight from the schema like every other vocabulary and no file is left to
+write. A schema pattern that the engine cannot parse fails the compile naming
+the level and the pattern, because `schema.typ` compiles every declared pattern
+up front rather than waiting for a document to author a clause at that level.
 
 Each file under `lib/` owns one concern — `schema.typ` reads the schema and
 holds the coherence checks, `tokens.typ` the colour tables and their totality

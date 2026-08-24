@@ -119,9 +119,9 @@
 // Declared enforcement=partial: it catches the shapes BEHAVIOR-FENCE names
 // (an id or selector, a bare term like "controller") and misses a mechanism
 // named in ordinary words ("the blue button"), exactly as the schema's own
-// honest_limit states. That partial coverage is still coverage — a clause
-// naming one of these shapes fails the render, fail-closed, the same as
-// every other per-block contract in this library.
+// honest_limit states. Both halves of the fence — its terms and its patterns —
+// are read from the schema, so the check applies what the schema declares and
+// never a copy of it.
 //
 // A behavior block's clauses (given/when/then) are nested INSIDE its body and
 // read the enclosing level back out of this state — _statement sets it before

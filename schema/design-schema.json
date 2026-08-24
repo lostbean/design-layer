@@ -219,6 +219,7 @@
       },
       "fence": {
         "rule": "the test is Cucumber's: WILL THIS WORDING NEED TO CHANGE IF THE IMPLEMENTATION DOES? If yes, the clause names a mechanism and must be restated as the observable outcome. Checked per clause at render time and reported as a guideline, hardest on then clauses where leakage concentrates; the wording is the author's call to make, so the check states what it found rather than refusing the document",
+        "patterns_dialect": "every `patterns` entry below is a RUST regex, the dialect of the renderer's own regex engine, which is the sole reader of this list. The dialect is declared here because a pattern list carries no marker of the engine that reads it: the same text is a different pattern in a different dialect, and a list written for an engine nothing runs is a declaration that cannot be executed. A pattern is therefore authored in the form the reader accepts and reaches the fence unmodified, so no translation step stands between what this file declares and what the check applies",
         "interface_forbids": {
           "prose": "widget and element ids, CSS selectors and class names, component/class/method/function names, DTOs, controllers, presenters, view models, repositories, HTTP status codes, and exact UI copy quoted as the outcome. 'the offending field is named' is admitted; 'the SignupController returns 409' and '#email-input gains .is-invalid' are violations",
           "terms": [
@@ -240,10 +241,10 @@
             "css class"
           ],
           "patterns": [
-            "#[%w_-]+",
-            "%.[%a][%w_-]*%-[%w_-]+",
-            "%f[%w]id=",
-            "data%-testid"
+            "#[A-Za-z0-9_-]+",
+            "\\.[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9_-]+",
+            "\\bid=",
+            "data-testid"
           ]
         },
         "boundary_forbids": {
@@ -263,7 +264,7 @@
           ],
           "patterns": []
         },
-        "honest_limit": "a denylist plus a small set of id/selector patterns is a partial check, not a proof. It catches the shapes it names — '#submit-btn' and '.is-invalid' by pattern, 'controller' and 'status code' by term — and it misses any mechanism named in ordinary words, such as 'the blue button in the top right'. It is declared enforcement=partial for exactly this reason: the mechanical check raises the floor, the reviewer and the critic pre-pass catch the rest. The term and pattern lists here are the SOURCE the projector reads; the generated rule never forks its own copy"
+        "honest_limit": "a denylist plus a small set of id/selector patterns is a partial check, not a proof. It catches the shapes it names — '#submit-btn' and '.is-invalid' by pattern, 'controller' and 'status code' by term — and it misses any mechanism named in ordinary words, such as 'the blue button in the top right'. It is declared enforcement=partial for exactly this reason: the mechanical check raises the floor, the reviewer and the critic pre-pass catch the rest. The term and pattern lists here are the SOURCE the renderer reads at render time; the fence never forks its own copy of either"
       }
     },
     "vendored_packages": {

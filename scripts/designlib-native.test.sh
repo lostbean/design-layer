@@ -546,6 +546,217 @@ assert_declared_fact entity-lifecycles-edited \
   entity_contract.lifecycles '["stateful","immutable"]' \
   ENTITY-LIFECYCLES '"stateful", "immutable"'
 
+# 7. the behavior FENCE's patterns — behavior_contract.fence.*_forbids.patterns.
+# The schema declares these in the renderer's own regex dialect and the library
+# reads them unchanged, so this is a declared fact like the six above.
+assert_declared_fact fence-patterns-real \
+  behavior_contract.fence.interface_forbids.patterns \
+  '["#[A-Za-z0-9_-]+","\\\\.[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9_-]+","\\\\bid=","data-testid"]' \
+  BEHAVIOR-FENCE 'data-testid'
+assert_declared_fact fence-patterns-edited \
+  behavior_contract.fence.interface_forbids.patterns \
+  '["zzz-not-a-real-shape"]' \
+  BEHAVIOR-FENCE 'zzz-not-a-real-shape'
+
+# --- THE FENCE'S PATTERN HALF, asserted on what it CATCHES -------------------
+# The declared fact above proves the library HOLDS the schema's patterns. It
+# does not prove the fence APPLIES them: a fence that read the list and then
+# matched against nothing would satisfy it. These cases render a clause and ask
+# what the fence said, which is the property a reader of the schema is promised.
+#
+# Each pattern gets a positive case, and the phrasing the schema's own prose
+# ADMITS gets a negative one. The negative case is the load-bearing half: a
+# fence that flagged every clause would pass all four positive cases.
+assert_guideline fence-pattern-id "matches the forbidden shape" \
+  '#behavior(title: "R", level: "interface")[
+     #when[the form is submitted]
+     #then[the field #raw("#email-input") gains focus]
+   ]'
+
+assert_guideline fence-pattern-class "matches the forbidden shape" \
+  '#behavior(title: "R", level: "interface")[
+     #when[the form is submitted]
+     #then[#raw(".is-invalid") appears on the field]
+   ]'
+
+# Written as PLAIN TEXT, not as inline `raw`, and deliberately so. The clause
+# body is flattened by concatenating its children with no separator, so an
+# inline element fuses with the word before it — `with #raw("id=")` flattens to
+# "withid=", where this pattern's leading word boundary correctly finds no
+# boundary to match. The pattern is right; the flattening loses the gap. The
+# case is written the way an author writes the clause.
+assert_guideline fence-pattern-idattr "matches the forbidden shape" \
+  '#behavior(title: "R", level: "interface")[
+     #when[the form is submitted]
+     #then[an element with id=signup is marked]
+   ]'
+
+assert_guideline fence-pattern-testid "matches the forbidden shape" \
+  '#behavior(title: "R", level: "interface")[
+     #when[the form is submitted]
+     #then[the #raw("data-testid") hook is set]
+   ]'
+
+# THE ADMITTED PHRASING. The schema's interface_forbids prose names this exact
+# wording as allowed, so a fence that flags it contradicts the declaration it
+# claims to enforce. Asserted under STRICT, where a guideline panics: a clean
+# strict compile is the only evidence that nothing fired.
+fixture fence-admitted '#behavior(title: "R", level: "interface")[
+  #when[the form is submitted]
+  #then[the offending field is named]
+]'
+fence_admitted_out="$(compile fence-admitted strict)"
+if [ -f "$WORK/fence-admitted.pdf" ]; then
+  pass_line "fence: the admitted phrasing is not caught, even under strict"
+  rm -f "$WORK/fence-admitted.pdf"
+else
+  fail_line "fence-admitted: the fence flagged wording the schema admits"
+  printf '%s\n' "$fence_admitted_out" | head -3 | sed 's/^/       /'
+fi
+
+# A PATTERN EDITED IN THE SCHEMA CHANGES WHAT THE FENCE CATCHES. This is the
+# assertion that separates a read from a hardcode at the level that matters —
+# not what the library holds, but what it flags. The schema's real patterns are
+# replaced by one deliberately different shape, and BOTH directions are checked
+# from the same edited schema: the new shape is caught, and a clause that the
+# REAL patterns would have caught now renders clean. Only the second half fails
+# against a library that kept a private copy of the shipped list.
+assert_fence_follows_schema() {
+  local name="$1" patterns="$2" body="$3" want="$4"
+  local sdir="$WORK/fence-$name" out
+  mkdir -p "$sdir/.render"
+  if ! python3 - "$patterns" "$sdir/design-schema.json" <<'PY'; then
+import json, sys
+patterns, dest = sys.argv[1], sys.argv[2]
+s = json.load(open("schema/design-schema.json"))
+fence = s["design_doc"]["behavior_contract"]["fence"]
+fence["interface_forbids"]["patterns"] = json.loads(patterns)
+# The TERM half is emptied too. Leaving it in place would let a term hit stand
+# in for a pattern hit and report a pass this case did not earn.
+fence["interface_forbids"]["terms"] = []
+json.dump(s, open(dest, "w"))
+PY
+    fail_line "$name: could not write the edited schema"
+    return
+  fi
+  if ! bash ./scripts/render-project "$sdir/design-schema.json" "$sdir/.render" \
+    >"$sdir/out" 2>&1; then
+    fail_line "$name: the edited schema did not assemble"
+    head -3 "$sdir/out" | sed 's/^/       /'
+    return
+  fi
+  printf '#import ".render/designlib.typ": *\n%s\n' "$body" >"$sdir/probe.typ"
+  out="$("${TYPST:-typst}" compile --root "$sdir" --input strict=1 \
+    "$sdir/probe.typ" "$sdir/probe.pdf" 2>&1)" || true
+
+  if [ "$want" = "caught" ]; then
+    if [ -f "$sdir/probe.pdf" ]; then
+      fail_line "$name: the schema's edited pattern was declared but never applied"
+      return
+    fi
+    case "$out" in
+    *"matches the forbidden shape"*)
+      pass_line "fence follows the schema: $name is caught"
+      ;;
+    *)
+      fail_line "$name: the compile failed, but not on the fence's pattern half"
+      printf '%s\n' "$out" | head -3 | sed 's/^/       /'
+      ;;
+    esac
+  else
+    if [ -f "$sdir/probe.pdf" ]; then
+      pass_line "fence follows the schema: $name is clean once the pattern is gone"
+    else
+      fail_line "$name: still caught after the schema dropped the pattern — the fence carries its own copy"
+      printf '%s\n' "$out" | head -3 | sed 's/^/       /'
+    fi
+  fi
+}
+
+assert_fence_follows_schema edited-shape-caught '["zzz-[0-9]+"]' \
+  '#behavior(title: "R", level: "interface")[
+     #when[the form is submitted]
+     #then[the marker zzz-42 is shown]
+   ]' caught
+
+assert_fence_follows_schema real-shape-released '["zzz-[0-9]+"]' \
+  '#behavior(title: "R", level: "interface")[
+     #when[the form is submitted]
+     #then[the field #raw("#email-input") gains focus]
+   ]' clean
+
+# AN UNPARSEABLE PATTERN MUST FAIL LOUDLY, NAMING THE PATTERN. The renderer's
+# regex engine rejects a malformed pattern, but it rejects LAZILY — a pattern
+# belonging to a level no document happens to author is never compiled, so a
+# broken declaration would sit behind a green build while the fence quietly
+# enforced one shape fewer than the schema declares. The library compiles every
+# declared pattern up front for exactly this reason. Asserted on a document that
+# authors NO behavior block at all, because that is the case a lazy compile
+# would let through.
+assert_bad_pattern() {
+  local name="$1" patterns="$2" wantkey="$3"
+  local sdir="$WORK/badpat-$name" out
+  mkdir -p "$sdir/.render"
+  if ! python3 - "$patterns" "$sdir/design-schema.json" <<'PY'; then
+import json, sys
+patterns, dest = sys.argv[1], sys.argv[2]
+s = json.load(open("schema/design-schema.json"))
+s["design_doc"]["behavior_contract"]["fence"]["interface_forbids"]["patterns"] \
+    = json.loads(patterns)
+json.dump(s, open(dest, "w"))
+PY
+    fail_line "$name: could not write the edited schema"
+    return
+  fi
+  if ! bash ./scripts/render-project "$sdir/design-schema.json" "$sdir/.render" \
+    >"$sdir/out" 2>&1; then
+    fail_line "$name: the edited schema did not assemble"
+    head -3 "$sdir/out" | sed 's/^/       /'
+    return
+  fi
+  # No behavior block, no clause — nothing that would touch the fence on its own.
+  printf '#import ".render/designlib.typ": *\n#points("A bullet.")\n' \
+    >"$sdir/probe.typ"
+  if out="$("${TYPST:-typst}" compile --root "$sdir" "$sdir/probe.typ" \
+    "$sdir/probe.pdf" 2>&1)"; then
+    fail_line "$name: compiled clean — a pattern the engine cannot read went unnoticed"
+    return
+  fi
+  case "$out" in
+  *"$wantkey"*) pass_line "bad pattern: $name fails the compile, naming $wantkey" ;;
+  *)
+    fail_line "$name: the compile failed, but the message does not name $wantkey"
+    printf '       wanted: %s\n' "$wantkey"
+    printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+    ;;
+  esac
+}
+
+assert_bad_pattern unclosed-class '["#[A-Za-z"]' 'unclosed character class'
+assert_bad_pattern dangling-repeat '["*bogus"]' 'repetition'
+# A non-string entry never reaches the engine, so the library names it itself.
+assert_bad_pattern non-string '[42]' 'not a string'
+
+# WHY THE SCHEMA DECLARES ITS PATTERN DIALECT, asserted rather than asserted in
+# prose. The engine rejects a pattern it cannot PARSE, which the three cases
+# above cover. It cannot reject a pattern that parses and means something else,
+# and that is the whole hazard of a wrong dialect: the schema this fence reads
+# once declared these patterns in Lua's syntax, and every one of them is ALSO a
+# legal expression in the renderer's engine — one that matches none of the text
+# it was written to catch. A fence loaded with them enforces nothing and reports
+# success, so the failure is silent and no parse check can see it.
+#
+# The guard is that the declared dialect is the read dialect, with no
+# translation between them. This case pins the hazard down so a future edit that
+# reintroduces the retired syntax is caught by a failing test rather than by a
+# fence that quietly stopped working.
+assert_fence_follows_schema retired-dialect-is-dead \
+  '["#[%w_-]+","%.[%a][%w_-]*%-[%w_-]+","%f[%w]id=","data%-testid"]' \
+  '#behavior(title: "R", level: "interface")[
+     #when[the form is submitted]
+     #then[the field #raw("#email-input") gains focus]
+   ]' clean
+
 # --- a MISSING or EMPTY declaration must stop the projection, never default ---
 # Removing the fragile prose parse must not remove the validation with it: a
 # schema that declares no order has no contract to project, and projecting an

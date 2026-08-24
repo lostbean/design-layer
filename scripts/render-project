@@ -8,16 +8,28 @@
 # Writes <out-dir>/ holding:
 #   *.typ                the library, HAND-WRITTEN, copied from lib/
 #   design-schema.json   the schema the library reads at compile time
-#   fence.typ            the ONE generated file (see below)
 #
 # A consumer imports <out-dir>/designlib.typ, exactly as before.
 #
-# WHAT CHANGED, AND WHY THIS SCRIPT IS SMALL NOW. The library used to be 1730
-# lines of Typst emitted from heredocs inside this file. It is now plain Typst
-# under lib/, which READS design-schema.json at compile time through `json()`.
-# The compile itself is the projection, so a schema edit reaches the library
-# with no regeneration step, and a human can read and change the library
-# directly instead of reading a Python program that prints it.
+# NOTHING HERE IS GENERATED ANY MORE. The library used to be 1730 lines of
+# Typst emitted from heredocs inside this file, and after that just one emitted
+# file — a translation of the behavior fence's patterns out of the dialect the
+# schema declared them in and into the dialect the renderer reads. The schema
+# now declares those patterns in the renderer's own dialect, so the fence is
+# read like every other vocabulary and there is no file left to write. This
+# script COPIES; it does not project.
+#
+# WHY IT IS STILL A SCRIPT rather than a `cp` at each call site. Several callers
+# depend on the assembled directory having exactly one shape — the gate bundle,
+# the projection-freshness check, the commit hook, four test suites, and every
+# host that runs `nix run <flake>#project` — and an assembly open-coded once per
+# caller is one chance per caller for a copy to drift. It also does three things
+# a bare `cp` does not: it resolves lib/ from THIS SCRIPT's directory, so a
+# caller running out of a read-only store path with any working directory finds
+# the library; it refuses rather than leaving a half-directory when the schema
+# or the library is missing; and it restores write permission, because a store
+# file copies read-only and a later assembly into the same directory could not
+# overwrite it.
 #
 # THE SCHEMA TRAVELS WITH THE LIBRARY. Typst resolves a path in `json()`
 # relative to the file containing the call and refuses any path that escapes
@@ -26,19 +38,6 @@
 # path relative and always resolvable — and it keeps every existing consumer
 # working unchanged, because they all copy the whole directory somewhere and
 # compile with a --root spanning the copy. The schema is inside the copy.
-#
-# WHAT IS STILL GENERATED. `fence.typ`, and nothing else.
-#
-# The schema declares the behavior fence's id/selector shapes as LUA patterns —
-# the authoring side's vocabulary. Typst's regex() is the Rust regex engine, a
-# different dialect: no %-escapes, no %f[] frontier assertions. The translation
-# below is a table of individually-reviewable claims about what one pattern
-# means, not a general Lua-pattern compiler, and it is not something the
-# library can compute for itself. So it stays here and is emitted as data.
-#
-# A pattern the table does not recognize FAILS the assembly rather than being
-# guessed at: a wrong regex would silently under-enforce the fence, which is
-# worse than refusing to build it.
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
@@ -51,11 +50,6 @@ OUT_DIR="$2"
 
 if [ ! -f "$SCHEMA_PATH" ]; then
   echo "render-project: error: no schema at $SCHEMA_PATH" >&2
-  exit 2
-fi
-
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "render-project: error: python3 is required (schema parsing + stable emit)" >&2
   exit 2
 fi
 
@@ -73,105 +67,9 @@ cp "$LIB_SRC"/*.typ "$OUT_DIR/"
 cp "$SCHEMA_PATH" "$OUT_DIR/design-schema.json"
 chmod u+w "$OUT_DIR"/*.typ "$OUT_DIR/design-schema.json"
 
-python3 - "$SCHEMA_PATH" "$OUT_DIR" <<'PY_END'
-import json
-import os
-import sys
-
-schema_path, out_dir = sys.argv[1], sys.argv[2]
-
-try:
-    with open(schema_path, "r", encoding="utf-8") as f:
-        schema = json.load(f)
-except (OSError, ValueError) as e:
-    sys.stderr.write("render-project: error: cannot read schema: %s\n" % e)
-    sys.exit(2)
-
-try:
-    contract = schema["design_doc"]["behavior_contract"]
-    fence = contract["fence"]
-    # `levels` carries a prose no_pairing entry alongside the real levels; a
-    # level is a key that also has a fence entry. Read exactly as the library
-    # reads it, so the two cannot disagree about what a level is.
-    levels = [lv for lv in contract["levels"] if lv + "_forbids" in fence]
-except (KeyError, TypeError) as e:
-    sys.stderr.write(
-        "render-project: error: schema missing a required key: %s\n" % e)
-    sys.exit(2)
-
-if not levels:
-    sys.stderr.write(
-        "render-project: error: design_doc.behavior_contract declares no level "
-        "with a fence, so the fence table would be empty and the behavior "
-        "block's mechanism rule would check nothing\n")
-    sys.exit(2)
-
-# THE LUA-TO-RUST PATTERN TRANSLATION. Every entry is one reviewable claim:
-#   #[%w_-]+                an id/selector-shaped token: '#' + word chars
-#   %.[%a][%w_-]*%-[%w_-]+  a hyphenated CSS class shape: '.foo-bar'
-#   %f[%w]id=               Lua's frontier assertion for "id= not glued to a
-#                           preceding word char" (so 'id=' but not 'valid=') —
-#                           the Rust engine has no frontier/lookbehind, but a
-#                           leading \b checks the same transition, because '='
-#                           is not itself a word char: '\bid=' matches exactly
-#                           where 'i' begins a new word
-#   data%-testid            a literal hyphen, '%-' being Lua's escape for a
-#                           pattern-magic '-'; equivalent to the literal text
-_LUA_PATTERN_TRANSLATION = {
-    "#[%w_-]+": r"#[A-Za-z0-9_-]+",
-    "%.[%a][%w_-]*%-[%w_-]+": r"\.[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9_-]+",
-    "%f[%w]id=": r"\bid=",
-    "data%-testid": r"data-testid",
-}
-
-
-def q(s):
-    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def tuple_of(values):
-    vs = list(values)
-    if len(vs) == 1:
-        return "(" + q(vs[0]) + ",)"
-    return "(" + ", ".join(q(v) for v in vs) + ")"
-
-
-L = [
-    "// GENERATED by scripts/render-project from design-schema.json.",
-    "// Never hand-edit: re-run render-project to refresh it.",
-    "//",
-    "// THE ONE GENERATED FILE in this library. The schema declares the fence's",
-    "// id/selector shapes as LUA patterns; Typst's regex() is the Rust regex",
-    "// engine, a different dialect. The translation is a table of individually",
-    "// reviewable claims about what one pattern means, which is why it is not",
-    "// something the library computes for itself.",
-    "//",
-    "// Declared enforcement=partial: it catches the shapes named here (an id or",
-    '// selector, a bare term like "controller") and misses a mechanism named in',
-    '// ordinary words ("the blue button"), exactly as the schema\'s own',
-    "// honest_limit states.",
-    "#let BEHAVIOR-FENCE = (",
-]
-for lv in levels:
-    half = fence[lv + "_forbids"]
-    translated = []
-    for p in half["patterns"]:
-        if p not in _LUA_PATTERN_TRANSLATION:
-            sys.stderr.write(
-                "render-project: error: no Typst-regex translation for behavior "
-                "fence Lua pattern %r (level %s) — add it to "
-                "_LUA_PATTERN_TRANSLATION in scripts/render-project\n" % (p, lv))
-            sys.exit(2)
-        translated.append(_LUA_PATTERN_TRANSLATION[p])
-    L.append("  " + q(lv) + ": (terms: " + tuple_of(half["terms"])
-             + ", patterns: " + tuple_of(translated) + "),")
-L.append(")")
-
-target = os.path.join(out_dir, "fence.typ")
-with open(target, "w", encoding="utf-8") as f:
-    f.write("\n".join(L) + "\n")
-
-sys.stdout.write(
-    "render-project: assembled %s (hand-written library + schema + a generated "
-    "fence over %d level(s))\n" % (out_dir, len(levels)))
-PY_END
+# COUNT what was assembled rather than reporting a fixed number. The line is
+# read by a human checking that the assembly did something, and a hardcoded
+# count would keep claiming the same total after the library gained or lost a
+# file.
+n=$(find "$OUT_DIR" -maxdepth 1 -name '*.typ' | wc -l | tr -d ' ')
+echo "render-project: assembled $OUT_DIR ($n hand-written library file(s) + the schema they read)"

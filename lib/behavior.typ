@@ -5,14 +5,16 @@
 #import "furniture.typ": *
 #import "statements.typ": *
 
-// THE FENCE TABLE IS THE ONE THING STILL GENERATED. The schema declares its
-// id/selector shapes as LUA patterns (the authoring side's vocabulary); Typst's
-// regex() is the Rust regex engine, a different dialect with no %-escapes and
-// no %f[] frontier assertions. Translating one to the other is a table of
-// reviewable individual claims, not a computation this library can do, so
-// `render-project` writes `fence.typ` beside this file with the terms and the
-// TRANSLATED patterns. Everything else in the library reads the schema itself.
-#import "fence.typ": BEHAVIOR-FENCE
+// THE FENCE IS READ FROM THE SCHEMA, like every other vocabulary — its terms
+// and its patterns alike, through `BEHAVIOR-FENCE` in schema.typ. The schema
+// declares each pattern in the dialect `regex()` reads, so a pattern travels
+// from the declaration to the check unchanged, and there is no translation step
+// where the declared shape and the enforced shape could come to differ.
+//
+// Enforcement is declared PARTIAL: the fence catches the shapes it names — an
+// id or a selector by pattern, a bare term such as "controller" by term — and
+// misses a mechanism named in ordinary words ("the blue button"), exactly as
+// the schema's own honest_limit states.
 
 #let _fence-violation(text, level) = {
   if level == none { return none }

@@ -10,9 +10,9 @@
 // schema by a relative path — the consumer's repo is not under the bundle.
 //
 // The answer is that the schema TRAVELS WITH THE LIBRARY. `render-project`
-// assembles a library directory holding these .typ files, the fence table it
-// generates, and a copy of the schema, so the path below is relative and
-// always resolves. A caller that copies the directory somewhere else copies
+// assembles a library directory holding these .typ files and a copy of the
+// schema, so the path below is relative and always resolves. A caller that
+// copies the directory somewhere else copies
 // the schema with it, which is what keeps every existing consumer working:
 // they all `cp -r <lib-dir> <target>/.render` and compile with a --root that
 // spans the copy, and the schema is inside the copy.
@@ -43,11 +43,28 @@
 #let FOUNDATION-REQUIRED = schema.design_doc.foundation_required
 #let TITLE-MAX = 64
 
-// `levels` carries a prose no_pairing entry alongside the real levels; a level
-// is a key that also has a fence entry, exactly as the generator read it.
+// `levels` carries a prose no_pairing entry alongside the real levels, so the
+// key alone does not say which entries are levels; a level is a key that also
+// has a fence entry, and that is the one place the set is derived.
 #let BEHAVIOR-LEVELS = schema.design_doc.behavior_contract.levels.keys().filter(
   lv => lv + "_forbids" in schema.design_doc.behavior_contract.fence,
 )
+
+// THE BEHAVIOR FENCE, read from the schema like every other vocabulary. The
+// schema declares each `patterns` entry in the dialect of the engine that reads
+// it — the same one `regex()` compiles — so a pattern reaches the fence
+// unmodified and no translation stands between the declaration and the check.
+#let BEHAVIOR-FENCE = {
+  let f = schema.design_doc.behavior_contract.fence
+  let out = (:)
+  for lv in BEHAVIOR-LEVELS {
+    out.insert(lv, (
+      terms: f.at(lv + "_forbids").terms,
+      patterns: f.at(lv + "_forbids").patterns,
+    ))
+  }
+  out
+}
 
 // THE CLAUSE ORDER AND CARDINALITY, read as DECLARED DATA. A clause renders as
 // an independent call, so no clause ever meets its siblings; the order and the
@@ -116,6 +133,33 @@
         "design_doc.foundation_required names kind " + k + ", which is absent "
           + "from design_doc.foundation_order",
       )
+    }
+  }
+  if BEHAVIOR-LEVELS.len() == 0 {
+    _schema-fail(
+      "design_doc.behavior_contract declares no level with a fence, so the "
+        + "behavior block's mechanism rule would check nothing",
+    )
+  }
+  // EVERY DECLARED PATTERN IS COMPILED HERE, on every compile, whether or not
+  // a document happens to author a clause at that level. `regex()` is what
+  // rejects a malformed pattern, and it rejects lazily: a pattern belonging to
+  // a level the document never uses is never compiled, so a broken declaration
+  // would sit in the schema behind a green build and the fence would enforce
+  // one pattern fewer than it declares. Compiling the whole list up front turns
+  // that into a loud failure naming the level and the pattern to fix. The
+  // engine's own parse error follows this line and says what is wrong with it.
+  for lv in BEHAVIOR-LEVELS {
+    for p in BEHAVIOR-FENCE.at(lv).patterns {
+      if type(p) != str {
+        _schema-fail(
+          "design_doc.behavior_contract.fence." + lv + "_forbids.patterns "
+            + "holds " + repr(p) + ", which is not a string, so it is not a "
+            + "pattern the fence can compile",
+        )
+      }
+      // The result is discarded: compiling it is the assertion.
+      let _ = "".contains(regex(p))
     }
   }
   if CLAUSE-ORDER.len() == 0 {

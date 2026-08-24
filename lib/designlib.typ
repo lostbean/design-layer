@@ -6,18 +6,17 @@
 // A schema edit therefore reaches the library with no regeneration step: the
 // compile itself is the projection.
 //
-// WHAT IS STILL GENERATED, and why. `fence.typ` alone — the behavior fence's
-// forbidden patterns, which the schema declares as LUA patterns and Typst's
-// regex engine cannot read. Translating one dialect to the other is a table of
-// individually-reviewable claims, not a computation, so `render-project` writes
-// that one file into the assembled library directory. Everything else here
-// reads design-schema.json directly.
+// NOTHING HERE IS GENERATED. The last generated file was the behavior fence's
+// pattern table, which existed only because the schema declared those patterns
+// in a dialect the renderer's regex engine could not read. The schema declares
+// them in the engine's own dialect now, so the fence is read straight from
+// design-schema.json like every other vocabulary and no file is left to write.
 //
 // HOW A CONSUMER USES IT. `render-project <schema> <dir>` assembles a library
-// directory holding these files, the generated fence, and a copy of the schema;
-// a consumer imports `<dir>/designlib.typ`. The schema travels INSIDE the
-// directory, so a caller that copies the directory elsewhere copies the schema
-// with it and every relative path still resolves.
+// directory holding these files and a copy of the schema; a consumer imports
+// `<dir>/designlib.typ`. The schema travels INSIDE the directory, so a caller
+// that copies the directory elsewhere copies the schema with it and every
+// relative path still resolves.
 //
 // SCOPE, declared honestly. The library carries every PER-BLOCK contract: field
 // presence, title length, enum legality, and the cross-field rules that live
@@ -51,7 +50,6 @@
 //   diagram.typ    diagrams, charts, and the figure block
 //   shell.typ      the document shell and the aggregate shell
 //   native.typ     the native authoring surface a design.typ calls directly
-//   fence.typ      GENERATED — the translated behavior-fence patterns
 #import "schema.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *

@@ -439,6 +439,58 @@ def _splice(src):
     return "#" + src
 
 
+def _refuse_divergent_layer_lib(root, lib):
+    """Refuse a layer-local library that disagrees with the one being used.
+
+    THE FAILURE THIS PREVENTS IS SILENT, which is why it is a hard error. A
+    Typst context imports its library by a LAYER-RELATIVE path — `design.typ`
+    opens `#import ".render/designlib.typ"` — while the aggregate compiles
+    against $DESIGN_LIB_DIR, which for a host is a pinned read-only bundle. When
+    those two are the same file nothing is wrong. When the layer's own `.render`
+    is left over from an older pin, every context is validated by the OLD
+    library while the aggregate believes it used the new one.
+
+    Nothing about that looks broken. The document renders, the chapters are all
+    present, the summary line counts them, and the exit status is 0 — while
+    every per-block contract and every document-level assertion that the newer
+    library added is simply absent. A foundation authored out of order rendered
+    clean exactly this way: the check existed, was wired correctly, and was
+    read from a `.render` that predated it.
+
+    `.render` is generated and usually gitignored, so it is the one input no
+    reviewer sees and no commit records. Refusing here — naming both paths and
+    the fix — turns a check that quietly does not run into a build that stops.
+    """
+    local = os.path.join(root, ".render", "designlib.typ")
+    if not os.path.exists(local):
+        return 0
+    if os.path.abspath(local) == os.path.abspath(lib):
+        return 0
+    try:
+        with open(local, "rb") as f:
+            a = f.read()
+        with open(lib, "rb") as f:
+            b = f.read()
+    except OSError as e:
+        sys.stderr.write("design-aggregate: error: cannot compare the layer's "
+                         "projected library with the one in use: %s\n" % e)
+        return 2
+    if a == b:
+        return 0
+    sys.stderr.write(
+        "design-aggregate: error: the layer's own projected library differs "
+        "from the one this run compiles against, so each context would be "
+        "validated by a DIFFERENT library than the document.\n"
+        "  the layer's copy : %s\n"
+        "  the one in use   : %s\n"
+        "A Typst context imports the layer-relative path, so a stale copy "
+        "silently disables every contract the current library added — the "
+        "document still renders and still exits 0. Delete the layer's .render "
+        "(it is generated), or re-run render-project into it.\n"
+        % (local, lib))
+    return 2
+
+
 def _typst_value_at(src, i):
     """The Typst value starting at `i`, or None if none starts there.
 
@@ -593,6 +645,10 @@ def main():
         sys.stderr.write("design-aggregate: error: no projected library at %s "
                          "(run render-project, or set DESIGN_LIB_DIR)\n" % lib)
         return 2
+
+    rc = _refuse_divergent_layer_lib(root, lib)
+    if rc:
+        return rc
 
     try:
         mode, docs = contexts_of(root)

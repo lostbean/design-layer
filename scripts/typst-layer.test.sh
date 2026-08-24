@@ -259,8 +259,12 @@ rm -f "$LAYER/beta/design.md"
 # sources it found zero blocks and passed VACUOUSLY. The vocabulary read as
 # enforcement to anyone who grepped for it while no check ran.
 #
-# Three cases, because one alone would not distinguish a working check from a
-# check that fires on everything or on nothing.
+# The cases below resemble a REAL layer rather than a minimal one, because the
+# minimal shape hid this once already. A host's foundation blocks live in a
+# `design.typ` that the aggregate places BY MODULE REFERENCE (`#<mod>.body`),
+# carry named arguments and multi-line bodies, and repeat a kind several times
+# before the next kind starts. A fixture with one block per kind spliced inline
+# exercises none of that.
 FO="$WORK/fo/docs/design"
 mkdir -p "$FO/alpha"
 cp -R "$LAYER/.render" "$FO/.render"
@@ -270,30 +274,83 @@ fo_layer() { # $1 = alpha's foundation body
 #import ".render/designlib.typ": *
 #let title = [Zfoot root]
 #let body = [
-  #section(title: "00 Foundation", body: [
-    #goal(title: "Zfg")[Root goal.]
-    #principle(title: "Zfp")[Root principle.]
-  ])
+  #section(
+    title: "00 Foundation",
+    body: [
+      #goal(title: "Zfg")[Root goal.]
+      #principle(title: "Zfp")[Root principle.]
+    ],
+  )
 ]
 EOF
   cat >"$FO/alpha/design.typ" <<EOF
 #import "../.render/designlib.typ": *
 #let title = [Zfoot alpha]
 #let body = [
-  #section(title: "00 Foundation", body: [
-    $1
-  ])
+  #section(
+    title: "00 Foundation",
+    body: [
+      $1
+    ],
+  )
 ]
 EOF
 }
 
 # (a) an ordered foundation renders — the check must not fire on a good layer.
-fo_layer '#goal(title: "Zag")[g] #invariant(title: "Zai")[i]'
+# Several blocks per kind, named arguments, multi-line bodies: a real
+# foundation repeats a kind before moving to the next, and the rank comparison
+# must treat equal ranks as ordered rather than as an inversion.
+fo_layer '#goal(title: "Zag1")[First goal.]
+      #goal(title: "Zag2")[Second goal.]
+      #no-goal(title: "Zan")[A no-goal.]
+      #invariant(
+        title: "Zai",
+        enforcement: "convention",
+      )[An invariant with a named argument.]
+      #principle(title: "Zap", lens: "depth")[A principle with a lens.]'
 if python3 ./scripts/design-aggregate "$FO" "$FO/a.pdf" >/dev/null 2>&1; then
   pass_line "an ordered Typst foundation renders"
 else
   fail_line "the order check fired on a correctly ordered foundation"
 fi
+
+# (a3) A DIVERGENT layer library is refused before anything renders. The layer's
+# own .render is what each context imports, so when it disagrees with the
+# library this run compiles against, every context is validated by a different
+# library than the document — silently, at exit 0.
+DIV="$WORK/div/docs/design"
+mkdir -p "$DIV/alpha"
+cp -R "$FO/.render" "$DIV/.render"
+cat >"$DIV/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Zdiv root]
+#let body = [#section(title: "00 Foundation", body: [#goal(title: "Zdg")[g]])]
+EOF
+cat >"$DIV/alpha/design.typ" <<'EOF'
+#import "../.render/designlib.typ": *
+#let title = [Zdiv alpha]
+#let body = [#section(title: "00 Foundation", body: [#goal(title: "Zda")[g]])]
+EOF
+printf '\n// a divergence the layer copy carries and the one in use does not\n' \
+  >>"$DIV/.render/designlib.typ"
+div_out="$(DESIGN_LIB_DIR="$FO/.render" python3 ./scripts/design-aggregate \
+  "$DIV" "$DIV/o.pdf" 2>&1)"
+div_rc=$?
+if [ "$div_rc" -eq 2 ]; then
+  pass_line "a divergent layer library is an error (exit 2)"
+else
+  fail_line "a divergent layer library exited $div_rc — contracts silently differ"
+fi
+if [ -f "$DIV/o.pdf" ]; then
+  fail_line "a divergent layer library still wrote a document"
+else
+  pass_line "a divergent layer library writes no document"
+fi
+case "$div_out" in
+*"the layer's copy"*) pass_line "the refusal names both libraries" ;;
+*) fail_line "the refusal does not name the two libraries" ;;
+esac
 
 # (b) a misordered foundation is REFUSED, and the message names both kinds.
 fo_layer '#principle(title: "Zap")[p] #goal(title: "Zag")[g]'

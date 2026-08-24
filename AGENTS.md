@@ -4,25 +4,29 @@ The mechanical half of the design layer: the renderer, the projector, the block
 contracts, and the gate. It answers one question — is this design layer
 well-formed, and what does it render to.
 
-## Two authoring surfaces, one library
+## One authoring surface
 
-A layer is authored in exactly ONE of two notations, and the mode is derived
-from the files present rather than declared by a flag, so the declaration
-cannot disagree with the tree:
+A layer is authored in Typst: `design.typ` + `CONTEXT.typ`, calling the
+projected library directly. There is no conversion step, so a construct
+outside the grammar cannot half-convert into something that renders
+differently from what it says, and a rule that would have been a second parse
+over the source is instead a function signature the compiler enforces at the
+line the author writes.
 
-- **markdown** — `design.md` + `CONTEXT.md`, converted by `md-to-typst`;
-- **typst** — `design.typ` + `CONTEXT.typ`, calling the library directly.
+Markdown authoring was REMOVED. A layer still carrying a `design.md` is
+refused by name — the aggregate and `layer-integrity` both name every markdown
+file and point at the migration — rather than walked past: ignoring it would
+report "no design layer" against a directory visibly full of design documents,
+and send the reader after the wrong fault.
 
-A layer holding both is a hard error (exit 2) naming every file on each side,
-in the aggregate and in `layer-integrity` alike. Preferring one side would
-render a document silently missing the other, and that document reads as
-complete — a coherent table of contents, every chapter present correct, and
-nothing marking the absence.
+ADRs, `CONTEXT-MAP.md` and `COVERAGE.md` are unaffected. They were never the
+authoring surface and stay markdown, with the anchor contract intact; the ADR
+markers in `layer_layout.design_ish_markers` are what keep an ADR citation
+resolving.
 
-Both notations reach ONE projected library, so a rule stated once binds either
-way. A block kind and the function rendering it carry the same name, spelled
-kebab (`design_doc.function_naming`); the one exception is `figure`, whose
-function is `figure-block` because `figure` is a Typst builtin.
+A block kind and the function rendering it carry the same name, spelled kebab
+(`design_doc.function_naming`); the one exception is `figure`, whose function
+is `figure-block` because `figure` is a Typst builtin.
 
 The library holds **two classes of rule**, and the class is visible at every
 check site. An **invariant** is a rule whose violation makes the model wrong —
@@ -59,7 +63,6 @@ nix develop                       # the dev shell: lefthook, typst, pdftotext, p
 nix flake check                   # formatting, the self-tests, projection determinism
 nix fmt                           # treefmt: nixfmt, prettier, shfmt, ruff-format
 
-nix run .#render    -- <design.md> [--check]
 nix run .#aggregate -- <layer-root> <out.pdf> [--check]
 nix run .#check     -- <layer-root> <repo-root>
 nix run .#lint      -- <layer-root>          # the guideline sweep, never a gate
@@ -76,7 +79,6 @@ The self-tests are the correctness proof — this repo has no design layer of it
 own by decision, so nothing here is verified by dogfooding:
 
 ```sh
-nix develop --command bash scripts/design-render.test.sh
 nix develop --command bash scripts/layer-integrity.test.sh
 nix develop --command bash scripts/widget-coverage.test.sh
 nix develop --command bash scripts/designlib-native.test.sh
@@ -90,13 +92,18 @@ nix develop --command bash scripts/vendored-offline.test.sh
 is never hand-edited. A contract changes in `schema/design-schema.json`, and the
 projection follows.
 
-There are TWO gallery fixtures, because there are two authoring surfaces and
-each drifts on its own. `fixtures/widget-gallery.md` demonstrates every declared
-block kind; `fixtures/native-gallery.typ` demonstrates every function projected
-for native authoring, which no markdown document can reach.
-`widget-coverage.test.sh` fails when a declared kind has no projected function,
-when either gallery stops exercising one, or when a gallery renders without its
-marks reaching the page.
+`fixtures/gallery.typ` is the ONE gallery: it calls every function the
+library projects for authoring, and it is a DRIFT TRIPWIRE rather than
+documentation. `widget-coverage.test.sh` fails when a declared kind has no
+projected function, when the gallery stops exercising one, or when the gallery
+renders without its marks reaching the page.
+
+The gallery's exemption list is short on purpose. Every name on it is a
+function the check stops looking at, so an exemption granted loosely is
+coverage silently withdrawn. Only the four calls the AGGREGATE emits — the
+document shell, a chapter page, a glossary entry's owner chip, the vocabulary
+registry — plus the document-level assertions are exempt, and those are
+covered where they are real, in `typst-layer.test.sh`.
 
 ## Where a check belongs
 
@@ -104,28 +111,32 @@ Three homes, and picking the wrong one is how a contract ends up declared and
 unenforced:
 
 - **The projected library** validates ONE block against its own contract —
-  a required field, an enum value, a title length. It cannot see anything
-  outside the block it is rendering, EXCEPT where a state carries the fact
-  across calls: `_foundation-trail` records each foundation statement as it is
-  called, and `assert-foundation-order` reads the trail back. That is how a
-  cross-block rule reaches the Typst side, which the markdown fold cannot see.
-- **`design-render`'s `assert_document`** folds over the WHOLE document —
-  foundation cardinality and order, spine order, clause cardinality, pending
-  entries. Anything needing two blocks compared belongs here. `given`/`when`/
-  `then` render as independent calls, so clause order was impossible to check
-  in the library and sat unenforced until the fold existed.
+  a required field, an enum value, a title length.
+- **The projected library's TRAILS** carry a fact across calls, which is how a
+  DOCUMENT-level rule is enforced without a second parse. `_foundation-trail`
+  records each foundation statement, and `assert-foundation-order` and
+  `assert-foundation-cardinality` read it back — the cardinality rule is the
+  one that must notice a block NOBODY WROTE, and a kind missing from the
+  finished trail was never called. `_clause-trail` does the same for a
+  behavior block's given/when/then, and `_spine-trail` for the numbered
+  sections. Each trail is reset at the boundary of the scope it judges: a
+  context for the foundation and the spine, one block for the clauses.
 - **`layer-integrity`** crosses ARTIFACTS — links, anchors, homing, the
   coverage map's own citations.
 
 A rule the schema declares and no home runs is worse than an undeclared one: the
 manual promises it, an author trusts it, and nothing objects.
 
-**A check with only one home covers only one notation.** `assert_document`
-parses markdown, so against Typst sources it finds zero blocks and passes
-VACUOUSLY — the foundation order was declared, projected as
-`FOUNDATION-ORDER`, and enforced on neither side of a Typst layer, while the
-vocabulary read as enforcement to anyone who grepped for it. A document-level
-rule needs a home in EACH mode, and a test proving it fails in each.
+**A check that stops looking at anything still reports OK.** That is this
+repo's recurring failure, and it has two shapes. A rule can be DECLARED in the
+schema and enforced nowhere — the foundation order was projected as
+`FOUNDATION-ORDER` and read as enforcement to anyone who grepped for it, while
+nothing ran it. Or a check can be guarded off for a notation and left that
+way, so the guard becomes unconditional and the body never executes again.
+
+So a rule needs a home that actually runs it, and a test proving it FAILS on a
+document that violates it. An assertion that only ever passes proves nothing;
+every contract added here is asserted in both directions.
 
 ## Don't
 

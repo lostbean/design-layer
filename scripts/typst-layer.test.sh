@@ -70,6 +70,8 @@ cat >"$LAYER/design.typ" <<'EOF'
 #let body = [
   #section(title: "00 Foundation", lead: "The root.", body: [
     #goal(title: "Zrootgoal")[Root goal body.]
+    #invariant(title: "Zrootinv", enforcement: "mechanism")[Root invariant.]
+    #principle(title: "Zrootprin")[Root principle.]
   ])
 ]
 EOF
@@ -79,6 +81,8 @@ cat >"$LAYER/alpha/design.typ" <<'EOF'
 #let body = [
   #section(title: "00 Foundation", body: [
     #goal(title: "Zalphagoal")[Alpha goal.]
+    #invariant(title: "Zalphainv", enforcement: "convention")[Alpha invariant.]
+    #principle(title: "Zalphaprin")[Alpha principle.]
   ])
 ]
 EOF
@@ -116,6 +120,8 @@ cat >"$LAYER/beta/design.typ" <<'EOF'
 #let body = [
   #section(title: "00 Foundation", body: [
     #goal(title: "Zbetagoal")[Beta goal.]
+    #invariant(title: "Zbetainv", enforcement: "partial")[Beta invariant.]
+    #principle(title: "Zbetaprin")[Beta principle.]
   ])
 ]
 EOF
@@ -243,28 +249,33 @@ else
   fail_line "a freshly built Typst layer was reported stale"
 fi
 
-# --- 3. a MIXED layer is refused, naming both sides ---------------------------
+# --- 3. A LEGACY MARKDOWN LAYER IS REFUSED, naming what to migrate ------------
+# Markdown authoring was removed. A layer still carrying a design.md is refused
+# by name rather than walked past: ignoring it would render a document silently
+# missing that context, which reads as complete. The refusal must name the file
+# and point at the migration, because "no design layer" against a directory
+# full of design documents sends the reader after the wrong fault.
 echo "# a stray markdown context" >"$LAYER/beta/design.md"
 out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/mixed.pdf" 2>&1)"
 rc=$?
 if [ "$rc" -eq 2 ]; then
-  pass_line "a mixed layer is an error (exit 2)"
+  pass_line "a layer holding design.md is an error (exit 2)"
 else
-  fail_line "a mixed layer exited $rc, wanted 2 — a half-migrated layer rendered"
+  fail_line "a legacy markdown layer exited $rc, wanted 2 — it rendered anyway"
 fi
 if [ -f "$LAYER/mixed.pdf" ]; then
-  fail_line "a mixed layer wrote a PDF — it must emit nothing"
+  fail_line "a legacy markdown layer wrote a PDF — it must emit nothing"
   rm -f "$LAYER/mixed.pdf"
 else
-  pass_line "a mixed layer writes no document"
+  pass_line "a legacy markdown layer writes no document"
 fi
 case "$out" in
 *"beta/design.md"*) pass_line "the error names the markdown file" ;;
 *) fail_line "the error does not name the offending markdown file" ;;
 esac
 case "$out" in
-*"alpha/design.typ"*) pass_line "the error names the Typst files" ;;
-*) fail_line "the error does not name the Typst files" ;;
+*"migration 0008"*) pass_line "the refusal points at the migration" ;;
+*) fail_line "the refusal does not say where to go next" ;;
 esac
 rm -f "$LAYER/beta/design.md"
 
@@ -415,6 +426,8 @@ cat >"$LAYER/beta/design.typ" <<'EOF'
 #let body = [
   #section(title: "00 Foundation", body: [
     #goal(title: "Zbetagoal")[Beta goal.]
+    #invariant(title: "Zbetainv2", enforcement: "partial")[Beta invariant.]
+    #principle(title: "Zbetaprin2")[Beta principle.]
     #stat-grid()
   ])
 ]
@@ -464,6 +477,7 @@ fo_layer() { # $1 = alpha's foundation body
     title: "00 Foundation",
     body: [
       #goal(title: "Zfg")[Root goal.]
+      #invariant(title: "Zfi", enforcement: "convention")[Root invariant.]
       #principle(title: "Zfp")[Root principle.]
     ],
   )
@@ -567,12 +581,265 @@ fi
 # a goal, which is legal — every context carries its own foundation. A check
 # folding over the whole aggregate would call this an inversion and fail every
 # multi-context layer that exists.
-fo_layer '#goal(title: "Zag")[g]'
+fo_layer '#goal(title: "Zag")[g]
+      #invariant(title: "Zai2", enforcement: "convention")[i]
+      #principle(title: "Zap2")[p]'
 if python3 ./scripts/design-aggregate "$FO" "$FO/c.pdf" >/dev/null 2>&1; then
   pass_line "the order is scoped per context, not across the aggregate"
 else
   fail_line "a goal opening the next context read as following the previous principle"
 fi
+
+# --- 4b. THE FOUNDATION'S PER-KIND MINIMUM ------------------------------------
+# The cardinality rule — at least one of each required kind — is the one
+# document-level contract that must notice a block NOBODY WROTE. A function
+# cannot report its own absence, so this reads the same trail the order check
+# uses: a kind missing from the finished trail was never called.
+#
+# It is asserted here rather than in the gallery because the assertion is
+# emitted by the AGGREGATE around each chapter, not written by an author. All
+# four directions are covered, because a check that only ever passes and a
+# check that only ever fails are equally useless.
+
+# (d) a foundation missing a required kind is refused, and the message names
+# the kind that is missing rather than reporting a generic malformed document.
+fo_layer '#goal(title: "Zdg")[g]
+      #invariant(title: "Zdi", enforcement: "convention")[i]'
+fc_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/d.pdf" 2>&1)"
+fc_rc=$?
+if [ "$fc_rc" -ne 0 ]; then
+  pass_line "a foundation missing a required kind is refused"
+else
+  fail_line "a foundation with no principle rendered — the minimum is unenforced"
+fi
+case "$fc_out" in
+*"declares no principle"*) pass_line "the refusal names the missing kind" ;;
+*) fail_line "the refusal does not say which kind is missing" ;;
+esac
+if [ -f "$FO/d.pdf" ]; then
+  fail_line "a short foundation still wrote a PDF"
+  rm -f "$FO/d.pdf"
+else
+  pass_line "a short foundation writes no document"
+fi
+
+# (e) the minimum is scoped PER CONTEXT, exactly as the order is. Without the
+# per-context reset a context carrying no foundation of its own would pass on
+# the strength of the previous chapter's statements — the silent hole the reset
+# exists to close. Alpha carries only a goal here; the root carries a full
+# foundation, so a whole-aggregate fold would call this layer complete.
+fo_layer '#goal(title: "Zeg")[g]'
+if python3 ./scripts/design-aggregate "$FO" "$FO/e.pdf" >/dev/null 2>&1; then
+  fail_line "a context with a partial foundation passed on the root's statements"
+else
+  pass_line "the minimum is scoped per context, not across the aggregate"
+fi
+rm -f "$FO/e.pdf"
+
+# (f) a document carrying NO foundation at all is not a document that failed
+# the minimum — it is a document not carrying one. A reference page or a
+# behavior-rule sheet is legal, and reporting it would fail correct documents.
+fo_layer '#notes(title: "Zfn")[Prose only, no foundation statements here.]'
+if python3 ./scripts/design-aggregate "$FO" "$FO/f.pdf" >/dev/null 2>&1; then
+  pass_line "a document declaring no foundation is not held to the minimum"
+else
+  fail_line "a document with no foundation was reported as missing kinds"
+fi
+rm -f "$FO/f.pdf"
+
+# (g) index_only WAIVES the minimum for a root that merely indexes its
+# contexts. Such a root points down to each context rather than restating a
+# goal a context already owns, so holding it to the full minimum would force
+# the restatement the layer exists to prevent.
+cat >"$FO/design.typ" <<'XEOF'
+#import ".render/designlib.typ": *
+#let title = [Zfoot root]
+#let index_only = true
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zig")[The only cross-context goal.]
+  ])
+]
+XEOF
+if python3 ./scripts/design-aggregate "$FO" "$FO/g.pdf" >/dev/null 2>&1; then
+  pass_line "index_only waives the per-kind minimum"
+else
+  fail_line "index_only did not waive the minimum — an index root cannot render"
+fi
+rm -f "$FO/g.pdf"
+
+# --- 4c. THE BEHAVIOR CLAUSE CONTRACT -----------------------------------------
+# given/when/then render as INDEPENDENT calls, so a clause never meets its
+# siblings and cannot know it is the second `when`. The cardinality and order
+# were declared in the schema and enforced by nothing; a clause trail closes it
+# the same way the foundation trail does. Scope is ONE block — two sibling
+# rules are two rules — so the accepting cases below matter as much as the
+# refusing ones.
+bc_layer() { # $1 = the behavior block's body
+  cat >"$FO/design.typ" <<'XEOF'
+#import ".render/designlib.typ": *
+#let title = [Zbc root]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zbcg")[g]
+    #invariant(title: "Zbci", enforcement: "convention")[i]
+    #principle(title: "Zbcp")[p]
+  ])
+]
+XEOF
+  cat >"$FO/alpha/design.typ" <<EOF
+#import "../.render/designlib.typ": *
+#let title = [Zbc alpha]
+#let body = [
+  #section(title: "01 Rules", body: [
+    $1
+  ])
+]
+EOF
+}
+bc_refuses() { # $1 = label, $2 = body, $3 = expected message fragment
+  bc_layer "$2"
+  bc_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/bc.pdf" 2>&1)"
+  if [ -f "$FO/bc.pdf" ]; then
+    fail_line "$1 still wrote a document"
+    rm -f "$FO/bc.pdf"
+  elif printf '%s' "$bc_out" | grep -q "$3"; then
+    pass_line "$1"
+  else
+    fail_line "$1 — refused for the wrong reason, or not at all"
+  fi
+}
+bc_accepts() { # $1 = label, $2 = body
+  bc_layer "$2"
+  if python3 ./scripts/design-aggregate "$FO" "$FO/bc.pdf" >/dev/null 2>&1; then
+    pass_line "$1"
+  else
+    fail_line "$1 — a legal behavior rule was refused"
+  fi
+  rm -f "$FO/bc.pdf"
+}
+
+bc_refuses "two when clauses are two rules" \
+  '#behavior(title: "Zb1", level: "interface")[#when[a] #when[b] #then[c]]' \
+  'expected exactly 1'
+bc_refuses "a rule with no when clause is refused" \
+  '#behavior(title: "Zb2", level: "interface")[#then[c]]' \
+  'expected exactly 1'
+bc_refuses "a rule with no then clause states no outcome" \
+  '#behavior(title: "Zb3", level: "interface")[#when[a]]' \
+  'no then clause'
+bc_refuses "a then before a when is out of order" \
+  '#behavior(title: "Zb4", level: "interface")[#then[c] #when[a]]' \
+  'out of order'
+
+bc_accepts "when + then is the minimal legal rule" \
+  '#behavior(title: "Zb5", level: "interface")[#when[a] #then[c]]'
+bc_accepts "repeated given and then clauses stay legal" \
+  '#behavior(title: "Zb6", level: "interface")[#given[g1] #given[g2] #when[a] #then[c1] #then[c2]]'
+# THE SCOPING CASE. Without the per-block reset the second rule's `when` would
+# read as a second `when` in the first rule, and every layer carrying two
+# behavior rules would fail.
+bc_accepts "two sibling rules each carry their own when" \
+  '#behavior(title: "Zb7", level: "interface")[#when[a] #then[c]]
+    #behavior(title: "Zb8", level: "interface")[#when[b] #then[d]]'
+
+# --- 4d. THE SPINE ORDER ------------------------------------------------------
+# The spine runs gross to fine, so its numbered sections ascend. That is a rule
+# ACROSS sections, which no single `section` call can see; a trail carries the
+# numbers and the aggregate reads them back per context. An UNNUMBERED section
+# ("Pending updates") is off this axis entirely and must not disturb it.
+sp_layer() { # $1 = alpha's section sequence
+  cat >"$FO/design.typ" <<'XEOF'
+#import ".render/designlib.typ": *
+#let title = [Zsp root]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zspg")[g]
+    #invariant(title: "Zspi", enforcement: "convention")[i]
+    #principle(title: "Zspp")[p]
+  ])
+]
+XEOF
+  cat >"$FO/alpha/design.typ" <<EOF
+#import "../.render/designlib.typ": *
+#let title = [Zsp alpha]
+#let body = [
+$1
+]
+EOF
+}
+
+sp_layer '#section(title: "00 Foundation", body: [
+    #goal(title: "Zsag")[g]
+    #invariant(title: "Zsai", enforcement: "convention")[i]
+    #principle(title: "Zsap")[p]
+  ])
+  #section(title: "01 At a glance", body: [x])
+  #section(title: "02 The parts", body: [y])'
+if python3 ./scripts/design-aggregate "$FO" "$FO/sp.pdf" >/dev/null 2>&1; then
+  pass_line "an ascending spine renders"
+else
+  fail_line "the spine check fired on a correctly ordered document"
+fi
+rm -f "$FO/sp.pdf"
+
+sp_layer '#section(title: "00 Foundation", body: [
+    #goal(title: "Zsbg")[g]
+    #invariant(title: "Zsbi", enforcement: "convention")[i]
+    #principle(title: "Zsbp")[p]
+  ])
+  #section(title: "05 Later", body: [x])
+  #section(title: "02 Earlier", body: [y])'
+sp_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/sp.pdf" 2>&1)"
+if [ -f "$FO/sp.pdf" ]; then
+  fail_line "a doubling-back spine still wrote a document"
+  rm -f "$FO/sp.pdf"
+elif printf '%s' "$sp_out" | grep -q "out of order"; then
+  pass_line "a spine that doubles back is refused"
+else
+  fail_line "a spine running 05 then 02 rendered — the order is unenforced"
+fi
+
+# An unnumbered section is not on the numbered axis, so it must not be read as
+# a section numbered zero and fail every document that carries one.
+sp_layer '#section(title: "00 Foundation", body: [
+    #goal(title: "Zscg")[g]
+    #invariant(title: "Zsci", enforcement: "convention")[i]
+    #principle(title: "Zscp")[p]
+  ])
+  #section(title: "Pending updates", body: [x])
+  #section(title: "01 At a glance", body: [y])'
+if python3 ./scripts/design-aggregate "$FO" "$FO/sp.pdf" >/dev/null 2>&1; then
+  pass_line "an unnumbered section does not disturb the spine order"
+else
+  fail_line "an unnumbered section was read as a numbered one"
+fi
+rm -f "$FO/sp.pdf"
+
+# --- 4e. THE ADR CITATION ------------------------------------------------------
+# `#adr(N)` is the one citation whose target lives OUTSIDE the rendered
+# document: the ADRs are markdown files, so there is nothing to jump to inside
+# the render and nothing for the compiler to resolve. The number is therefore
+# the whole citation, and the gate is what checks it — layer-integrity reads
+# every call and refuses a number the ADR directory has no file for.
+#
+# This is asserted because the call was DOCUMENTED and NOT PROJECTED: the
+# integrity check read `#adr(N)`, the gallery's prose described it, and the
+# library defined no such function, so the one citation form the gate checked
+# was a form nobody could write.
+bc_layer '#behavior(title: "Zadr", level: "interface")[#when[a] #then[b]]
+    The decision is #adr(7).'
+if python3 ./scripts/design-aggregate "$FO" "$FO/adr.pdf" >/dev/null 2>&1; then
+  pass_line "an adr() citation compiles"
+  if pdftotext "$FO/adr.pdf" - 2>/dev/null | grep -q "ADR-0007"; then
+    pass_line "an adr() citation renders its padded id"
+  else
+    fail_line "adr() compiled but printed nothing a reader can see"
+  fi
+else
+  fail_line "adr() does not compile — the gate checks a form nobody can write"
+fi
+rm -f "$FO/adr.pdf"
 
 # --- 5. an empty layer is an error, not an empty document ---------------------
 EMPTY="$WORK/empty/docs/design"

@@ -95,9 +95,9 @@
             '';
 
         # The runtime PATH the gate scripts need: bash (render-project and the
-        # shell gates), python3 (design-render, design-aggregate,
-        # token-coverage, layer-integrity), git (layer-integrity's staleness
-        # advisory), and the vendored renderer (the typst compile).
+        # shell gates), python3 (design-aggregate, token-coverage,
+        # layer-integrity), git (layer-integrity's staleness advisory), and the
+        # vendored renderer (the typst compile).
         gateRuntime = [
           pkgs.bash
           pkgs.python3
@@ -109,7 +109,7 @@
         # that let a script find its half of the bundle:
         #
         #   $DESIGN_SCHEMA   the ONE declared schema (already honored by
-        #                    design-render and layer-integrity)
+        #                    design-aggregate and layer-integrity)
         #   $DESIGN_LIB_DIR  the directory holding designlib.typ, so the compile
         #                    imports the BUNDLED library instead of looking for
         #                    a `.render/` inside the target directory
@@ -156,10 +156,10 @@
           # spawning a process per match. Python, so ruff formats it, not shfmt.
           #
           # The other extensionless python programs (design-aggregate,
-          # design-render, md-to-typst, token-coverage) are deliberately NOT
-          # listed, so treefmt cannot see their language and they go
-          # unformatted. Adding them here is a one-line change that rewrites
-          # ~320 lines across four files; that reformat is a separate
+          # token-coverage) are deliberately NOT listed, so treefmt cannot see
+          # their language and they go unformatted. Adding them here is a
+          # one-line change that rewrites a few hundred lines across those
+          # files; that reformat is a separate
           # decision from whatever else touches this config, and making it
           # here would bury it in an unrelated diff.
           settings.formatter.ruff-format.includes = [
@@ -202,15 +202,13 @@
         # The gate, callable against ANY directory from outside this repo, with
         # nothing copied into that directory.
         #
-        #   nix run <flake>#render    -- <design.md> [--check]
         #   nix run <flake>#project   -- <schema.json> <out-dir>
         #   nix run <flake>#aggregate -- <layer-root> <out.pdf>
         #   nix run <flake>#check     -- <layer-root> [repo-root]
         #
-        # render, project, and aggregate are thin pass-throughs to one script
-        # each. check is the COMPOSITE: the freshness check, token coverage,
-        # and layer integrity in sequence.
-        apps.render = gateApp "design-render" "design-render";
+        # project and aggregate are thin pass-throughs to one script each.
+        # check is the COMPOSITE: the freshness check, token coverage, and
+        # layer integrity in sequence.
         apps.project = gateApp "render-project" "render-project";
 
         # The aggregate, callable on its own. `check` VERIFIES the rendered
@@ -372,7 +370,6 @@
               patchShebangs scripts
               bash ./scripts/layer-integrity.test.sh
               bash ./scripts/widget-coverage.test.sh
-              bash ./scripts/design-render.test.sh
               # The offline guarantee, asserted where it is REAL: the build
               # sandbox has no network, so a package the vendored set failed to
               # carry cannot be silently fetched the way it can on a laptop

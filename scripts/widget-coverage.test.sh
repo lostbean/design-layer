@@ -10,16 +10,36 @@
 # demonstrated is never exercised, so a regression in it ships. This test binds
 # the three together.
 #
-# It checks three things:
-#   1. every block kind the SCHEMA declares has a function in the PROJECTION
-#      (or is deliberately exempt — a fenced diagram language, not a call)
+# HOW THE LIBRARY IS INSPECTED, AND WHY IT CHANGED. This check used to read the
+# library's SOURCE TEXT and call a `#let name(` line a function. That made the
+# check an assertion about a spelling rather than about the library: a function
+# bound any other way — by a closure factory, `#let goal = STATEMENTS.at("goal")`
+# — has no `(` after its name, so the regex reported it ABSENT. This is a
+# COVERAGE check, so that failure would not have been loud. It would have
+# reported the kind missing while the library provided it perfectly, and the
+# reverse error is worse still: a name the regex happens to match is called
+# covered without anyone asking whether it is a callable function at all.
+#
+# So the library is now asked, at runtime, what it provides. `dictionary()` over
+# an imported module enumerates that module's scope, and the value at each name
+# carries its type. The check therefore asserts the thing it means — this name
+# resolves, in the compiled library, to a callable function — and it asserts it
+# without any knowledge of how the binding was written. A generated `#let f(..)`
+# and a factory-built `#let f = D.at("f")` are indistinguishable to it, which is
+# the property that lets the library change shape underneath it.
+#
+# It checks these things:
+#   1. every block kind the SCHEMA declares resolves, in the compiled library,
+#      to a callable function (or is deliberately exempt — a fenced diagram
+#      language, which reaches a carrier rather than a directive function)
 #   2. the GALLERY calls every function projected for authoring
 #   3. the gallery RENDERS, and its marks reach the page — a function can be
 #      declared, projected, present in the gallery, and still fail to compile,
 #      and a page that draws nothing still exits 0
+#   4. the schema's vendored package set matches the flake's
 #
 # Usage: widget-coverage.test.sh [repo-root]
-# Exit: 0 all pass, 1 a check failed.
+# Exit: 0 all pass, 1 a check failed, 2 the check could not run.
 set -uo pipefail
 
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -56,8 +76,8 @@ if [ ! -f "$LIB" ]; then
 fi
 export DESIGN_LIB_DIR="$WC_TMP/.render"
 
-# The render check needs the renderer. Say so plainly rather than reporting a
-# confusing render failure when the binary is simply absent.
+# The runtime query and the render both need the renderer. Say so plainly
+# rather than reporting a confusing failure when the binary is simply absent.
 if ! command -v "${TYPST:-typst}" >/dev/null 2>&1; then
   echo "widget-coverage: error: no renderer on PATH (set TYPST or enter the dev shell)" >&2
   exit 2
@@ -65,17 +85,104 @@ fi
 
 echo "widget-coverage: schema -> projection -> gallery"
 
+# --- 0. ask the compiled library what it provides -----------------------------
+# The probe imports the projected library as a module and enumerates it. Every
+# member is reported with its name and its TYPE, so a caller can tell a callable
+# function from a data constant, from a document-level assertion whose value is
+# content, from a vendored package the library imported.
+#
+# BORROWED is read from the library rather than listed here. A Typst import
+# binds into the importing module's scope, so a vendored package's names appear
+# in this enumeration exactly as the library's own do. The projector records
+# each name as it writes the import line that binds it, which is the only place
+# that knowledge exists once; a copy here would be a second declaration of one
+# fact, and two declarations drift.
+PROBE="$WC_TMP/probe"
+mkdir -p "$PROBE"
+cp -r "$WC_TMP/.render" "$PROBE/.render"
+cat >"$PROBE/probe.typ" <<'TYP'
+#import ".render/designlib.typ" as lib
+#import ".render/designlib.typ": BORROWED
+
+#let members = dictionary(lib)
+#metadata(
+  members
+    .pairs()
+    .filter(p => not BORROWED.contains(p.at(0)))
+    .map(p => (name: p.at(0), kind: str(type(p.at(1))))),
+)<surface>
+TYP
+
+SURFACE="$WC_TMP/surface.json"
+if ! "${TYPST:-typst}" query --root "$PROBE" "$PROBE/probe.typ" '<surface>' \
+  --field value >"$SURFACE" 2>"$WC_TMP/probe.err"; then
+  # The library could not even be imported. That is not a coverage result and
+  # must not be reported as one — every check below would find nothing and, on
+  # a naive reading, find nothing wrong.
+  echo "widget-coverage: error: could not query the projected library" >&2
+  sed 's/^/  /' "$WC_TMP/probe.err" >&2 | head -8
+  exit 2
+fi
+
+# WHAT EACH CHECK BELOW WILL ACTUALLY LOOK AT, counted once, up front. The
+# counts are reported in the summary so a run says how much it verified rather
+# than only that it found nothing wrong — a check that silently narrowed to
+# nothing is the failure this suite has been bitten by, and a bare "OK" cannot
+# tell that apart from a real pass.
+read -r SURFACE_N KINDS_CHECKED GALLERY_CHECKED <<EOF
+$(
+  python3 - "$SURFACE" "$SCHEMA" <<'PY'
+import json, sys
+rows = json.load(open(sys.argv[1]))
+if rows and isinstance(rows[0], list):
+    rows = rows[0]
+funcs = {r["name"] for r in rows if r["kind"] == "function"}
+public = {n for n in funcs if not n.startswith("_")}
+EXEMPT = {
+    "aggregate-doc", "chapter-page", "context-owner", "declare-vocabulary",
+    "assert-foundation-cardinality",
+}
+blocks = json.load(open(sys.argv[2]))["design_doc"]["blocks"]
+kinds = [k for k in blocks if k not in {"mermaid", "vega-lite"}]
+print(len(funcs), len(kinds), len(public - EXEMPT))
+PY
+)
+EOF
+
+# A query that returns an empty surface is a broken probe, not a clean library.
+# THE ZERO CASE IS THE DANGEROUS ONE: every membership test below passes
+# vacuously against an empty set, so the suite would go green having verified
+# nothing at all. Refuse before the checks rather than after.
+for _n in "${SURFACE_N:-}" "${KINDS_CHECKED:-}" "${GALLERY_CHECKED:-}"; do
+  if [ -z "$_n" ] || [ "$_n" -lt 1 ] 2>/dev/null; then
+    echo "widget-coverage: error: nothing to verify" >&2
+    echo "  functions=${SURFACE_N:-?} kinds=${KINDS_CHECKED:-?}" \
+      "gallery=${GALLERY_CHECKED:-?}" >&2
+    echo "  a coverage check over an empty set passes vacuously; refusing" >&2
+    exit 2
+  fi
+done
+pass_line "the compiled library answers what it provides ($SURFACE_N function(s))"
+
 # --- 1. every declared block kind is projected --------------------------------
 # A fenced diagram language is routed to a carrier rather than projected as a
 # directive function, so those kinds are exempt by name.
 missing=$(
-  python3 - "$SCHEMA" "$LIB" <<'PY'
+  python3 - "$SCHEMA" "$SURFACE" <<'PY'
 import json, re, sys
-schema, lib = sys.argv[1], sys.argv[2]
+schema, surface = sys.argv[1], sys.argv[2]
 doc = json.load(open(schema))["design_doc"]
 declared = list(doc["blocks"].keys())
-src = open(lib).read()
-have = set(re.findall(r"^#let ([a-z][a-z0-9-]*)\(", src, re.M))
+
+rows = json.load(open(surface))
+if rows and isinstance(rows[0], list):
+    rows = rows[0]
+# THE SURFACE IS A TYPED ANSWER, so "present" means present AS A FUNCTION. A
+# name bound to a string or a dictionary is not something an author can call,
+# and calling it covered would be exactly the silent pass this check exists to
+# prevent.
+callable_names = {r["name"] for r in rows if r["kind"] == "function"}
+
 # fenced diagram languages reach a carrier, not a directive function
 FENCE_KINDS = {"mermaid", "vega-lite"}
 # A kind and the function rendering it carry ONE name
@@ -87,38 +194,64 @@ _collisions = doc["function_naming"]["collisions"]
 _pair = re.findall(r"`([a-z][a-z0-9-]*)`", _collisions)
 ALIAS = {_pair[0]: _pair[1]} if len(_pair) >= 2 else {}
 missing = []
+checked = 0
 for kind in declared:
     if kind in FENCE_KINDS:
         continue
+    checked += 1
     fn = ALIAS.get(kind, kind)
-    if fn not in have:
-        missing.append("%s (expected #%s)" % (kind, fn))
+    if fn not in callable_names:
+        missing.append("%s (expected a callable #%s)" % (kind, fn))
+# A run that checked no kind verified nothing. Report that as a failure rather
+# than as an empty missing-list, which reads as a pass.
+if checked == 0:
+    missing.append("<no block kind was checked at all>")
 print("\n".join(missing))
 PY
 )
 if [ -z "$missing" ]; then
-  pass_line "every declared block kind has a projected function"
+  pass_line "every declared block kind resolves to a callable function ($KINDS_CHECKED kind(s))"
 else
-  fail_line "declared but NOT projected:"
-  printf '       %s\n' $missing
+  fail_line "declared but NOT callable in the projected library:"
+  # ONE FINDING PER LINE. An unquoted expansion splits on every space, so a
+  # finding that names what it expected arrives shredded across six lines.
+  printf '%s\n' "$missing" | sed 's/^/       /'
 fi
 
 # --- 2. the gallery exercises every projected function -----------------------
 # THE GALLERY IS THE RENDERER-DRIFT TRIPWIRE. A function projected for authoring
 # and absent from the gallery is never exercised, so a regression in it ships
 # unnoticed. The exemptions below are the functions no author ever writes.
+#
+# THE GALLERY HALF STAYS TEXTUAL, DELIBERATELY. The two halves of this check ask
+# different questions and the right instrument differs. Check 1 asks what the
+# library PROVIDES, which is a property of the compiled library and nothing else
+# can answer it. This check asks whether the gallery CALLS a name, and the
+# gallery is authored Typst whose call sites are visible in its text. A runtime
+# instrument would answer a weaker question, not a stronger one: compiling the
+# gallery proves that whatever it called worked, but a function it never called
+# leaves no trace at runtime, which is precisely the absence being hunted. So
+# the grep is the correct instrument here rather than an unexamined leftover.
 GALLERY="fixtures/gallery.typ"
 if [ -f "$GALLERY" ]; then
   uncovered=$(
-    python3 - "$LIB" "$GALLERY" <<'PY'
-import re, sys
-lib, gallery = sys.argv[1], sys.argv[2]
-src = open(lib).read()
+    python3 - "$SURFACE" "$GALLERY" <<'PY'
+import json, re, sys
+surface, gallery = sys.argv[1], sys.argv[2]
+rows = json.load(open(surface))
+if rows and isinstance(rows[0], list):
+    rows = rows[0]
 used = open(gallery).read()
 
-# The functions that make up the authoring surface. A private helper (_x) is
-# exercised through its callers; a vocabulary constant is data, not a call.
-public = set(re.findall(r"^#let ([a-z][a-z0-9-]*)\(", src, re.M))
+# THE AUTHORING SURFACE, as the compiled library reports it. A private helper
+# (_x) is exercised through its callers; a vocabulary constant is data, not a
+# call, and the typed answer tells the two apart without a naming convention
+# having to stand in for a type.
+public = {
+    r["name"] for r in rows
+    if r["kind"] == "function" and not r["name"].startswith("_")
+}
+
 # AGGREGATE INFRASTRUCTURE, not authoring widgets. The aggregate emits each of
 # these itself, from data it read out of the layer — the document shell, a
 # chapter's front page, a glossary entry's owner chip, and the vocabulary
@@ -138,6 +271,7 @@ AGGREGATE_EMITTED = {
     # that each one FAILS on a layer that violates it.
     "assert-foundation-cardinality",
 }
+
 missing = []
 for fn in sorted(public - AGGREGATE_EMITTED):
     # \b does not end a hyphenated name the way it ends a word: in `#stat-tile`
@@ -145,14 +279,17 @@ for fn in sorted(public - AGGREGATE_EMITTED):
     # trailing guard is therefore "not another name character", hyphen included.
     if not re.search(r"[#(\s]" + re.escape(fn) + r"(?![a-z0-9-])", used):
         missing.append(fn)
+
+if len(public - AGGREGATE_EMITTED) == 0:
+    missing.append("<no projected function was checked at all>")
 print("\n".join(missing))
 PY
   )
   if [ -z "$uncovered" ]; then
-    pass_line "the gallery exercises every projected function"
+    pass_line "the gallery exercises every projected function ($GALLERY_CHECKED function(s))"
   else
     fail_line "projected for authoring but NOT in the gallery:"
-    printf '       %s\n' $uncovered
+    printf '%s\n' "$uncovered" | sed 's/^/       /'
   fi
 
   # And it must RENDER. A function can be projected, present in the gallery,
@@ -235,7 +372,9 @@ fi
 
 echo
 if [ "$FAIL" -eq 0 ]; then
-  echo "widget-coverage: OK ($PASS check(s) passed)"
+  echo "widget-coverage: OK ($PASS check(s) passed;" \
+    "$KINDS_CHECKED declared kind(s) resolved," \
+    "$GALLERY_CHECKED projected function(s) found in the gallery)"
   exit 0
 fi
 echo "widget-coverage: $FAIL check(s) failed, $PASS passed"

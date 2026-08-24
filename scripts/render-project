@@ -582,26 +582,60 @@ w("#let VENDORED = " + tuple_of(vendored or ["cetz"]))
 w("")
 
 # ---- the two classes of rule ----------------------------------------------
-# An INVARIANT is a rule whose violation makes the model WRONG: a value outside
-# a declared enum, an edge naming no node, a block missing the field that gives
-# it meaning. No document is correct while breaking one, so it panics.
+# The split is by WHAT A VIOLATION BREAKS, and only one class stops a build.
 #
-# A GUIDELINE is a rule of STYLE: how long a title runs, how many sentences a
-# bullet carries. Breaking one makes a document worse, never wrong. It is
-# written down and checkable, and by default it emits NOTHING — a design
-# document is read by someone who did not write it and cannot act on a lint
-# note, so no advisory ever reaches the page.
+# A BROKEN REFERENCE makes the OUTPUT wrong: a term citation nothing declares,
+# an edge naming no node, a value the library cannot interpret. The document
+# cannot be rendered correctly at all, so it panics. This class is fail-closed
+# and stays that way — it is not an opinion about how a design should be
+# organized, it is the difference between a document and a corrupt one.
+#
+# A GUIDELINE is a rule of STRUCTURE or STYLE: which foundation kinds a context
+# declares, what order they come in, how long a title runs. Breaking one makes a
+# document that a reader may still need — a design legitimately changes shape,
+# and a layer missing one level may be missing it for a good reason. The library
+# GUIDES here rather than forcing: it says what it expected and renders anyway.
+#
+# A guideline is NEVER silent. A check that passes over nothing is the failure
+# mode this repo has been bitten by, and an advisory nobody reads is that same
+# failure wearing a different hat. Typst has no author-callable warning, so each
+# guideline records itself as queryable METADATA and the aggregate reads the
+# trail back after the compile and prints every one to stderr. Metadata draws
+# nothing, so the guidance reaches the author without reaching the page — and
+# without disturbing the byte-compare the freshness check rests on.
 w("""// ---- the two classes of rule -------------------------------------------
-// STRICT MODE turns every guideline into an error, for a sweep an author asks
-// for:  typst compile --input strict=1 <doc>.typ <doc>.pdf
-// The default is off. The value is read at CALL TIME by a plain binding rather
-// than by document `state`, because Typst resolves state during layout and a
-// check running after its own panic site never fires.
+// STRICT MODE turns every guideline into a hard error, for the ratchet a CI or
+// an author asks for:  typst compile --input strict=1 <doc>.typ <doc>.pdf
+// The default is off: a guideline reports, it does not block. The value is read
+// at CALL TIME by a plain binding rather than by document `state`, because
+// Typst resolves state during layout and a check running after its own panic
+// site never fires.
 #let STRICT = "strict" in sys.inputs and sys.inputs.at("strict") not in ("", "0", "false")
 
-// A guideline: silent by default, a panic naming the rule under strict.
-#let _guide(message) = {
-  if STRICT { panic("[guideline] " + message) }
+// A guideline: recorded on every render, a panic under strict.
+//
+// The metadata is tagged <design-guideline> so `typst query` can read the whole
+// trail back in one pass. It is emitted as CONTENT, which means a guideline can
+// only be recorded from a position where content is accepted — every call site
+// below is inside a block body, which is why this works.
+//
+// `rule` NAMES the guideline so a reader can act on it; `message` says what was
+// found AND what was expected. A warning that does not say what to do instead
+// is noise, so no call site passes a bare complaint.
+#let _guide(rule, message) = {
+  if STRICT { panic("[guideline] " + rule + ": " + message) }
+  [#metadata((rule: rule, message: message))<design-guideline>]
+}
+
+// DEFERRED guidance, for the blocks that return DATA rather than content.
+// `stat-tile` and `pending-entry` hand a dictionary to their parent block, and
+// a function whose value is a dictionary cannot also emit content — Typst
+// refuses to join the two. So such a block collects its guidance INTO the
+// dictionary it already returns, and the parent, which does render content,
+// replays it through `_guides`. The rule reaches the same trail either way;
+// only the position it is emitted from differs.
+#let _guides(gs) = {
+  for g in gs { _guide(g.rule, g.message) }
 }
 """)
 w("")
@@ -610,28 +644,50 @@ w("")
 w("""// ---- contract helpers — every block's checks route through these --------
 #let _fail(kind, msg) = panic(kind + " block: " + msg)
 
+// A MISSING required field is a guideline. The author did not say something the
+// block would have carried, and the block renders without it — the reader sees
+// a card that does not answer that question. That is worse, not wrong, and the
+// author may have a reason: a field may be genuinely unknown while the design
+// is still moving. So the library says what it expected and renders anyway.
+//
+// Compare `_enum` below, which stays FAIL-CLOSED. The two look similar and are
+// not: a field the author never wrote is an ABSENCE the library can render
+// around, while a field carrying a value outside the declared vocabulary is a
+// statement the library CANNOT INTERPRET. `enforcement: "banana"` has no colour,
+// no ordering and no meaning in the model — rendering it would either invent a
+// meaning or silently drop what the author wrote. Guessing is the one thing a
+// design document must not do, so a value the vocabulary does not contain
+// remains a hard failure.
 #let _need(kind, field, value) = {
   if value == none or value == "" {
-    _fail(kind, "is missing required field: " + field)
+    _guide(kind + ".missing-field",
+           kind + " is missing " + field + " — the block contract declares "
+           + field + " because a " + kind + " without it does not answer that "
+           + "question, and the card renders as though it were not applicable. "
+           + "Add " + field + "=, or leave it if this block has a reason not "
+           + "to carry one.")
   }
 }
 
-// The title contract splits across BOTH classes of rule. PRESENCE is an
-// invariant: a statement block with no title is a claim nobody can cite, so
-// absence is a hard error. LENGTH is a guideline: a long title makes a worse
-// document, never a wrong one, and no reader is served by a build that stops
-// over it. Measured against the corpus, no authored document trips it, so the
-// reclassification changes no existing render.
+// The title contract splits across BOTH classes of rule. PRESENCE is now a
+// guideline like every other required field. LENGTH stays a guideline too.
 #let _title(kind, title) = {
   _need(kind, "title", title)
   // str.len() counts UTF-8 BYTES; a title carrying a multi-byte character
   // would be measured longer than a reader sees it. The contract is about
-  // characters, so count clusters.
-  if title.clusters().len() > TITLE-MAX {
-    _guide(kind + " title exceeds " + str(TITLE-MAX) + " characters: " + title)
+  // characters, so count clusters. A title that is ABSENT has no length to
+  // measure, and the guard is what lets presence be a guideline: without it the
+  // missing-title case would reach `.clusters()` on `none` and crash with a
+  // Typst type error instead of the guidance `_need` just recorded.
+  if title != none and type(title) == str and title.clusters().len() > TITLE-MAX {
+    _guide("title.length", kind + " title exceeds " + str(TITLE-MAX)
+           + " characters: " + title)
   }
 }
 
+// AN ILLEGAL ENUM VALUE STAYS FAIL-CLOSED. See `_need` above for why this one
+// does not relax: the author stated something the declared vocabulary does not
+// contain, so there is no correct way to render it.
 #let _enum(kind, field, value, allowed) = {
   if value != none and not allowed.contains(value) {
     _fail(kind, "invalid " + field + " " + repr(value) + " (expected one of "
@@ -770,9 +826,10 @@ w("""// ---- the behavior fence — design_doc.behavior_contract.fence ---------
   for e in _foundation-trail.get() {
     let r = rank.at(e.kind)
     if r < prev {
-      _fail("foundation", "out of order: " + e.kind + " " + repr(e.title)
-            + " follows " + prev-kind + " — the declared order is "
-            + FOUNDATION-ORDER.join(", "))
+      _guide("foundation.order",
+             "out of order: " + e.kind + " " + repr(e.title)
+             + " follows " + prev-kind + " — the declared order is "
+             + FOUNDATION-ORDER.join(", "))
     }
     prev = r
     prev-kind = e.kind
@@ -802,10 +859,12 @@ w("""// ---- the behavior fence — design_doc.behavior_contract.fence ---------
     if present.len() > 0 {
       for k in FOUNDATION-REQUIRED {
         if not present.contains(k) {
-          _fail("foundation", "declares no " + k + " — the cardinality rule "
-                + "requires at least one of each of: "
-                + FOUNDATION-REQUIRED.join(", ")
-                + " (design_doc.foundation_cardinality)")
+          _guide("foundation.cardinality",
+                 "declares no " + k + " — the cardinality guideline expects at "
+                 + "least one of each of: " + FOUNDATION-REQUIRED.join(", ")
+                 + ". Declare one, or keep the layer as it is if this context "
+                 + "has a reason not to carry one "
+                 + "(design_doc.foundation_cardinality)")
         }
       }
     }
@@ -964,11 +1023,13 @@ w("""// ---- clause + census blocks --------------------------------------------
   let flat = _flatten-text(body)
   let hit = _fence-violation(flat, level)
   if hit != none {
-    _fail(lower(word) + " clause",
-          "at level=" + level + " " + hit + " — " +
-          "the behavior fence forbids naming the mechanism " +
-          "(design_doc.behavior_contract.fence): restate the OBSERVABLE " +
-          "outcome instead")
+    // The fence is about WORDING, which is the author's call to make: the
+    // clause renders exactly as written and the library says what it found.
+    _guide("behavior.fence",
+           lower(word) + " clause at level=" + level + " " + hit + " — " +
+           "the behavior fence discourages naming the mechanism " +
+           "(design_doc.behavior_contract.fence): restate the OBSERVABLE " +
+           "outcome instead")
   }
   block(inset: (left: 10pt), [*#word* #body])
 }
@@ -988,14 +1049,16 @@ w("""// ---- clause + census blocks --------------------------------------------
   for c in CLAUSE-EXACTLY-ONE {
     let n = seq.filter(x => x == c).len()
     if n != 1 {
-      _fail("behavior", "has " + str(n) + " " + c + " clause(s), expected "
-            + "exactly 1 (design_doc.behavior_contract.clause_cardinality)")
+      _guide("behavior.clause-cardinality",
+             "a behavior rule has " + str(n) + " " + c + " clause(s), expected "
+             + "exactly 1 (design_doc.behavior_contract.clause_cardinality)")
     }
   }
   for c in CLAUSE-AT-LEAST-ONE {
     if seq.filter(x => x == c).len() == 0 {
-      _fail("behavior", "has no " + c + " clause, expected at least 1 "
-            + "(design_doc.behavior_contract.clause_cardinality)")
+      _guide("behavior.clause-cardinality",
+             "a behavior rule has no " + c + " clause, expected at least 1 "
+             + "(design_doc.behavior_contract.clause_cardinality)")
     }
   }
   let rank = (:)
@@ -1005,9 +1068,10 @@ w("""// ---- clause + census blocks --------------------------------------------
   for c in seq {
     let r = rank.at(c)
     if r < prev {
-      _fail("behavior", "clauses out of order: " + c + " follows " + prev-c
-            + " — the declared order is " + CLAUSE-ORDER.join(", ")
-            + " (design_doc.behavior_contract.clause_order)")
+      _guide("behavior.clause-order",
+             "a behavior rule's clauses are out of order: " + c + " follows "
+             + prev-c + " — the expected order is " + CLAUSE-ORDER.join(", ")
+             + " (design_doc.behavior_contract.clause_order)")
     }
     prev = r
     prev-c = c
@@ -1121,15 +1185,24 @@ w("""// ---- clause + census blocks --------------------------------------------
   // instead of burying it in a sentence, and a shape nothing validates is a
   // claim the reader has to take on trust.
   _need("relates", "cardinality", cardinality)
-  let sides = cardinality.split(":").map(p => p.trim())
-  if sides.len() != 2 {
-    _fail("relates", "cardinality " + repr(cardinality) +
-          " must be written `<this> : <other>`, for example " + repr("1 : 0..n"))
+  // The SHAPE of a stated cardinality is guidance: an unreadable shape still
+  // renders in its capsule as the author typed it, so the reader sees exactly
+  // what was written and the library says what it expected instead.
+  let sides = if cardinality == none { () } else {
+    cardinality.split(":").map(p => p.trim())
   }
-  for side in sides {
-    if side not in CARDINALITY {
-      _fail("relates", "cardinality side " + repr(side) + " must be one of " +
-            repr(CARDINALITY))
+  if cardinality != none and sides.len() != 2 {
+    _guide("relates.cardinality-shape",
+           "relates cardinality " + repr(cardinality) +
+           " is expected to be written `<this> : <other>`, for example " +
+           repr("1 : 0..n"))
+  } else {
+    for side in sides {
+      if side not in CARDINALITY {
+        _guide("relates.cardinality-side",
+               "relates cardinality side " + repr(side) +
+               " is expected to be one of " + repr(CARDINALITY))
+      }
     }
   }
   block(width: 100%, inset: (left: 2pt, y: 2.5pt),
@@ -1191,9 +1264,12 @@ w("""// ---- clause + census blocks --------------------------------------------
   // success.
   let ts = if tiles.len() > 0 { tiles } else { a.pos() }
   if ts.len() == 0 {
-    _guide("stat-grid() holds at least one tile; an empty grid renders nothing")
+    _guide("stat-grid.empty",
+           "stat-grid() holds at least one tile; an empty grid renders nothing")
     return
   }
+  // Replay each tile's deferred guidance from here, a content position.
+  for t in ts { _guides(t.at("_guides", default: ())) }
   block(width: 100%, grid(columns: (1fr,) * calc.min(ts.len(), int(cols)),
     gutter: 6pt,
     ..ts.map(t => block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(246),
@@ -1433,8 +1509,16 @@ w("""// ---- chart: a plot from a small table, no plotting spec ----------------
 // which is what keeps a design layer offline-reproducible.
 #let figure-block(caption: none, uses: (), ..a, body) = {
   _need("figure", "caption", caption)
+  // An empty `uses` is guidance — the figure still draws, and the list is
+  // documentation of what it draws with. A package OUTSIDE the vendored set
+  // stays fail-closed: it is the rule that keeps a layer reproducible offline,
+  // and rendering past it would produce a document that builds here and
+  // nowhere else.
   if uses.len() == 0 {
-    _fail("figure", "must name the packages it uses in a uses= list")
+    _guide("figure.uses",
+           "figure names no packages in a uses= list — the list is expected to "
+           + "name what the figure draws with (allowed: " + VENDORED.join(", ")
+           + ")")
   }
   for u in uses {
     if not VENDORED.contains(u) {
@@ -1502,14 +1586,18 @@ w("""// ---- the native authoring surface --------------------------------------
 // are looking at, and that is the reason the label exists. Only the CLOSED
 // SET relaxes — the shape is still checked, so `L0`, `L`, `X2`, `L2.5` and
 // `"2"` are refused by name rather than drawn as an unreadable band.
+// PRESENCE is guidance; a MALFORMED value stays fail-closed. An absent altitude
+// leaves the badge unstated and the diagram still draws. A value like "L0" or
+// "L2.5" is one the library cannot resolve to a level, a name, or a tint — it
+// would have to invent the band, so it refuses instead.
 #let _req-altitude(value) = {
   if value == none {
-    panic("diagram altitude is required. Every diagram declares the zoom " +
-          "level it is drawn at, as \\"L<n>\\" for a positive whole number n " +
-          "— the named rungs are " + repr(ALTITUDES) + ", and a deeper unit " +
-          "may declare a further one.")
-  }
-  if _alt-level(value) == none {
+    _guide("diagram.altitude",
+           "diagram altitude is unstated, so a reader cannot tell which zoom " +
+           "level the drawing is at. Expected \\"L<n>\\" for a positive whole " +
+           "number n — the named rungs are " + repr(ALTITUDES) + ", and a " +
+           "deeper unit may declare a further one.")
+  } else if _alt-level(value) == none {
     panic("diagram altitude=" + repr(value) + " is not a well-formed " +
           "altitude. An altitude is written \\"L<n>\\" for a positive whole " +
           "number n (for example " + repr(ALTITUDES) + "); the ladder is " +
@@ -1528,7 +1616,11 @@ w("""// ---- the native authoring surface --------------------------------------
 // this: `diagram-native` resolves the badge from the altitude the author
 // already declared, so it carries the leading underscore that marks a helper
 // exercised through its caller rather than demonstrated in the gallery.
+// An UNSTATED altitude resolves to a neutral label rather than crashing: the
+// presence rule is guidance now, so every resolver below has to be able to
+// answer for an altitude the author did not write.
 #let _alt-name(altitude) = {
+  if altitude == none { return "unstated" }
   ALTITUDE-NAMES.at(altitude, default: "level " + str(_alt-level(altitude)))
 }
 
@@ -1540,6 +1632,7 @@ w("""// ---- the native authoring surface --------------------------------------
 // past the end of the accent list the ladder repeats colours rather than
 // failing, because a level's colour is a reading aid, not an identifier.
 #let _alt-tint(altitude) = {
+  if altitude == none { return "slate" }
   ALT-TINT.at(altitude, default: ALT-TINT-CYCLE.at(
     calc.rem(_alt-level(altitude) - 1, ALT-TINT-CYCLE.len())))
 }
@@ -1550,7 +1643,8 @@ w("""// ---- the native authoring surface --------------------------------------
 
 #let _max-sentences(where, body, limit: 3) = {
   if type(body) == str and body != "" and _sentences(body) > limit {
-    _guide(where + ": " + str(_sentences(body)) + " sentences exceeds the " +
+    _guide("bullet.sentences",
+           where + ": " + str(_sentences(body)) + " sentences exceeds the " +
            str(limit) + "-sentence bullet guideline. A new bullet begins at a " +
            "change of object, property, or processing step.")
   }
@@ -1558,19 +1652,21 @@ w("""// ---- the native authoring surface --------------------------------------
 
 #let _max-lead(where, body, limit: 4) = {
   if type(body) == str and body != "" and _sentences(body) > limit {
-    _guide(where + ": a section lead holds about " + str(limit) +
+    _guide("section.lead-sentences",
+           where + ": a section lead holds about " + str(limit) +
            " sentences, found " + str(_sentences(body)) +
            ". Go deep in a section rather than in its intro.")
   }
 }
 
-// A required enum: absent is as much a violation as wrong. An honest label
-// that may be omitted is a label nobody writes.
+// A required enum, split the same way every other field is: ABSENT is guidance,
+// a value OUTSIDE the vocabulary is a hard failure. The library can render
+// around a label nobody wrote; it cannot render a label it has no entry for.
 #let _req-enum(field, value, allowed) = {
   if value == none {
-    panic(field + " is required and must be one of " + repr(allowed))
-  }
-  if value not in allowed {
+    _guide("enum.missing",
+           field + " is unstated — expected one of " + repr(allowed) + ".")
+  } else if value not in allowed {
     panic(field + "=" + repr(value) + " must be one of " + repr(allowed))
   }
 }
@@ -1581,7 +1677,8 @@ w("""// ---- the native authoring surface --------------------------------------
 #let points(..items) = {
   let xs = items.pos()
   if xs.len() == 0 {
-    _guide("points() holds at least one bullet; an empty list renders nothing")
+    _guide("points.empty",
+           "points() holds at least one bullet; an empty list renders nothing")
   }
   for x in xs { _max-sentences("points bullet", x) }
   list(..xs)
@@ -1613,9 +1710,10 @@ w("""// ---- the native authoring surface --------------------------------------
   let prev-t = none
   for e in _spine-trail.get() {
     if e.n < prev {
-      _fail("spine", "sections are out of order: " + repr(e.title)
-            + " follows " + repr(prev-t)
-            + " — a numbered spine runs gross to fine, ascending")
+      _guide("spine.order",
+             "sections are out of order: " + repr(e.title)
+             + " follows " + repr(prev-t)
+             + " — a numbered spine is expected to run gross to fine, ascending")
     }
     prev = e.n
     prev-t = e.title
@@ -1780,9 +1878,11 @@ w("""// ---- the native authoring surface --------------------------------------
   _req-altitude(altitude)
   _req-enum("accent", accent, TINTS)
   if nodes.len() == 0 {
-    panic("diagram: a diagram declares at least one node. An empty diagram " +
-          "renders a blank frame, which reads as a drawing that failed " +
-          "rather than as the absence of one.")
+    _guide("diagram.nodes",
+           "a diagram is expected to declare at least one node. An empty " +
+           "diagram renders a blank frame, which reads as a drawing that " +
+           "failed rather than as the absence of one — declare a node, or " +
+           "drop the diagram block.")
   }
   let c = TINT-COLOR.at(accent)
   let ac = TINT-COLOR.at(_alt-tint(altitude))
@@ -1826,7 +1926,11 @@ w("""// ---- the native authoring surface --------------------------------------
   block(width: 100%, inset: (x: 7pt, y: 3.5pt), fill: ac.lighten(92%),
         stroke: (left: 2.4pt + ac))[
     #text(size: 6.2pt, weight: "bold", fill: ac, tracking: 0.7pt)[
-      ALTITUDE #altitude · #upper(_alt-name(altitude))
+      #if altitude == none [
+        ALTITUDE #upper(_alt-name(altitude))
+      ] else [
+        ALTITUDE #altitude · #upper(_alt-name(altitude))
+      ]
     ]
     #if title != none [ #h(0.6em) #text(size: 8pt, fill: luma(70))[#title] ]
   ]
@@ -1890,7 +1994,8 @@ w("""// ---- the native authoring surface --------------------------------------
     interactions: interactions, invariants: invariants, failure: failure)
   let rows = _answer-rows(data)
   if rows.len() == 0 {
-    _guide("answers() carries no answer. A unit block with all five fields " +
+    _guide("answers.empty",
+           "answers() carries no answer. A unit block with all five fields " +
            "absent says nothing the surrounding prose did not.")
     return
   }
@@ -1909,20 +2014,32 @@ w("""// ---- the native authoring surface --------------------------------------
 }
 
 // COMPONENT CARDS — the fixed shape, so an author cannot invent a variant.
+// A card returns DATA to `components`, so its guidance is deferred into the
+// dictionary and replayed there — see `_guides`.
 #let component(name: none, lens: none, mission: none, answers: none, body: none) = {
-  _need("component", "name", name)
-  _need("component", "mission", mission)
+  let gs = ()
+  for (f, v) in (("name", name), ("mission", mission)) {
+    if v == none or v == "" {
+      gs.push((rule: "component.missing-field",
+               message: "component is missing " + f + " — a card without it "
+                        + "renders as a card that does not name that fact."))
+    }
+  }
   if lens != none { _req-enum("lens", lens, LENSES) }
-  (name: name, lens: lens, mission: mission, answers: answers, body: body)
+  (name: name, lens: lens, mission: mission, answers: answers, body: body,
+   _guides: gs)
 }
 
 #let components(..cs, accent: "teal") = {
   _req-enum("accent", accent, TINTS)
   let items = cs.pos()
   if items.len() == 0 {
-    _guide("components() holds at least one card; an empty grid renders nothing")
+    _guide("components.empty",
+           "components() holds at least one card; an empty grid renders nothing")
     return
   }
+  // Replay each card's deferred guidance from here, a content position.
+  for x in items { _guides(x.at("_guides", default: ())) }
   let c = TINT-COLOR.at(accent)
   grid(columns: (1fr,) * calc.min(items.len(), 3), gutter: 6pt,
     ..items.map(x => block(width: 100%, inset: 6pt, fill: luma(250),
@@ -1950,15 +2067,18 @@ w("""// ---- the native authoring surface --------------------------------------
 #let coverage(..rows) = {
   let rs = rows.pos()
   if rs.len() == 0 {
-    _guide("coverage() holds at least one row; an empty table renders a bare header")
+    _guide("coverage.empty",
+           "coverage() holds at least one row; an empty table renders a bare header")
     return
   }
   for r in rs {
     _req-enum("coverage status", r.at(1), COVERAGE-STATUSES)
     if r.at(1) != "captured" and (r.len() < 3 or r.at(2) == "" or r.at(2) == none) {
-      panic("coverage row " + repr(r.at(0)) + " is " + repr(r.at(1)) +
-            " and states no reason. A part is marked " + repr(r.at(1)) +
-            " only by an explicit decision, and the row carries why.")
+      _guide("coverage.reason",
+             "coverage row " + repr(r.at(0)) + " is " + repr(r.at(1)) +
+             " and states no reason. A part is marked " + repr(r.at(1)) +
+             " by an explicit decision, and the row is expected to carry why — "
+             + "add a third column with the reason.")
     }
   }
   block(width: 100%)[
@@ -1982,20 +2102,46 @@ w("""// ---- the native authoring surface --------------------------------------
 // THE PENDING LEDGER — placed on a time axis, so aging design debt is visible
 // at a glance. That makes `since` load-bearing rather than decorative, so it
 // is required and its shape is checked.
+// An entry returns DATA to the ledger, so its guidance is deferred into the
+// dictionary and replayed by `pending-ledger` — see `_guides`.
 #let pending-entry(title: none, kind: none, since: none, adr: none, body) = {
-  _title("pending", title)
-  _req-enum("pending kind", kind, PENDING-KINDS)
-  if since == none { panic("pending since is required") }
-  if type(since) != str or since.matches(regex("^\\\\d{4}-\\\\d{2}-\\\\d{2}$")).len() == 0 {
+  let gs = ()
+  if title == none or title == "" {
+    gs.push((rule: "pending.missing-field",
+             message: "a pending entry is missing title — the ledger row "
+                      + "renders with no label to read it by."))
+  }
+  // The KIND's vocabulary stays fail-closed; its ABSENCE is guidance. A kind
+  // outside the vocabulary has no colour and no row treatment, so it cannot be
+  // drawn, while a missing kind falls back to a neutral row.
+  if kind != none { _req-enum("pending kind", kind, PENDING-KINDS) }
+  if kind == none {
+    gs.push((rule: "pending.missing-field",
+             message: "a pending entry is missing kind — expected one of "
+                      + repr(PENDING-KINDS) + "."))
+  }
+  if since == none {
+    gs.push((rule: "pending.missing-field",
+             message: "pending entry " + repr(title) + " is missing since — "
+                      + "the ledger places entries on a time axis, so an entry "
+                      + "with no date cannot show how long the layer has run "
+                      + "ahead. Expected a YYYY-MM-DD date."))
+  } else if type(since) != str or since.matches(regex("^\\\\d{4}-\\\\d{2}-\\\\d{2}$")).len() == 0 {
+    // A date that is PRESENT but not a date is fail-closed: it is a value the
+    // ledger cannot place on its axis, and sorting by it would order the
+    // ledger by nonsense rather than by time.
     panic("pending since=" + repr(since) + " must be a YYYY-MM-DD date. The " +
           "ledger places entries on a time axis, so a wrong or guessed date " +
           "misreports how long the layer has run ahead.")
   }
   if kind == "build" and adr == none {
-    panic("pending entry " + repr(title) + " is kind=build and cites no ADR. " +
-          "A designed-not-yet-built entry carries the decision that designed it.")
+    gs.push((rule: "pending.build-adr",
+             message: "pending entry " + repr(title) + " is kind=build and "
+                      + "cites no ADR. A designed-not-yet-built entry is "
+                      + "expected to carry the decision that designed it — "
+                      + "add adr: <number>."))
   }
-  (title: title, kind: kind, since: since, adr: adr, body: body)
+  (title: title, kind: kind, since: since, adr: adr, body: body, _guides: gs)
 }
 
 #let pending-ledger(..entries) = {
@@ -2004,21 +2150,31 @@ w("""// ---- the native authoring surface --------------------------------------
   // states that this page is the present, and a heading over nothing states
   // that the author forgot.
   if es.len() == 0 {
-    _guide("pending-ledger() holds at least one entry; an empty ledger is " +
+    _guide("pending-ledger.empty",
+           "pending-ledger() holds at least one entry; an empty ledger is " +
            "omitted entirely rather than rendered empty.")
     return
   }
+  // Replay each entry's deferred guidance from here, a content position.
+  for e in es { _guides(e.at("_guides", default: ())) }
   heading(level: 1)[Pending updates]
   v(0.3em)
-  for e in es.sorted(key: e => e.since) {
-    let col = PENDING-COLOR.at(e.kind)
+  // An entry with no date sorts to the front rather than crashing the sort:
+  // `since` is a guideline now, so the ledger has to be able to draw a row that
+  // does not carry one. The empty key keeps the comparison total.
+  for e in es.sorted(key: e => if e.since == none { "" } else { e.since }) {
+    // A missing kind takes a neutral row rather than indexing the colour table
+    // with `none`, which would be a crash where the library promised guidance.
+    let col = if e.kind == none { luma(150) } else { PENDING-COLOR.at(e.kind) }
     block(width: 100%, inset: (x: 7pt, y: 5pt), stroke: (left: 2.4pt + col),
           fill: col.lighten(96%), radius: (right: 2pt))[
       #grid(columns: (auto, 1fr, auto), gutter: 6pt,
         box(fill: col.lighten(85%), inset: (x: 3pt, y: 1pt), radius: 1.5pt,
-            text(size: 6pt, weight: "bold", fill: col.darken(15%))[#e.kind]),
+            text(size: 6pt, weight: "bold", fill: col.darken(15%))[
+              #if e.kind == none { "—" } else { e.kind }]),
         text(size: 9.2pt, weight: "bold")[#e.title],
-        text(size: 7pt, fill: luma(120), font: "DejaVu Sans Mono")[#e.since])
+        text(size: 7pt, fill: luma(120), font: "DejaVu Sans Mono")[
+          #if e.since == none { "—" } else { e.since }])
       #if e.body != none [ #v(2pt) #text(size: 8.2pt)[#e.body] ]
       #if e.adr != none [ #v(1.5pt) #text(size: 7.2pt, fill: luma(110))[#e.adr] ]
     ]
@@ -2030,21 +2186,37 @@ w("""// ---- the native authoring surface --------------------------------------
 // STAT TILES — the identity fields are invariants (a tile with no value shows
 // a number nobody can read); the presentation rules are guidelines.
 #let stat-tile(value: none, label: none, delta: none, dir: none) = {
-  _need("stat-tile", "value", value)
-  _need("stat-tile", "label", label)
   if dir != none and dir not in ("up", "down") {
     panic("stat-tile dir=" + repr(dir) + " must be one of " + repr(("up", "down")))
   }
+  // A stat tile returns DATA to its grid, so it cannot emit its own guidance —
+  // `_need` emits content, which Typst refuses to join with the dictionary this
+  // returns. Every rule here collects into `gs` instead, and `stat-grid`
+  // replays the whole list from a content position.
+  let gs = ()
+  for (f, x) in (("value", value), ("label", label)) {
+    if x == none or x == "" {
+      gs.push((rule: "stat-tile.missing-field",
+               message: "stat-tile is missing " + f + " — the tile renders "
+                        + "with nothing to read in that position."))
+    }
+  }
   if delta != none and dir == none {
-    _guide("stat-tile " + repr(label) + " carries a delta with no dir=. A " +
-           "trend reads better coloured by its direction, so dir is up or down.")
+    gs.push((rule: "stat-tile.dir",
+             message: "stat-tile " + repr(label) + " carries a delta with no "
+                      + "dir=. A trend reads better coloured by its direction, "
+                      + "so dir is up or down."))
   }
-  let v = if type(value) == str { value } else { str(value) }
+  // A tile with no value draws an em dash rather than crashing on `str(none)`:
+  // presence is guidance now, so the tile has to be renderable without it.
+  let v = if value == none { "—" } else if type(value) == str { value } else { str(value) }
   if v.matches(regex("^[0-9]{1,3}(,[0-9]{3})+$")).len() > 0 {
-    _guide("stat-tile value=" + repr(v) + " is an accountant's figure. A stat " +
-           "value is a magnitude the eye takes in — abbreviate it (2.4M, 1.2B).")
+    gs.push((rule: "stat-tile.magnitude",
+             message: "stat-tile value=" + repr(v) + " is an accountant's "
+                      + "figure. A stat value is a magnitude the eye takes in "
+                      + "— abbreviate it (2.4M, 1.2B)."))
   }
-  (value: v, label: label, delta: delta, dir: dir)
+  (value: v, label: label, delta: delta, dir: dir, _guides: gs)
 }
 
 // THE LEGEND — show the mark, never name it. The panel is generated from the

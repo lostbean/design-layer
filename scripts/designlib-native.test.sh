@@ -12,11 +12,17 @@
 #   function signature.
 #
 #   A GUIDELINE must do BOTH things, and asserting only one of them is what
-#   makes the test vacuous. It must COMPILE CLEAN by default — otherwise the
+#   makes the test vacuous. It must NOT BLOCK a default compile — otherwise the
 #   guideline is secretly still a gate — AND it must FAIL UNDER STRICT —
 #   otherwise the rule was not relaxed, it was deleted, and the reference is a
 #   comment nobody checks. assert_guideline asserts both from one fixture, so
 #   neither half can be forgotten.
+#
+#   Note what a default compile does NOT mean here: a guideline still RECORDS
+#   itself on every render, as queryable metadata the aggregate reads back and
+#   prints. This suite compiles single fixtures with `typst` directly, so it
+#   sees only the non-blocking half; that the guidance actually reaches a human
+#   is asserted in typst-layer.test.sh, against the aggregate that reports it.
 #
 # The positive case is asserted too, and not merely that it exits 0: a document
 # that compiles to a blank page is the failure mode a bare exit code misses, so
@@ -310,25 +316,27 @@ assert_invariant diagram-ghost-edge "not a declared node" \
      nodes: ((id: "a", pos: (0,0), label: [A]),),
      edges: (("a","ghost","x"),))'
 
-assert_invariant diagram-empty "at least one node" \
+assert_guideline diagram-empty "at least one node" \
   '#diagram-native(altitude: "L1", nodes: (), edges: ())'
 
-# THE ALTITUDE LADDER IS OPEN, AND STILL REQUIRED. Two rules that pull in
-# opposite directions, so each gets its own fixture: the set of legal levels is
-# unbounded, and an omitted level is still a hard failure.
+# THE ALTITUDE LADDER IS OPEN, AND ITS TWO RULES NOW SPLIT ON SEVERITY. Each
+# gets its own fixture, because they pull in opposite directions: an omitted
+# level GUIDES, while a malformed one still fails.
 #
 # PRESENCE. A diagram with no altitude leaves the reader unable to tell which
-# zoom level they are looking at, so absence stays an invariant. This is the
-# half that opening the enum could have quietly deleted.
-assert_invariant diagram-altitude-missing "altitude is required" \
+# zoom level they are looking at, which is worse but not wrong — the drawing
+# still renders, under a badge that says the altitude is unstated.
+assert_guideline diagram-altitude-missing "altitude is unstated" \
   '#diagram-native(
      nodes: ((id: "a", pos: (0,0), label: [A]),), edges: ())'
 
-# SHAPE. Only the CLOSED SET relaxed; a value that is not `L<n>` for a positive
-# whole n has no defensible reading and must still stop the build, naming what
-# it was given. L0 and L2.5 are the interesting cases: both are "L-and-digits"
-# and both are wrong, so a check that merely looked for a leading L would pass
-# them.
+# SHAPE, and this half STAYS FAIL-CLOSED. A value that is not `L<n>` for a
+# positive whole n has no defensible reading: the library cannot resolve it to a
+# level, a name, or a band colour, so it would have to invent one. Guessing is
+# the one thing a design document must not do, which is why a MALFORMED value
+# fails where a MISSING one guides. L0 and L2.5 are the interesting cases: both
+# are "L-and-digits" and both are wrong, so a check that merely looked for a
+# leading L would pass them.
 for bad in '"L0"' '"L"' '"X2"' '"L2.5"' '"2"' '"L-1"'; do
   assert_invariant "diagram-altitude-malformed-$(printf '%s' "$bad" | tr -cd 'A-Za-z0-9.-')" \
     "is not a well-formed altitude" \
@@ -337,7 +345,7 @@ for bad in '"L0"' '"L"' '"X2"' '"L2.5"' '"2"' '"L-1"'; do
      nodes: ((id: \"a\", pos: (0,0), label: [A]),), edges: ())"
 done
 
-assert_invariant coverage-unreasoned "states no reason" \
+assert_guideline coverage-unreasoned "states no reason" \
   '#coverage(("part/x", "out-of-scope"))'
 
 assert_invariant coverage-status "coverage status" \
@@ -346,35 +354,51 @@ assert_invariant coverage-status "coverage status" \
 assert_invariant pending-date "must be a YYYY-MM-DD date" \
   '#pending-ledger(pending-entry(title: "T", kind: "verify", since: "soon")[b])'
 
-assert_invariant pending-build-adr "cites no ADR" \
+assert_guideline pending-build-adr "cites no ADR" \
   '#pending-ledger(pending-entry(title: "T", kind: "build", since: "2026-01-02")[b])'
 
-assert_invariant section-untitled "is missing required field: title" \
+assert_guideline section-untitled "section is missing title" \
   '#section(lead: "x", body: [y])'
 
-assert_invariant component-missionless "is missing required field: mission" \
+assert_guideline component-missionless "component is missing mission" \
   '#components(component(name: "C1"))'
 
-assert_invariant stat-tile-valueless "is missing required field: value" \
-  '#stat-tile(label: "things")'
+# A stat tile hands a DICTIONARY to its grid, so it cannot emit its own
+# guidance and defers it to the block that renders it. The fixture therefore
+# goes through `stat-grid`: a bare `stat-tile` returns a value nothing places on
+# the page, and the guidance would have no content position to be emitted from.
+assert_guideline stat-tile-valueless "stat-tile is missing value" \
+  '#stat-grid(stat-tile(label: "things"))'
 
 # The census's relationship shape is a DECLARED field precisely so it can be
-# checked; a shape nothing validates is a claim the reader takes on trust.
-assert_invariant relates-bad-side "cardinality side" \
+# checked. It now GUIDES: an unreadable cardinality still renders in its capsule
+# exactly as the author typed it, so the reader sees what was written and the
+# library says what it expected instead.
+assert_guideline relates-bad-side "cardinality side" \
   '#relates(cardinality: "many : 1")[other]'
 
-assert_invariant relates-bad-shape "must be written" \
+assert_guideline relates-bad-shape "expected to be written" \
   '#relates(cardinality: "1")[other]'
 
-assert_invariant relates-no-cardinality "is missing required field: cardinality" \
+assert_guideline relates-no-cardinality "relates is missing cardinality" \
   '#relates[other]'
 
-# --- guidelines: silent by default, named under strict ------------------------
+# --- guidelines: reported by default, escalated under strict ------------------
 assert_guideline title-length "title exceeds 64 characters" \
   '#goal(title: "This title is deliberately far longer than the sixty-four character budget")[b]'
 
 assert_guideline bullet-sentences "3-sentence bullet guideline" \
   '#points("One sentence. Two sentences. Three sentences. Four sentences.")'
+
+# THE BEHAVIOR FENCE. A then clause naming the mechanism instead of the
+# observable outcome is a WORDING call, so the clause renders exactly as
+# written and the library reports what it found. Asserted here so the rule
+# cannot be deleted silently while the schema still describes it.
+assert_guideline behavior-fence "forbidden term" \
+  '#behavior(title: "Rule", level: "interface")[
+     #when[the form is submitted]
+     #then[the SignupController returns an http status code]
+   ]'
 
 assert_guideline lead-sentences "section lead holds about" \
   '#section(title: "T", lead: "One. Two. Three. Four. Five.", body: [x])'

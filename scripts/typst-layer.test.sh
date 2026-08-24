@@ -194,17 +194,32 @@ if [ "$rc" -eq 0 ] && [ -f "$LAYER/design-layer.pdf" ]; then
   # --- a term body may CALL THE LIBRARY, and the aggregate supplies the scope -
   # A CONTEXT.typ imports nothing. Its bodies must still resolve `term()` and
   # `ctx()`, because they are spliced where the library is already imported.
-  # Asserting the rendered chips is what proves the call ran rather than merely
-  # parsing: `term("term-zthing")` renders the slug, `ctx("alpha")` the name.
   if printf '%s' "$text" | grep -q 'Zref to'; then
     pass_line "a term body calling the library renders"
   else
     fail_line "the library-calling term body is absent — the splice lost its scope"
   fi
-  if printf '%s' "$text" | grep -q 'term-zthing'; then
-    pass_line "term() inside a term body resolved and rendered its chip"
+
+  # --- A CITATION RENDERS THE TERM'S TITLE, NEVER ITS SLUG ------------------
+  # `term("term-zthing")` names a term titled `Zthing`, so the page must read
+  # "Zref to Zthing". The slug is an identifier the author types; printing it
+  # into running prose corrupts the sentence a reader reads, and NO freshness
+  # check can see that, because a consistently wrong document byte-compares
+  # equal to a fresh render of itself.
+  #
+  # The negative assertion is the load-bearing half. The assertion here used
+  # to be that the slug appears — which passed green through exactly this
+  # corruption across a whole corpus.
+  if printf '%s' "$text" | grep -q 'Zref to Zthing'; then
+    pass_line "term() renders the declared title"
   else
-    fail_line "term() did not render — the library was not in scope at the splice"
+    fail_line "term() did not render its title"
+    printf '%s' "$text" | grep -i "zref" | head -3 | sed 's/^/       got: /'
+  fi
+  if printf '%s' "$text" | grep -q 'term-zthing'; then
+    fail_line "term() printed the raw slug into the prose"
+  else
+    pass_line "no raw term slug reached the page"
   fi
   if printf '%s' "$text" | grep -qE 'owned by alpha\.|by alpha'; then
     pass_line "ctx() inside a term body resolved and rendered its chip"
@@ -252,6 +267,177 @@ case "$out" in
 *) fail_line "the error does not name the Typst files" ;;
 esac
 rm -f "$LAYER/beta/design.md"
+
+# --- 3b. AN UNDECLARED REFERENCE STOPS THE BUILD, naming the slug -------------
+# This is the referential integrity the call notation exists for, and it is
+# asserted by MUTATION: break the reference, demand the failure, restore.
+#
+# Before the registry existed, `term()` printed whatever string it was handed.
+# A citation of a term nobody declared rendered a dead identifier into the
+# prose and exited 0, and renaming a term at its declaration left every use
+# site stale with the whole gate green — the layer's rendered document was the
+# only place the break appeared, as text no check reads.
+cp "$LAYER/beta/design.typ" "$WORK/beta-design.typ.orig"
+cp "$LAYER/alpha/CONTEXT.typ" "$WORK/alpha-CONTEXT.typ.orig"
+
+ref_case() { # $1 = label, $2 = body line, $3 = expected substring
+  cat >"$LAYER/beta/design.typ" <<EOF
+#import "../.render/designlib.typ": *
+#let title = [Zbeta context]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zbetagoal")[Beta goal. $2]
+  ])
+]
+EOF
+  out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/ref.pdf" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    pass_line "$1 fails the build (exit $rc)"
+  else
+    fail_line "$1 built clean — a dead reference reached the rendered prose"
+  fi
+  case "$out" in
+  *"$3"*) pass_line "$1 names the offending reference" ;;
+  *)
+    fail_line "$1 did not name '$3' in its message"
+    printf '%s\n' "$out" | head -3 | sed 's/^/       /'
+    ;;
+  esac
+  rm -f "$LAYER/ref.pdf"
+}
+
+ref_case "a term citation with no declaration" \
+  '#term("term-znever-declared")' "term-znever-declared"
+ref_case "a context citation with no directory" \
+  '#ctx("znever-a-context")' "znever-a-context"
+
+# A RENAME AT THE DECLARATION is the case that motivated the registry: the
+# term still exists under a new slug, and every stale use site must fail. The
+# citation is placed in a DESIGN DOCUMENT, which is where a layer's citations
+# actually live and which the rename does not touch — renaming the slug inside
+# CONTEXT.typ alone would also rewrite the one citation in the term body there,
+# and the mutation would prove nothing.
+cat >"$LAYER/beta/design.typ" <<'EOF'
+#import "../.render/designlib.typ": *
+#let title = [Zbeta context]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zbetagoal")[Beta goal cites #term("term-zthing").]
+  ])
+]
+EOF
+sed 's/slug: "term-zthing"/slug: "term-zrenamed"/' "$WORK/alpha-CONTEXT.typ.orig" \
+  >"$LAYER/alpha/CONTEXT.typ"
+out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/ref.pdf" 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  pass_line "renaming a term at its declaration fails its stale use sites"
+else
+  fail_line "a renamed term left stale citations and the build exited 0"
+fi
+rm -f "$LAYER/ref.pdf"
+cp "$WORK/alpha-CONTEXT.typ.orig" "$LAYER/alpha/CONTEXT.typ"
+cp "$WORK/beta-design.typ.orig" "$LAYER/beta/design.typ"
+
+# DELETING EVERY GLOSSARY must not silently restore the unchecked behavior.
+# The registry lookup falls back to printing the slug when the layer declares
+# no term, because a layer written before its glossary is legal; a layer that
+# CITES a term while declaring none is not, and would print raw slugs and exit
+# 0 through exactly that fallback.
+cat >"$LAYER/beta/design.typ" <<'EOF'
+#import "../.render/designlib.typ": *
+#let title = [Zbeta context]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zbetagoal")[Beta goal cites #term("term-zthing").]
+  ])
+]
+EOF
+mv "$LAYER/alpha/CONTEXT.typ" "$WORK/alpha-CONTEXT.typ.hidden"
+out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/ref.pdf" 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  pass_line "citing a term while the layer declares none fails the build"
+else
+  fail_line "an empty glossary silently disabled every citation check"
+fi
+rm -f "$LAYER/ref.pdf"
+mv "$WORK/alpha-CONTEXT.typ.hidden" "$LAYER/alpha/CONTEXT.typ"
+cp "$WORK/beta-design.typ.orig" "$LAYER/beta/design.typ"
+
+# The restore is asserted, so a later scenario cannot inherit a broken fixture.
+if python3 ./scripts/design-aggregate "$LAYER" "$LAYER/design-layer.pdf" \
+  >/dev/null 2>&1; then
+  pass_line "the layer builds again once the references are restored"
+else
+  fail_line "the fixture did not restore — later scenarios run against a broken layer"
+fi
+
+# --- 3d. A TERM THAT STOPS PARSING IS LOUD -----------------------------------
+# The glossary scan had three consecutive silent-drop paths: a title it could
+# not read, a missing `body:`, and a body it could not read each dropped the
+# term and carried on. The document then rendered without it and the summary
+# reported the smaller count as though it were the whole vocabulary. Measured:
+# renaming a slug to a non-conforming form took the count 84 to 83 with the
+# gate still green.
+cat >"$LAYER/beta/CONTEXT.typ" <<'EOF'
+#let terms = (
+  (slug: "term-zbeta", title: [Zbeta], body: [A Zbeta.]),
+  (slug: "Not_A_Valid_Slug", title: [Zdropped], body: [Silently lost.]),
+)
+EOF
+out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/drop.pdf" 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  pass_line "a term the scan cannot reach fails the build"
+else
+  fail_line "a term was dropped from the glossary and the build exited 0"
+fi
+case "$out" in
+*"Not_A_Valid_Slug"*) pass_line "the error names the unreachable term" ;;
+*)
+  fail_line "the error does not name the unreachable term"
+  printf '%s\n' "$out" | head -3 | sed 's/^/       /'
+  ;;
+esac
+rm -f "$LAYER/drop.pdf" "$LAYER/beta/CONTEXT.typ"
+
+# --- 3c. GUIDELINES are reachable, and reachable ONLY on request -------------
+# The library's guidelines were silent by default and promoted to errors under
+# `--input strict=1`, which no app, no check, and no hook ever passed. All
+# twelve were unreachable code that read as enforcement to anyone who grepped
+# for them. DESIGN_STRICT is the door; both halves are asserted, because a
+# guideline that fires in the ordinary render would block a commit over advice.
+cat >"$LAYER/beta/design.typ" <<'EOF'
+#import "../.render/designlib.typ": *
+#let title = [Zbeta context]
+#let body = [
+  #section(title: "00 Foundation", body: [
+    #goal(title: "Zbetagoal")[Beta goal.]
+    #stat-grid()
+  ])
+]
+EOF
+if python3 ./scripts/design-aggregate "$LAYER" "$LAYER/lint.pdf" >/dev/null 2>&1; then
+  pass_line "a guideline stays silent in an ordinary render"
+else
+  fail_line "a guideline fired in the ordinary render — advice blocked the gate"
+fi
+rm -f "$LAYER/lint.pdf"
+out="$(DESIGN_STRICT=1 python3 ./scripts/design-aggregate "$LAYER" "$LAYER/lint.pdf" 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  pass_line "the same guideline fires under DESIGN_STRICT"
+else
+  fail_line "DESIGN_STRICT did not reach the guidelines — they remain dead code"
+fi
+case "$out" in
+*"[guideline]"*) pass_line "the strict failure is labelled a guideline" ;;
+*) fail_line "the strict failure does not name itself a guideline" ;;
+esac
+rm -f "$LAYER/lint.pdf"
+cp "$WORK/beta-design.typ.orig" "$LAYER/beta/design.typ"
 
 # --- 4. the foundation ORDER is enforced in Typst mode ------------------------
 # FOUNDATION-ORDER was projected into the library and read by nothing: the

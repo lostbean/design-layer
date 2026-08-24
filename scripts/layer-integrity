@@ -88,14 +88,37 @@ from typing import Optional
 
 
 class Report:
-    """Collects violations. `found` drives the exit code."""
+    """Collects violations, and counts what each check actually MATCHED.
+
+    THE COUNT IS THE ANTI-VACUITY GUARD. A pattern-based check reports the same
+    clean line whether it examined seven hundred references or none at all, so
+    a check that silently matches nothing is indistinguishable from a check
+    that passed — and that is the failure mode this whole class of gate keeps
+    reproducing. A marker list that lost an extension, an indexer handed a
+    notation it does not parse, a scan whose pattern stopped matching: each
+    reported OK over an empty set.
+
+    Every check therefore records how many items it resolved, and the summary
+    prints those numbers. `assert_nonzero` turns the ones that must never be
+    empty into failures rather than silence.
+    """
 
     def __init__(self) -> None:
         self.found = False
+        self.counts: dict = {}
 
     def violation(self, file: str, what: str, why: str) -> None:
         print(f"violation: {file}: {what}: {why}")
         self.found = True
+
+    def matched(self, what: str, n: int = 1) -> None:
+        self.counts[what] = self.counts.get(what, 0) + n
+
+    def assert_nonzero(self, what: str, why: str) -> None:
+        """A check that matched nothing examined nothing, and must say so."""
+        if not self.counts.get(what):
+            print(f"violation: {what}: matched nothing: {why}")
+            self.found = True
 
 
 def die(message: str) -> "None":
@@ -321,6 +344,8 @@ class FileIndex:
         default_factory=list
     )  # (line_no, name) from script= attrs
     adr_calls: list = field(default_factory=list)  # (line_no, N) from #adr(N)
+    term_cites: list = field(default_factory=list)  # (line_no, slug) #term("…")
+    ctx_cites: list = field(default_factory=list)  # (line_no, name) #ctx("…")
 
 
 def read_lines(path: str) -> list:
@@ -436,6 +461,12 @@ TYPST_TERM_RE = re.compile(r'slug:\s*"(term-[a-z0-9]+(?:-[a-z0-9]+)*)"')
 TYPST_SECTION_RE = re.compile(r'(?:sub)?section\(\s*title:\s*"([^"]*)"')
 TYPST_LINK_RE = re.compile(r'link\(\s*"([^"]*)"')
 TYPST_LINE_COMMENT_RE = re.compile(r"//.*$")
+# A CITATION, as opposed to a declaration. `#term("term-x")` names a term
+# another file declares and `#ctx("name")` names a context directory; both are
+# cross-references, and the whole reason the notation is a call is that the
+# name is checkable at the citing line.
+TYPST_TERM_CITE_RE = re.compile(r'#term\(\s*"([^"]*)"\s*\)')
+TYPST_CTX_CITE_RE = re.compile(r'#ctx\(\s*"([^"]*)"')
 
 
 def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
@@ -466,6 +497,10 @@ def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
                 idx.section_ids.add(slug)
         for m in TYPST_LINK_RE.finditer(line):
             idx.link_dests.append(m.group(1))
+        for m in TYPST_TERM_CITE_RE.finditer(line):
+            idx.term_cites.append((lineno, m.group(1)))
+        for m in TYPST_CTX_CITE_RE.finditer(line):
+            idx.ctx_cites.append((lineno, m.group(1)))
 
     return idx
 
@@ -480,12 +515,50 @@ def check_adr_calls(files: list, adr_numbers: set, report: Report) -> None:
     """
     for idx in files:
         for lineno, number in sorted(set(idx.adr_calls)):
+            report.matched("ADR citations")
             if number not in adr_numbers:
                 report.violation(
                     f"{idx.rel}:{lineno}",
                     "dangling ADR citation",
                     f"cites adr({number}), and the ADR directory holds no ADR "
                     f"with that number",
+                )
+
+
+def check_typst_cites(
+    files: list, declared_terms: set, declared_contexts: set, report: Report
+) -> None:
+    """Every #term("…") and #ctx("…") names something the layer declares.
+
+    THE MARKDOWN SIDE GOT THIS FOR FREE and the Typst side did not. A markdown
+    citation is a LINK, so it carries a path the marker list recognises and
+    check 1 resolves it. A Typst citation is a CALL carrying a bare name, which
+    matches no marker, and the marker list held no `.typ` entry — so every one
+    of them fell out of check 1 through the `continue` that drops a
+    non-design-ish destination. Measured on a real layer: 91 ADR citations were
+    enforced while 433 term and 46 context citations were not checked at all,
+    and an invented slug passed the full gate green.
+
+    The renderer now resolves these at compile time, which is the stronger
+    check. This one is still worth running: it names EVERY offender with its
+    file and line in one pass, where the compile stops at the first.
+    """
+    for idx in files:
+        for lineno, slug in idx.term_cites:
+            report.matched("term citations")
+            if slug not in declared_terms:
+                report.violation(
+                    f"{idx.rel}:{lineno}",
+                    "dangling term citation",
+                    f'cites term("{slug}"), and no CONTEXT declares that slug',
+                )
+        for lineno, name in idx.ctx_cites:
+            report.matched("context citations")
+            if name not in declared_contexts:
+                report.violation(
+                    f"{idx.rel}:{lineno}",
+                    "dangling context citation",
+                    f'cites ctx("{name}"), and the layer holds no such context',
                 )
 
 
@@ -686,6 +759,7 @@ def check_links(
         )
         if not (designish or designish_re or in_marker_dir):
             continue  # matches no schema marker — not design-ish
+        report.matched("links resolved")
 
         if not frag:
             if not os.path.exists(abspath):
@@ -1372,6 +1446,44 @@ def main(argv: list) -> int:
             adr_numbers.add(int(m.group(1)))
     check_adr_calls(design_docs + contexts, adr_numbers, report)
 
+    # A term citation resolves against the slugs the CONTEXTs declare, and a
+    # context citation against the context directories the layer holds.
+    declared_terms = set()
+    for idx in contexts:
+        declared_terms.update(idx.term_headings)
+    declared_contexts = {
+        os.path.basename(os.path.dirname(idx.path)) for idx in contexts
+    }
+    check_typst_cites(design_docs + contexts, declared_terms, declared_contexts, report)
+
+    # ANTI-VACUITY, asserted where zero is genuinely impossible and nowhere
+    # else. A check reports the same clean line over an empty set as over a
+    # full one, so the count must be visible — but a floor is only honest
+    # where the layer cannot legitimately be empty. A small layer may cite no
+    # term at all, so "zero citations" is not by itself a defect.
+    #
+    # What IS impossible is a layer whose files carry citations that the scan
+    # then resolves none of. The comparison is against the raw text, so a
+    # pattern that stops matching is caught by the thing it stopped matching.
+    cite_bearing = 0
+    for idx in design_docs + contexts:
+        if not idx.path.endswith(".typ"):
+            continue
+        for line in idx.stripped:
+            cite_bearing += line.count("#term(") + line.count("#ctx(")
+    if cite_bearing:
+        resolved = report.counts.get("term citations", 0) + report.counts.get(
+            "context citations", 0
+        )
+        if not resolved:
+            report.violation(
+                "layer-integrity",
+                "vacuous citation check",
+                f"the layer's Typst sources hold {cite_bearing} term()/ctx() "
+                "citation(s) and the scan resolved none, so the check "
+                "examined nothing while reporting clean",
+            )
+
     disc = Discovery(
         design_docs=design_docs,
         contexts=contexts,
@@ -1403,9 +1515,20 @@ def main(argv: list) -> int:
 
     if report.found:
         return 1
+    # THE SUMMARY REPORTS WHAT WAS CHECKED, not what was discovered. The old
+    # line counted files found and named them `CONTEXT.md` — against a Typst
+    # layer holding zero `.md` files it printed "5 CONTEXT.md", which reads as
+    # five files checked and was neither the right count's subject nor an
+    # assertion count at all. A discovery number cannot distinguish a check
+    # that resolved seven hundred references from one that resolved none, and
+    # that is the difference this line exists to show.
+    resolved = ", ".join(
+        f"{n} {what}" for what, n in sorted(report.counts.items()) if n
+    )
     print(
         f"layer-integrity OK: {len(design_docs)} design doc(s), "
-        f"{len(contexts)} CONTEXT.md, {len(adr_files)} ADR(s) in {root}"
+        f"{len(contexts)} glossary file(s), {len(adr_files)} ADR(s) in {root}"
+        + (f" — resolved {resolved}" if resolved else "")
     )
     return 0
 

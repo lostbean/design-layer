@@ -800,6 +800,54 @@ assert_exit 1 "adr(N) naming no ADR is a violation" -- "$CHECK" "$STYPBAD"
 assert_contains "dangling ADR citation" "report flags the dangling ADR call"
 assert_contains "adr(999)" "report names the offending ADR number"
 
+# --- A TERM AND A CONTEXT CITATION RESOLVE, exactly as an ADR citation does ---
+# The ADR call was enforced and the other two notations were not, because a
+# markdown citation is a LINK that the schema's marker list recognises while a
+# Typst citation is a CALL carrying a bare name that matches no marker. Every
+# term() and ctx() therefore fell out of the link check through the branch
+# that drops a non-design-ish destination: measured on a real layer, 91 ADR
+# citations enforced against 433 term and 46 context citations checked by
+# nothing, with an invented slug passing the full gate green.
+STYPTERM="$TMP/typst-dangling-term"
+build_typst "$STYPTERM"
+cat >"$STYPTERM/docs/design/alpha/design.typ" <<'EOF'
+#let title = [Alpha]
+#let body = [
+  #section(title: "02.1 The pending ledger")[Cites #term("term-never-declared").]
+]
+EOF
+assert_exit 1 "term() naming no declared term is a violation" -- "$CHECK" "$STYPTERM"
+assert_contains "dangling term citation" "report flags the dangling term call"
+assert_contains "term-never-declared" "report names the offending slug"
+
+STYPCTX="$TMP/typst-dangling-ctx"
+build_typst "$STYPCTX"
+cat >"$STYPCTX/docs/design/alpha/design.typ" <<'EOF'
+#let title = [Alpha]
+#let body = [
+  #section(title: "02.1 The pending ledger")[Cites #ctx("no-such-context").]
+]
+EOF
+assert_exit 1 "ctx() naming no context is a violation" -- "$CHECK" "$STYPCTX"
+assert_contains "dangling context citation" "report flags the dangling context call"
+assert_contains "no-such-context" "report names the offending context"
+
+# A RESOLVING citation of each kind stays clean, so the check is proved to
+# discriminate rather than to reject every citation it sees.
+STYPOK="$TMP/typst-resolving-cites"
+build_typst "$STYPOK"
+cat >"$STYPOK/docs/design/alpha/design.typ" <<'EOF'
+#let title = [Alpha]
+#let body = [
+  #section(title: "02.1 The pending ledger")[Cites #term("term-thing") in #ctx("alpha").]
+]
+EOF
+assert_exit 0 "resolving term() and ctx() citations are clean" -- "$CHECK" "$STYPOK"
+# THE COUNT IS REPORTED, which is what makes a vacuous pass visible. The same
+# clean line was printed whether the check resolved every reference or none.
+assert_contains "resolved" "the summary reports what the check actually matched"
+assert_contains "term citations" "the summary counts the term citations resolved"
+
 # --- Scenario: a MULTI-CONTEXT Typst layer ------------------------------------
 # Three checks were written when markdown was the only notation, and each
 # asserted a MARKDOWN BASENAME or a MARKDOWN REFERENCE FORM. Against a

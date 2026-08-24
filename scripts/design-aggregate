@@ -196,6 +196,15 @@ class MixedLayer(Exception):
     """A layer holding both markdown and Typst sources."""
 
 
+class TermParseError(Exception):
+    """A declared term the glossary scan could not read.
+
+    Raised rather than skipped. Every path this replaces dropped the term and
+    carried on, so the document rendered without it and the summary line
+    reported the smaller count as though it were the whole vocabulary.
+    """
+
+
 def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
                        n_contexts, n_terms):
     """Render the assembled document, then build-or-verify it.
@@ -218,9 +227,16 @@ def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
     # accident, the same shape as a read-only package cache standing in for an
     # offline contract.
     env = dict(os.environ, SOURCE_DATE_EPOCH="0")
+    # THE GUIDELINE SWEEP, off unless the caller asks for it. The library's
+    # guidelines are silent in every ordinary render — they describe a document
+    # that could read better, never one that is wrong — and `--input strict=1`
+    # promotes each to an error for an author who wants the pass. It is wired
+    # here rather than in the gate on purpose: a guideline must never decide
+    # whether a commit lands.
+    strict = ["--input", "strict=1"] if os.environ.get("DESIGN_STRICT") else []
     try:
         proc = subprocess.run(
-            [typst, "compile", agg, target,
+            [typst, "compile", agg, target, *strict,
              # the renderer refuses any source outside its project root, and
              # the library may sit outside the layer under $DESIGN_LIB_DIR, so
              # the root must span both the layer and the library.
@@ -298,10 +314,32 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
     rel_lib = os.path.relpath(os.path.abspath(lib), os.path.abspath(gen_dir))
     cleanup = []
 
+    terms = typst_glossary_terms(root, docs)
+
     L = ['#import "%s": *' % rel_lib, ""]
     L.append("#show: aggregate-doc.with(")
     L.append('  title: [Design layer],')
     L.append('  subtitle: [the whole layer, as one document],')
+    L.append(")")
+    L.append("")
+
+    # THE LAYER'S VOCABULARY, declared before any body renders. `term()` and
+    # `ctx()` resolve against this registry, so a citation prints the term's
+    # TITLE and an undeclared slug stops the compile at the citing line. It is
+    # emitted here rather than beside the glossary because a citation appears
+    # in the very first chapter, long before the glossary is assembled.
+    #
+    # The title is taken as PLAIN TEXT. A title carrying markup would need the
+    # markup evaluated to be placed inline, and a chip renders a short phrase;
+    # the plain reading is what a reader sees either way.
+    _titles = ", ".join(
+        "%s: %s" % (_typ_str(t["slug"]), _typ_str(t["title_text"]))
+        for t in sorted(terms, key=lambda x: x["slug"]))
+    _ctx_names = ", ".join(
+        _typ_str(name) for name, _doc in docs if name is not None)
+    L.append("#declare-vocabulary(")
+    L.append("  terms: (%s)," % (_titles if _titles else ":"))
+    L.append("  contexts: (%s)," % _ctx_names)
     L.append(")")
     L.append("")
 
@@ -334,7 +372,6 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
         L.append("#assert-foundation-order")
         L.append("")
 
-    terms = typst_glossary_terms(root, docs)
     if terms:
         L.append("= Glossary <glossary>")
         L.append("Every term the layer declares, with the context that owns it.")
@@ -365,6 +402,13 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
             L.append("#context-owner(%s)" % _typ_str(t["context"]))
             L.append(_splice(t["body_src"]))
             L.append("")
+
+    # Every citation is resolvable, judged once the whole document has been
+    # laid out and every term() call has recorded itself. This closes the
+    # empty-registry fallback: a layer that cites terms while declaring none
+    # would otherwise print raw slugs and exit 0.
+    L.append("#assert-references-resolvable")
+    L.append("")
 
     agg = os.path.join(gen_dir, "_aggregate.typ")
     open(agg, "w", encoding="utf-8").write("\n".join(L) + "\n")
@@ -407,24 +451,57 @@ def typst_glossary_terms(root, docs):
         if not os.path.exists(ctx):
             continue
         src = open(ctx, encoding="utf-8").read()
+        rel = os.path.relpath(ctx, root)
+        # THE DECLARED COUNT, read independently of the parse below. Every
+        # `slug:` in the file is a term the author wrote; the scan that follows
+        # is the only thing that can lose one, so the two numbers are compared
+        # rather than trusted. A slug that stops matching — renamed to a form
+        # the pattern does not accept, or followed by a field the scan cannot
+        # read — used to fall out through one of three `continue` paths, and
+        # the summary reported the smaller count as though it were right.
+        declared = re.findall(r'\bslug:\s*"([^"]*)"', src)
+        parsed = []
         for m in re.finditer(
                 r'slug:\s*"(?P<slug>term-[a-z0-9-]+)"\s*,\s*title:\s*', src):
             title = _typst_value_at(src, m.end())
             if title is None:
-                continue
+                raise TermParseError(
+                    "%s: term %r declares a title the scan cannot read. A "
+                    "title is a content block `[...]` or a quoted string."
+                    % (rel, m.group("slug")))
             b = re.compile(r'\s*,\s*body:\s*').match(src, title["end"])
             if b is None:
-                continue
+                raise TermParseError(
+                    "%s: term %r has no `body:` after its title. A term "
+                    "carries a slug, a title, and a body, in that order."
+                    % (rel, m.group("slug")))
             body = _typst_value_at(src, b.end())
             if body is None:
-                continue
+                raise TermParseError(
+                    "%s: term %r declares a body the scan cannot read. A body "
+                    "is a content block `[...]` or a quoted string."
+                    % (rel, m.group("slug")))
+            parsed.append(m.group("slug"))
             found.append({
                 "slug": m.group("slug"),
                 "sort_key": title["text"].lower(),
+                # the title as plain text, which is what an inline citation
+                # renders; the source form is what the glossary heading splices.
+                "title_text": title["text"].strip(),
                 "title_src": title["src"],
                 "body_src": body["src"],
                 "context": stem,
             })
+        # A slug the file declares and the scan did not reach is a term the
+        # glossary would silently lose. Naming it is the whole point: the
+        # failure it replaces was a count quietly one lower than the truth.
+        if len(parsed) != len(declared):
+            lost = [s for s in declared if s not in parsed]
+            raise TermParseError(
+                "%s declares %d term(s) and only %d parsed; unreachable: %s. "
+                "A term slug is `term-` followed by lowercase words joined by "
+                "single hyphens."
+                % (rel, len(declared), len(parsed), ", ".join(repr(s) for s in lost)))
     return found
 
 
@@ -661,7 +738,11 @@ def main():
         return 2
 
     if mode == "typst":
-        return aggregate_typst(root, out_pdf, check, lib, docs)
+        try:
+            return aggregate_typst(root, out_pdf, check, lib, docs)
+        except TermParseError as exc:
+            sys.stderr.write("design-aggregate: error: %s\n" % exc)
+            return 2
 
     # The scratch directory for the generated Typst stays under the LAYER ROOT,
     # never beside the library: $DESIGN_LIB_DIR may point at a read-only store,

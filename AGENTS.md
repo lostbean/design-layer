@@ -62,8 +62,15 @@ nix fmt                           # treefmt: nixfmt, prettier, shfmt, ruff-forma
 nix run .#render    -- <design.md> [--check]
 nix run .#aggregate -- <layer-root> <out.pdf> [--check]
 nix run .#check     -- <layer-root> <repo-root>
+nix run .#lint      -- <layer-root>          # the guideline sweep, never a gate
 nix run .#project   -- schema/design-schema.json <out-dir>
 ```
+
+`check` runs the invariants and decides pass or fail. `lint` promotes every
+GUIDELINE to an error and is invoked by an author, never by the gate or the
+commit hook: a guideline names a document that could read better, never one
+that is wrong, so blocking a commit on one would impose a house style through
+a mechanism meant for correctness.
 
 The self-tests are the correctness proof — this repo has no design layer of its
 own by decision, so nothing here is verified by dogfooding:

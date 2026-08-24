@@ -168,6 +168,12 @@ ROUTER_ONLY = {
     "pending", "pill", "lnk", "given", "when", "then", "attribute",
     "relates", "entity", "behavior", "chapter-page", "aggregate-doc",
     "context-owner", "stat-grid",
+    # AGGREGATE INFRASTRUCTURE, not an authoring widget. The aggregate emits
+    # this call itself, from data it read out of every CONTEXT; an author
+    # never writes one, so a gallery page demonstrating it would demonstrate
+    # nothing a reader could copy. Its behavior is covered where it is real —
+    # the reference-resolution assertions in typst-layer.test.sh.
+    "declare-vocabulary",
 }
 missing = []
 for fn in sorted(public - ROUTER_ONLY):
@@ -255,6 +261,12 @@ PYEOF
     fail_line "the schema's vendored package set has drifted from the flake:"
     sed 's/^/       /' /tmp/wc-vendor.err 2>/dev/null | head -4
   fi
+else
+  # The flake is what actually vendors the package set, so its absence does not
+  # make this check inapplicable — it makes the check IMPOSSIBLE, which is a
+  # different thing and must not read as a pass. Without this branch the
+  # assertion count fell 7 to 6 and the suite still exited 0.
+  fail_line "no $ROOT/flake.nix: the vendored set could not be compared"
 fi
 
 echo

@@ -51,6 +51,21 @@ violation, 2 on an error:
    every glossary term is unique, no layer file sits outside its declared
    home under `docs/`
 
+One further entry point is advisory rather than a gate:
+
+```sh
+nix run github:lostbean/design-layer#lint -- docs/design
+```
+
+`lint` renders the layer with every GUIDELINE promoted to an error and reports
+the first that fires. The library holds two classes of rule, and they are
+reached differently on purpose. An **invariant** is a hard error in every
+render — a statement block with no title is a claim nobody can cite. A
+**guideline** names a document that could read better, never one that is wrong
+— a title running long, a bullet running to five sentences, an empty grid — so
+it is silent in every ordinary render and never blocks a commit. `lint` is the
+sweep an author asks for; it is deliberately not part of `check`.
+
 Two lower-level entry points back the composite ones above:
 
 ```sh

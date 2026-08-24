@@ -1317,13 +1317,92 @@ w("""// ---- the native authoring surface --------------------------------------
   v(0.45em)
 }
 
-// CROSS REFERENCES — a reference is a call over declared data, so a rename is
-// a compile error rather than a dangling path a link checker finds later.
+// CROSS REFERENCES — a reference RESOLVES against declared data, so a rename
+// is a compile error rather than a dangling path a link checker finds later.
+//
+// THE REGISTRY IS WHAT MAKES THAT CLAIM TRUE. Both registries are supplied by
+// the aggregate, which reads every CONTEXT.typ and every context directory
+// before it compiles: TERM-TITLES maps each declared slug to the title its
+// glossary entry carries, and CONTEXT-NAMES lists every context the layer
+// holds. A citation looks its subject up and renders the TITLE, so the reader
+// sees the phrase the term names rather than the identifier the author typed.
+// A slug with no declaration panics AT THE CITING CALL, which is the
+// referential integrity this notation exists for: renaming a term at its
+// declaration fails every stale use site during the compile, instead of
+// printing a dead identifier into running prose that no byte-compare of the
+// output can detect.
+//
+// AN EMPTY REGISTRY DISABLES THE LOOKUP, and only that case. A context
+// compiled ALONE — an author previewing one document — has no aggregate to
+// supply a registry, and panicking there would make a single file
+// unrenderable. That fallback prints the slug, as this function always did.
+// The aggregate additionally asserts its registry is non-empty, so the empty
+// case can never arise in the render that gates and silently restore the old
+// unchecked behavior.
+#let TERM-TITLES = state("design-term-titles", (:))
+#let CONTEXT-NAMES = state("design-context-names", ())
+#let CITED-TERMS = state("design-cited-terms", ())
+
 #let ctx(name, accent: "teal") = {
   _req-enum("accent", accent, TINTS)
-  chip(name, tone: TINT-COLOR.at(accent))
+  context {
+    let declared = CONTEXT-NAMES.final()
+    if declared.len() > 0 and name not in declared {
+      panic("ctx(" + repr(name) + ") names no context this layer declares. " +
+            "Declared: " + declared.join(", ") + ". A context reference " +
+            "resolves against the directories the layer holds, so a renamed " +
+            "or misspelled context fails here rather than rendering a dead " +
+            "identifier into the prose.")
+    }
+    chip(name, tone: TINT-COLOR.at(accent))
+  }
 }
-#let term(slug) = chip(slug, tone: luma(110))
+
+#let term(slug) = {
+  CITED-TERMS.update(xs => xs + (slug,))
+  context {
+    let titles = TERM-TITLES.final()
+    if titles.len() == 0 {
+      chip(slug, tone: luma(110))
+    } else if slug in titles {
+      chip(titles.at(slug), tone: luma(110))
+    } else {
+      panic("term(" + repr(slug) + ") cites a term no CONTEXT.typ declares. " +
+            "A term citation renders the declared TITLE, so an undeclared " +
+            "slug has no text to render and would print the raw identifier " +
+            "into the prose. Declare the term in a CONTEXT.typ, or correct " +
+            "the slug.")
+    }
+  }
+}
+
+// The aggregate declares the layer's vocabulary before any body renders.
+//
+// A layer that declares NO term is legal — a layer may be written before its
+// glossary is. That case leaves the term registry empty and the lookup falls
+// back to printing the slug, so the aggregate refuses a citation it cannot
+// resolve rather than resolving it wrongly: `assert-references-resolvable`
+// below runs at the end of the document and fails if any citation was made
+// against an empty registry.
+#let declare-vocabulary(terms: (:), contexts: ()) = {
+  TERM-TITLES.update(terms)
+  CONTEXT-NAMES.update(contexts)
+}
+
+// The empty-registry fallback is a real hole, so it is closed by an assertion
+// rather than by trust: a layer declaring no term at all renders, and a layer
+// that CITES a term while declaring none stops here. Without this, deleting
+// every CONTEXT.typ would silently restore the old unchecked behavior for the
+// whole document.
+#let assert-references-resolvable = context {
+  let cited = CITED-TERMS.final()
+  if cited.len() > 0 and TERM-TITLES.final().len() == 0 {
+    panic("the document cites " + str(cited.len()) + " term(s) — including " +
+          repr(cited.first()) + " — while the layer declares no term at all, " +
+          "so no citation could be resolved and each one printed its raw " +
+          "slug. Declare the terms in a CONTEXT.typ.")
+  }
+}
 #let lens-pill(name) = {
   _req-enum("lens", name, LENSES)
   chip(name, tone: LENS-COLOR.at(name))

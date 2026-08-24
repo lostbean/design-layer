@@ -39,6 +39,13 @@ if ! command -v "${TYPST:-typst}" >/dev/null 2>&1; then
   echo "design-render.test: error: no renderer on PATH (set TYPST or enter the dev shell)" >&2
   exit 2
 fi
+# Case (k) reads the rendered outline back as text, and it exists BECAUSE the
+# bug it guards produced no error. A test that cannot run must not report
+# success, so a missing extractor is an error here, never a SKIP.
+if ! command -v pdftotext >/dev/null 2>&1; then
+  echo "design-render.test: error: no pdftotext (enter the dev shell)" >&2
+  exit 2
+fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -323,19 +330,17 @@ if [ "$ch_rc" -ne 0 ]; then
   fail_line "(k) a multi-context layer with authored H1s failed to render: $ch_out"
 else
   # The bug produced NO error — it rendered a wrong document quietly — so the
-  # only honest assertion reads the outline the reader sees. pdftotext comes
-  # from the devShell; when it is missing the case reports skipped rather than
-  # passing, because a silent pass here is exactly the failure mode under test.
-  if command -v pdftotext >/dev/null 2>&1; then
-    toc="$(pdftotext -f 1 -l 3 "$CHD/docs/design/design-layer.pdf" - 2>/dev/null |
-      grep -cE '^[0-9]+ alpha' || true)"
-    if [ "${toc:-0}" -eq 1 ]; then
-      pass_line "(k) a context with its own H1 contributes exactly one chapter"
-    else
-      fail_line "(k) the outline lists the alpha context ${toc:-0} time(s), want 1"
-    fi
+  # only honest assertion reads the outline the reader sees. The extractor is
+  # required at startup rather than tested for here: a SKIP nothing reads is
+  # the same silent pass this case exists to catch. Measured before that
+  # change — with poppler off PATH the suite's count fell 25 to 24 and it
+  # still exited 0.
+  toc="$(pdftotext -f 1 -l 3 "$CHD/docs/design/design-layer.pdf" - 2>/dev/null |
+    grep -cE '^[0-9]+ alpha' || true)"
+  if [ "${toc:-0}" -eq 1 ]; then
+    pass_line "(k) a context with its own H1 contributes exactly one chapter"
   else
-    printf '  SKIP (k) outline check needs pdftotext (nix develop provides it)\n'
+    fail_line "(k) the outline lists the alpha context ${toc:-0} time(s), want 1"
   fi
   case "$ch_out" in
   *"labelled multiple times"*)

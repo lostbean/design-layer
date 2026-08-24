@@ -270,6 +270,73 @@
             program = "${checkWrapper}/bin/design-check";
           };
 
+        # THE GUIDELINE PASS — reference, deliberately NOT a gate.
+        #
+        # The library holds two classes of rule. An INVARIANT is a hard error
+        # in every render: a statement block with no title is a claim nobody
+        # can cite. A GUIDELINE is advice about the document a reader will
+        # get — a title running long, a bullet running to five sentences, an
+        # empty grid — and it is silent by default, because a design document
+        # is read by someone who did not write it and cannot act on a lint
+        # note.
+        #
+        # Guidelines therefore render nothing and, until this app existed,
+        # could be reached by NOTHING: `strict` appeared in no app, no check,
+        # and no hook, so all twelve were unreachable code that read as
+        # enforcement to anyone who grepped for them.
+        #
+        # This app is the reachable door, and it stays OUT of `check` and out
+        # of the commit hook on purpose. A guideline names a document that
+        # could read better, never one that is wrong, so blocking a commit on
+        # one would impose a house style through a mechanism meant for
+        # correctness. An author runs it when they want the sweep:
+        #
+        #   nix run <flake>#lint -- <layer-root>
+        #
+        # Exit: 0 no guideline fires, 1 at least one does (named, with its
+        # source line), 2 usage error.
+        apps.lint =
+          let
+            lintWrapper = pkgs.writeShellApplication {
+              name = "design-lint";
+              runtimeInputs = gateRuntime;
+              text = ''
+                if [ "$#" -lt 1 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+                  cat >&2 <<'USAGE'
+                usage: design-lint <layer-root>
+
+                  <layer-root>  the directory holding the root design document
+                                and the per-context subdirectories
+
+                Renders the layer with every GUIDELINE promoted to an error and
+                reports the first one that fires. Guidelines are advisory: this
+                is a pass an author asks for, never part of the gate.
+
+                Exit: 0 clean, 1 a guideline fired, 2 usage error.
+                USAGE
+                  exit 2
+                fi
+
+                export DESIGN_SCHEMA="''${DESIGN_SCHEMA:-${gateBundle}/schema/design-schema.json}"
+                export DESIGN_LIB_DIR="''${DESIGN_LIB_DIR:-${gateBundle}/render}"
+                export DESIGN_STRICT=1
+
+                out="$(mktemp -d)"
+                trap 'rm -rf "$out"' EXIT
+                if ${gateBundle}/scripts/design-aggregate \
+                  "$1" "$out/lint.pdf"; then
+                  echo "design-lint: no guideline fired in $1"
+                else
+                  exit 1
+                fi
+              '';
+            };
+          in
+          {
+            type = "app";
+            program = "${lintWrapper}/bin/design-lint";
+          };
+
         # `nix fmt` runs treefmt across the repo.
         formatter = treefmtEval.config.build.wrapper;
 

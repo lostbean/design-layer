@@ -113,20 +113,19 @@ try:
                 "layer_layout.unit_model.altitude_tints has no entry for %r" % _a)
     lens_values = schema["enums"]["lens"]["values"]
     # the entity census's two vocabularies. provenance is a declared enum like
-    # enforcement; the entity KIND set is stated, in words, in the entity block's
-    # own declaration (design_doc.blocks.entity) as "kind=a|b|c", so we parse it
-    # from there rather than keeping a local copy — a schema edit re-projects.
+    # enforcement; the entity KIND and LIFECYCLE sets are declared as arrays in
+    # design_doc.entity_contract, read here like every other vocabulary above.
     provenance_values = schema["enums"]["provenance"]["values"]
-    _entity_decl = schema["design_doc"]["blocks"]["entity"]
-    _entity_kinds_m = _re.search(r"kind=([a-z|-]+)", _entity_decl)
-    if not _entity_kinds_m:
-        raise KeyError("design_doc.blocks.entity declares no kind=a|b|c set")
-    entity_kinds = _entity_kinds_m.group(1).split("|")
-    _entity_lifecycle_m = _re.search(r"lifecycle \(required — ([a-z|-]+)",
-                                    _entity_decl)
-    if not _entity_lifecycle_m:
-        raise KeyError("design_doc.blocks.entity declares no lifecycle set")
-    entity_lifecycles = _entity_lifecycle_m.group(1).split("|")
+    # An absent or empty vocabulary is named by its own key, so the message
+    # points at the declaration to fix rather than at a bare word.
+    _entity_contract = schema["design_doc"]["entity_contract"]
+    for _ek in ("kinds", "lifecycles"):
+        if not _entity_contract.get(_ek):
+            raise KeyError(
+                "design_doc.entity_contract declares no %s — the entity block "
+                "would validate against an empty vocabulary" % _ek)
+    entity_kinds = list(_entity_contract["kinds"])
+    entity_lifecycles = list(_entity_contract["lifecycles"])
     tint_values = schema["design_doc"]["accents"]["values"]
     declared_blocks = list(schema["design_doc"]["blocks"].keys())
     # WHICH ATTRIBUTES ARE REQUIRED, read from the block declarations rather
@@ -149,17 +148,14 @@ try:
     for _kind, _decl in schema["design_doc"]["blocks"].items():
         if isinstance(_decl, str):
             required_attrs[_kind] = list(dict.fromkeys(_ATTR_REQ.findall(_decl)))
-    # foundation kinds (the four statement blocks) and their fixed order are
-    # both DECLARED in the schema — never hardcoded here. The four kinds are the
-    # subjects of block_fields.statement_blocks ("goal, no-goal, principle,
-    # invariant share one anatomy"); their FOUNDATION order is stated, in words,
-    # in design_doc.foundation_cardinality AND redundantly in spine[0] ("goals,
-    # no-goals, invariants, principles ... in that order"). We derive the order
-    # by reading which kind-word appears first in that prose, and cross-check the
-    # two independent statements agree — so a schema edit to either re-projects.
-    statement_blocks_prose = schema["design_doc"]["block_fields"]["statement_blocks"]
-    foundation_cardinality_prose = schema["design_doc"]["foundation_cardinality"]
-    spine_first = schema["design_doc"]["spine"][0]
+    # THE FOUNDATION ORDER AND ITS REQUIRED KINDS, read as DECLARED DATA.
+    # design_doc.foundation_order is the sequence the four statement blocks must
+    # appear in inside section 00; design_doc.foundation_required names the
+    # kinds that must appear at least once. Both sit beside the
+    # foundation_cardinality prose that explains them to a person, and both are
+    # what the projector reads, so a schema edit re-projects.
+    foundation_order = list(schema["design_doc"]["foundation_order"])
+    foundation_required = list(schema["design_doc"]["foundation_required"])
     # the page-identity frontmatter keys the document-shell hook renders — the
     # masthead (eyebrow, lede) and colophon (footer). The KEY SET is read from
     # the schema (design_doc.frontmatter_keys), never hardcoded here, exactly as
@@ -186,38 +182,46 @@ try:
         }
         for lv in behavior_levels
     }
-    # THE CLAUSE CARDINALITY AND ORDER, read from the declared prose rather
-    # than restated here. "when: exactly 1" and "then: 1..n" name the two
-    # constraints; clause_order names the sequence. Both were DECLARED and
-    # enforced nowhere: a clause renders as an independent call, so no clause
-    # ever meets its siblings and none can know it is the second `when`.
+    # THE CLAUSE ORDER AND CARDINALITY, read as DECLARED DATA. A clause renders
+    # as an independent call, so no clause ever meets its siblings and none can
+    # know it is the second `when`; the order and the per-clause bound are
+    # therefore document-level rules the library asserts from a trail, and both
+    # come from the schema so a schema edit re-projects.
     #
-    # The ORDER is parsed from clause_order's own prose, not restated here. It
-    # used to be a hardcoded ["given", "when", "then"] sitting beside a
-    # cardinality that WAS parsed, so the schema declared an order the
-    # projector ignored and the two could silently disagree — a schema edit to
-    # the sequence changed the declaration and nothing else. The prose states
-    # "the fixed order given, when, then"; that list is the contract.
-    _card = str(_behavior_contract["clause_cardinality"])
-    _order_prose = str(_behavior_contract["clause_order"])
-    _order_m = _re.search(r"fixed order\s+([a-z]+(?:\s*,\s*[a-z]+)*)",
-                          _order_prose)
-    if not _order_m:
+    # clause_sequence IS the order. clause_bounds maps each clause to one member
+    # of a small closed bound vocabulary; an unrecognized bound is an error, not
+    # a silently-unconstrained clause.
+    clause_order = list(_behavior_contract["clause_sequence"])
+    if not clause_order:
         sys.stderr.write(
-            "render-project: error: schema behavior_contract.clause_order "
-            "states no 'fixed order <clause>, <clause>, ...' sequence — the "
-            "clause order rule would project over an empty sequence\n")
+            "render-project: error: schema behavior_contract.clause_sequence "
+            "is empty — the clause order rule would project over an empty "
+            "sequence\n")
         sys.exit(2)
-    clause_order = [c.strip() for c in _order_m.group(1).split(",")]
+    _bounds = dict(_behavior_contract["clause_bounds"])
+    _LEGAL_BOUNDS = ("0..n", "exactly 1", "1..n")
+    for _c in clause_order:
+        if _c not in _bounds:
+            sys.stderr.write(
+                "render-project: error: schema behavior_contract.clause_bounds "
+                "declares no bound for clause %r, which clause_sequence "
+                "names\n" % _c)
+            sys.exit(2)
+        if _bounds[_c] not in _LEGAL_BOUNDS:
+            sys.stderr.write(
+                "render-project: error: schema behavior_contract.clause_bounds "
+                "gives clause %r the bound %r, which is not one of %s\n"
+                % (_c, _bounds[_c], ", ".join(repr(b) for b in _LEGAL_BOUNDS)))
+            sys.exit(2)
     clause_exactly_one = [c for c in clause_order
-                          if _re.search(r"\b%s:\s*exactly 1" % c, _card)]
-    clause_at_least_one = [c for c in clause_order
-                           if _re.search(r"\b%s:\s*1\.\." % c, _card)]
+                          if _bounds[c] == "exactly 1"]
+    clause_at_least_one = [c for c in clause_order if _bounds[c] == "1..n"]
     if not clause_exactly_one and not clause_at_least_one:
         sys.stderr.write(
-            "render-project: error: schema behavior_contract.clause_cardinality "
-            "states neither an 'exactly 1' nor a '1..n' constraint — the clause "
-            "rule would project as an assertion over an empty set\n")
+            "render-project: error: schema behavior_contract.clause_bounds "
+            "declares neither an 'exactly 1' nor a '1..n' clause — the clause "
+            "cardinality rule would project as an assertion over an empty "
+            "set\n")
         sys.exit(2)
 except (KeyError, TypeError, IndexError) as e:
     sys.stderr.write("render-project: error: schema missing a required key: %s\n" % e)
@@ -287,54 +291,40 @@ if _missing_fm:
         % ", ".join(sorted(_missing_fm)))
     sys.exit(2)
 
-# The four statement-block kinds are the words the statement_blocks anatomy
-# opens with; we take them from the declared block set filtered to those the
-# prose names, so the set itself is schema-sourced, not a literal list here.
-_STATEMENT_KINDS = ["goal", "no-goal", "invariant", "principle"]
-foundation_kinds = [k for k in _STATEMENT_KINDS if k in declared_blocks]
-missing_stmt = [k for k in _STATEMENT_KINDS if k not in declared_blocks]
-if missing_stmt:
-    sys.stderr.write("render-project: error: schema no longer declares statement "
-                     "block kind(s): %s\n" % ", ".join(missing_stmt))
-    sys.exit(2)
-
-
-def _order_from_prose(text):
-    # position of each foundation kind's first mention (kind or its plural),
-    # longest-name-first so 'no-goal' is not shadowed by 'goal'
-    pos = {}
-    for k in sorted(foundation_kinds, key=len, reverse=True):
-        m = _re.search(_re.escape(k) + r"s?\b", text)
-        pos[k] = m.start() if m else None
-    if any(v is None for v in pos.values()):
-        return None
-    return sorted(foundation_kinds, key=lambda k: pos[k])
-
-
-_order_a = _order_from_prose(foundation_cardinality_prose)
-_order_b = _order_from_prose(spine_first)
-if _order_a is None or _order_b is None or _order_a != _order_b:
+# design_doc.foundation_order is the authority on WHICH kinds are foundation
+# kinds and in WHAT sequence they appear — one declaration serving both, so the
+# set and the order cannot disagree. Each named kind must also be a declared
+# block, because the projector emits one wrapper function per foundation kind
+# and a kind with no block declaration has no contract to enforce.
+if not foundation_order:
     sys.stderr.write(
-        "render-project: error: cannot derive a single foundation order from the "
-        "schema — foundation_cardinality and spine[0] must each name all four "
-        "foundation kinds in one agreed order (got %s vs %s)\n"
-        % (_order_a, _order_b))
+        "render-project: error: schema design_doc.foundation_order is empty — "
+        "the foundation order rule would project over an empty sequence\n")
     sys.exit(2)
-foundation_order = _order_a
+missing_stmt = [k for k in foundation_order if k not in declared_blocks]
+if missing_stmt:
+    sys.stderr.write("render-project: error: schema design_doc.foundation_order "
+                     "names kind(s) that design_doc.blocks does not declare: "
+                     "%s\n" % ", ".join(missing_stmt))
+    sys.exit(2)
+foundation_kinds = list(foundation_order)
 
-# WHICH FOUNDATION KINDS MUST APPEAR AT LEAST ONCE, read from the same declared
-# prose the order comes from ("at least one goal, zero or more no-goals, at
-# least one invariant, at least one principle"), never restated here.
-foundation_required = [
-    k for k in foundation_order
-    if _re.search(r"at least one %ss?\b" % _re.escape(k),
-                  foundation_cardinality_prose)
-]
+# WHICH FOUNDATION KINDS MUST APPEAR AT LEAST ONCE — declared beside the order
+# in design_doc.foundation_required. Every required kind must be a foundation
+# kind; requiring something the order never places is a contradiction the
+# projection would carry into the library.
+_stray_required = [k for k in foundation_required if k not in foundation_order]
+if _stray_required:
+    sys.stderr.write(
+        "render-project: error: schema design_doc.foundation_required names "
+        "kind(s) absent from design_doc.foundation_order: %s\n"
+        % ", ".join(_stray_required))
+    sys.exit(2)
 if not foundation_required:
     sys.stderr.write(
-        "render-project: error: schema design_doc.foundation_cardinality "
-        "names no required foundation kind ('at least one <kind>') — the "
-        "cardinality rule would project as an assertion over an empty set\n")
+        "render-project: error: schema design_doc.foundation_required is "
+        "empty — the cardinality rule would project as an assertion over an "
+        "empty set\n")
     sys.exit(2)
 
 # card grid geometry — declared in the blocks.cards prose (cols=2|3|4, size=md|sm)

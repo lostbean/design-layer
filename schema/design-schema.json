@@ -162,6 +162,11 @@
       "mermaid": "structure diagrams — the source is handed to its carrier by diagram shape: a node-and-edge graph goes to a layout-solving graph renderer (the author declares nodes and edges, never coordinates), a message sequence and a state machine to their own carriers. Validated at build time — a syntax error fails the gate, never the reader. Convention: in-domain nodes tinted with the context accent, external nodes drawn dashed. A diagram is ALWAYS drawn by its carrier: an authored design document never contains renderer markup, and there is no verbatim-passthrough form. A drawing no carrier covers earns a new block kind with its own contract, marked in the source as the exception it is — never a silent raw mode of an ordinary diagram fence. The conversion DECLARES ITS SUPPORTED GRAMMAR and that declaration is the contract: node declarations in the documented shapes, edges in the documented kinds with bar-labels and mid-arrow labels, ampersand fan-out, subgraphs and composite states, start/end pseudo-states, notes, fork/join, multi-line and entity-escaped labels. A construct OUTSIDE the declared set fails the gate naming the construct and the line — never silently dropped, never half-converted, never degraded into a placeholder a reader could mistake for the drawing",
       "figure": "a self-contained drawing no diagram carrier covers, carrying renderer markup directly. REQUIRED: a caption, and a `uses` list naming the packages the drawing imports. The `uses` set is restricted to the packages the framework VENDORS — an import outside that set is a violation, so a design layer stays offline-reproducible. Renders inside a visibly distinct frame naming those packages, so the exception is legible in the rendered document as well as the source. It is a FIGURE, not an escape hatch: not renderer markup in ordinary prose, not a way to restyle a statement block, and never a second path for a node-and-edge graph, which belongs in a diagram fence where the gate validates it and the projected tokens colour it"
     },
+    "entity_contract": {
+      "what": "the entity block's two closed vocabularies, declared as data because the renderer validates against them and colours each member. The `entity` block declaration above states what each member MEANS; these arrays state what the members ARE, and are what the projector reads",
+      "kinds": ["entity", "value-object", "aggregate", "event"],
+      "lifecycles": ["immutable", "append-only", "stateful"]
+    },
     "function_naming": {
       "rule": "a block kind and the library function that renders it carry THE SAME NAME, spelled kebab-case: `no-goal` is rendered by `#no-goal`, `stat-grid` by `#stat-grid`. The kind IS the function name, so no translation table maps between them",
       "why": "the two spellings used to differ — a call name was derived from a kind by replacing hyphens with underscores, so one concept carried two names and every reader had to know which side they were on. One concept has one name. Kebab is the surviving spelling because it is what the schema already declares a kind to be and what Typst itself uses, so the schema's word reaches the page unchanged",
@@ -188,7 +193,9 @@
       "lede": "muted one-to-three-line summary under the title; inline content",
       "footer": "colophon line — ownership split restated, links back up"
     },
-    "foundation_cardinality": "at least one goal, zero or more no-goals, at least one invariant, at least one principle — in that order, all inside section 00. EXEMPTION: a multi-context root that only indexes its child contexts exports `index_only: true` from its module and is waived from the per-kind minimum — it carries only genuinely cross-context foundation and points down to each context for the rest, never restating a context-owned goal/invariant/principle. The flag is legal only on a document that links at least one child <context>/design.typ; on a single-domain document (no child contexts) it is a violation, so a leaf can never skip its own foundation. The order rule still binds whatever foundation the root does carry.",
+    "foundation_order": ["goal", "no-goal", "invariant", "principle"],
+    "foundation_required": ["goal", "invariant", "principle"],
+    "foundation_cardinality": "at least one goal, zero or more no-goals, at least one invariant, at least one principle — in that order, all inside section 00. The machine-readable halves of this sentence are declared beside it: `foundation_order` is the sequence the blocks must appear in, and `foundation_required` names the kinds that must appear at least once. The prose explains the rule to a person; those two arrays are what the projector reads. EXEMPTION: a multi-context root that only indexes its child contexts exports `index_only: true` from its module and is waived from the per-kind minimum — it carries only genuinely cross-context foundation and points down to each context for the rest, never restating a context-owned goal/invariant/principle. The flag is legal only on a document that links at least one child <context>/design.typ; on a single-domain document (no child contexts) it is a violation, so a leaf can never skip its own foundation. The order rule still binds whatever foundation the root does carry.",
     "spine": [
       "00 Foundation — goals, no-goals, invariants, principles: each in its block kind, in that order",
       "Pending updates — unnumbered, immediately after the foundation; omitted when empty",
@@ -197,8 +204,14 @@
       "0N end-to-end walkthrough"
     ],
     "behavior_contract": {
-      "clause_cardinality": "given: 0..n (a rule needing no setup carries none; each states one context). when: exactly 1 (two events are two rules — a second when clause is a violation, not a compound rule). then: 1..n (independent outcomes each get their own clause, so each is separately checkable)",
-      "clause_order": "clauses render and validate in the fixed order given, when, then; a then before a when is a violation. Repeated given or then clauses stay in authored order",
+      "clause_bounds": {
+        "given": "0..n",
+        "when": "exactly 1",
+        "then": "1..n"
+      },
+      "clause_cardinality": "given: 0..n (a rule needing no setup carries none; each states one context). when: exactly 1 (two events are two rules — a second when clause is a violation, not a compound rule). then: 1..n (independent outcomes each get their own clause, so each is separately checkable). The bound of each clause is declared beside this sentence in `clause_bounds`, which is what the projector reads; the prose states why each bound is what it is",
+      "clause_sequence": ["given", "when", "then"],
+      "clause_order": "clauses render and validate in the fixed order given, when, then; a then before a when is a violation. Repeated given or then clauses stay in authored order. The sequence itself is declared beside this sentence in `clause_sequence`, which is what the projector reads",
       "levels": {
         "interface": "what a person perceives, chooses, and is told — including what they are told when something fails. Interaction-over-time properties (progress is visible, an action stays cancellable, the user is never left unable to tell what happened) exist ONLY at this level",
         "boundary": "behavior at the application boundary the interface calls, in the domain's own language. Integrity properties (an operation is atomic, idempotent, ordered) exist ONLY at this level",

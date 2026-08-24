@@ -417,27 +417,36 @@ assert_guideline stat-tile-figure "accountant" \
 assert_guideline stat-tile-dir "carries a delta with no dir" \
   '#stat-grid(tiles: (stat-tile(value: "2.4M", label: "rows", delta: "+3%"),))'
 
-# --- the clause order is DERIVED from the schema, not restated in the code ----
-# The order used to be a hardcoded ["given", "when", "then"] in render-project,
-# sitting beside a cardinality that WAS parsed from the schema. The schema
-# therefore declared an order the projector ignored: editing clause_order
-# changed the declaration and nothing else, and the declared order and the
-# enforced order could disagree with nothing to catch it.
+# --- every machine fact is DECLARED in the schema, not restated in the code ---
+# The schema states each of these facts twice: once as prose a person reads, and
+# once as data the projector reads. Only the data half is load-bearing here.
 #
-# Asserting "a then before a when is reported" does NOT catch that — it passes
-# identically under a hardcode. The only assertion that can tell the two apart
-# EDITS THE SCHEMA and demands the projection follow, which is what this does.
-assert_order_follows_schema() {
-  local name="$1" sequence="$2" want="$3"
+# Asserting the REAL value proves nothing — it passes identically against a
+# hardcoded literal in render-project. The only assertion that can tell a read
+# from a hardcode EDITS THE SCHEMA TO A DELIBERATELY DIFFERENT VALUE and demands
+# the projection follow. Every fact below therefore gets a pair: the real value
+# (a sanity check) and a different one (the load-bearing half).
+#
+# The prose beside each key is deliberately NOT edited by these fixtures. A
+# projection that still followed the edited data while the prose said something
+# else is the correct outcome: the data is the contract, the prose documents it.
+
+# Rewrite one schema key to a new JSON value, project, and assert the named
+# projected token carries the wanted text.
+#   $1 name  $2 dotted path under design_doc  $3 JSON value  $4 token  $5 want
+assert_declared_fact() {
+  local name="$1" path="$2" value="$3" token="$4" want="$5"
   local sdir="$WORK/schema-$name" out
   mkdir -p "$sdir"
-  if ! python3 - "$sequence" "$sdir/design-schema.json" <<'PY'; then
+  if ! python3 - "$path" "$value" "$sdir/design-schema.json" <<'PY'; then
 import json, sys
-seq, dest = sys.argv[1], sys.argv[2]
+path, value, dest = sys.argv[1], sys.argv[2], sys.argv[3]
 s = json.load(open("schema/design-schema.json"))
-s["design_doc"]["behavior_contract"]["clause_order"] = (
-    "clauses render and validate in the fixed order %s; the order is a "
-    "violation to depart from." % seq)
+node = s["design_doc"]
+keys = path.split(".")
+for k in keys[:-1]:
+    node = node[k]
+node[keys[-1]] = json.loads(value)
 json.dump(s, open(dest, "w"))
 PY
     fail_line "$name: could not write the edited schema"
@@ -451,43 +460,135 @@ PY
     return
   fi
 
-  out="$(grep '^#let CLAUSE-ORDER' "$sdir/designlib.typ")"
+  out="$(grep "^#let $token" "$sdir/designlib.typ")"
   case "$out" in
-  *"$want"*) pass_line "clause order follows the schema: $sequence" ;;
+  *"$want"*) pass_line "$token follows the schema: $name" ;;
   *)
-    fail_line "$name: the projection ignored the schema's declared order"
+    fail_line "$name: the projection ignored the schema's declared $token"
     printf '       wanted: %s\n' "$want"
     printf '       got:    %s\n' "$out"
     ;;
   esac
 }
 
-# The real order, and a DIFFERENT one. The second is the load-bearing half: it
-# fails against a hardcode and passes only when the schema is really read.
-assert_order_follows_schema real "given, when, then" '"given", "when", "then"'
-assert_order_follows_schema edited "when, given, then" '"when", "given", "then"'
+# 1. behavior clause ORDER — behavior_contract.clause_sequence
+assert_declared_fact clause-order-real \
+  behavior_contract.clause_sequence '["given","when","then"]' \
+  CLAUSE-ORDER '"given", "when", "then"'
+assert_declared_fact clause-order-edited \
+  behavior_contract.clause_sequence '["when","given","then"]' \
+  CLAUSE-ORDER '"when", "given", "then"'
 
-# A clause_order stating no parseable sequence must ERROR, never fall back to a
-# silent default — a projection over an empty order enforces nothing.
-sdir="$WORK/schema-unparseable"
-mkdir -p "$sdir"
-python3 - "$sdir/design-schema.json" <<'PY'
+# 2. behavior clause CARDINALITY — behavior_contract.clause_bounds. The edited
+# case moves 'exactly 1' off `when` and onto `given`, and makes `when` the 1..n
+# clause, so a hardcode of either list is caught.
+assert_declared_fact clause-bounds-real \
+  behavior_contract.clause_bounds \
+  '{"given":"0..n","when":"exactly 1","then":"1..n"}' \
+  CLAUSE-EXACTLY-ONE '"when",'
+assert_declared_fact clause-bounds-edited \
+  behavior_contract.clause_bounds \
+  '{"given":"exactly 1","when":"1..n","then":"0..n"}' \
+  CLAUSE-EXACTLY-ONE '"given",'
+assert_declared_fact clause-atleast-edited \
+  behavior_contract.clause_bounds \
+  '{"given":"exactly 1","when":"1..n","then":"0..n"}' \
+  CLAUSE-AT-LEAST-ONE '"when",'
+
+# 3. foundation ORDER — design_doc.foundation_order
+assert_declared_fact foundation-order-real \
+  foundation_order '["goal","no-goal","invariant","principle"]' \
+  FOUNDATION-ORDER '"goal", "no-goal", "invariant", "principle"'
+assert_declared_fact foundation-order-edited \
+  foundation_order '["principle","invariant","no-goal","goal"]' \
+  FOUNDATION-ORDER '"principle", "invariant", "no-goal", "goal"'
+
+# 4. foundation REQUIRED kinds — design_doc.foundation_required. The edited case
+# inverts which kind is optional: no-goal becomes required and goal does not.
+assert_declared_fact foundation-required-real \
+  foundation_required '["goal","invariant","principle"]' \
+  FOUNDATION-REQUIRED '"goal", "invariant", "principle"'
+assert_declared_fact foundation-required-edited \
+  foundation_required '["no-goal","invariant"]' \
+  FOUNDATION-REQUIRED '"no-goal", "invariant"'
+
+# 5. entity KINDS — design_doc.entity_contract.kinds
+assert_declared_fact entity-kinds-real \
+  entity_contract.kinds '["entity","value-object","aggregate","event"]' \
+  ENTITY-KINDS '"entity", "value-object", "aggregate", "event"'
+assert_declared_fact entity-kinds-edited \
+  entity_contract.kinds '["event","aggregate","entity"]' \
+  ENTITY-KINDS '"event", "aggregate", "entity"'
+
+# 6. entity LIFECYCLES — design_doc.entity_contract.lifecycles
+assert_declared_fact entity-lifecycles-real \
+  entity_contract.lifecycles '["immutable","append-only","stateful"]' \
+  ENTITY-LIFECYCLES '"immutable", "append-only", "stateful"'
+assert_declared_fact entity-lifecycles-edited \
+  entity_contract.lifecycles '["stateful","immutable"]' \
+  ENTITY-LIFECYCLES '"stateful", "immutable"'
+
+# --- a MISSING or EMPTY declaration must stop the projection, never default ---
+# Removing the fragile prose parse must not remove the validation with it: a
+# schema that declares no order has no contract to project, and projecting an
+# empty rule would enforce nothing while reporting success.
+assert_schema_rejected() {
+  local name="$1" mutation="$2" wantkey="$3"
+  local sdir="$WORK/reject-$name" out
+  mkdir -p "$sdir"
+  if ! python3 - "$mutation" "$sdir/design-schema.json" <<'PY'; then
 import json, sys
+mutation, dest = sys.argv[1], sys.argv[2]
 s = json.load(open("schema/design-schema.json"))
-s["design_doc"]["behavior_contract"]["clause_order"] = "the clauses are ordered sensibly"
-json.dump(s, open(sys.argv[1], "w"))
+d = s["design_doc"]
+exec(mutation, {"d": d})
+json.dump(s, open(dest, "w"))
 PY
-if out="$(bash ./scripts/render-project "$sdir/design-schema.json" "$sdir" 2>&1)"; then
-  fail_line "an unparseable clause_order projected anyway — it fell back to a default"
-else
+    fail_line "$name: could not write the edited schema"
+    return
+  fi
+  if out="$(bash ./scripts/render-project "$sdir/design-schema.json" "$sdir" 2>&1)"; then
+    fail_line "$name: projected anyway — it fell back to a silent default"
+    return
+  fi
   case "$out" in
-  *"clause_order"*) pass_line "an unparseable clause_order errors, naming the key" ;;
+  *"$wantkey"*) pass_line "$name errors, naming $wantkey" ;;
   *)
-    fail_line "an unparseable clause_order failed, but the message does not name the key"
+    fail_line "$name failed, but the message does not name $wantkey"
     printf '%s\n' "$out" | head -3 | sed 's/^/       /'
     ;;
   esac
-fi
+}
+
+assert_schema_rejected missing-clause-sequence \
+  'del d["behavior_contract"]["clause_sequence"]' clause_sequence
+assert_schema_rejected empty-clause-sequence \
+  'd["behavior_contract"]["clause_sequence"] = []' clause_sequence
+assert_schema_rejected missing-clause-bounds \
+  'del d["behavior_contract"]["clause_bounds"]' clause_bounds
+assert_schema_rejected unbounded-clause \
+  'del d["behavior_contract"]["clause_bounds"]["when"]' clause_bounds
+assert_schema_rejected unknown-bound \
+  'd["behavior_contract"]["clause_bounds"]["when"] = "some"' clause_bounds
+assert_schema_rejected no-cardinality-constraint \
+  'd["behavior_contract"]["clause_bounds"] = {"given":"0..n","when":"0..n","then":"0..n"}' \
+  clause_bounds
+assert_schema_rejected missing-foundation-order \
+  'del d["foundation_order"]' foundation_order
+assert_schema_rejected empty-foundation-order \
+  'd["foundation_order"] = []' foundation_order
+assert_schema_rejected undeclared-foundation-kind \
+  'd["foundation_order"] = ["goal","axiom"]' foundation_order
+assert_schema_rejected missing-foundation-required \
+  'del d["foundation_required"]' foundation_required
+assert_schema_rejected empty-foundation-required \
+  'd["foundation_required"] = []' foundation_required
+assert_schema_rejected stray-foundation-required \
+  'd["foundation_required"] = ["goal","axiom"]' foundation_required
+assert_schema_rejected missing-entity-kinds \
+  'del d["entity_contract"]["kinds"]' entity_contract
+assert_schema_rejected missing-entity-lifecycles \
+  'del d["entity_contract"]["lifecycles"]' entity_contract
 
 echo
 echo "designlib-native: $PASS passed, $FAIL failed"

@@ -25,7 +25,9 @@ set -euo pipefail
 #   (e) ADR filename/anchor NNNN mismatch              -> exit 1
 #   (f) CONTEXT.typ missing from CONTEXT-MAP.md        -> exit 1
 #   (g) a per-context design.pdf (the layer renders as ONE) -> exit 1
+#   (d4/d5) multi-line #section( indexes as an anchor  -> exit 0 / exit 1
 #   (h) duplicate term id within one CONTEXT.typ       -> exit 1
+#   (q2/q3) wrapped ADR citations vs real restatement  -> exit 0 / exit 1
 #   (i) empty repo / no design layer                   -> exit 2 ("no design layer")
 #   (j) usage error: too many args                     -> exit 2
 #   (k) unresolvable schema (DESIGN_SCHEMA points off) -> exit 2
@@ -334,6 +336,272 @@ EOF
 assert_exit 1 "a section anchor with no such section is a violation" -- "$CHECK" "$SD3"
 assert_contains "dangling section anchor" "report names it as a dangling section anchor"
 
+# --- Scenario (d4): a MULTI-LINE section call indexes as an anchor -----------
+# THE REAL AUTHORING STYLE OPENS A SECTION ACROSS LINES. Every fixture above
+# spells `#section(title: "…")` on one line, which is the convenient spelling
+# and not the one consumer repos use:
+#
+#   #section(
+#     title: "04 The catalog gate",
+#     body: [ … ]
+#   )
+#
+# The section scan ran per line, so `\s*` between `section(` and `title:` could
+# never cross the newline and every multi-line section fell out of the anchor
+# index. Measured on a real layer: 4 of 10 sections indexed, and all 16 distinct
+# cross-document section anchors were reported dangling — a 100% rejection rate,
+# which is the signature of a check matching nothing. A single-line section is
+# asserted alongside so the fix is proved to have ADDED the multi-line form
+# rather than swapped which spelling works.
+SD4="$TMP/d4"
+build_single "$SD4"
+cat >"$SD4/docs/design/design.typ" <<'EOF'
+#let title = [Design]
+#let body = [
+  #section(
+    title: "00 Foundation",
+    body: [
+      A pointer into a multi-line section:
+      #link("design.typ#04-the-catalog-gate")[the gate].
+      And one into a single-line subsection:
+      #link("design.typ#031-the-composition-mechanism")[the mechanism].
+    ],
+  )
+  #section(
+    title: "04 The catalog gate",
+    lead: "The gate that keeps ship-status skills discoverable.",
+    body: [
+      The section the first link resolves to, opened across several lines
+      exactly as a real design document opens one.
+    ],
+  )
+  #subsection(title: "031 The composition mechanism")[
+    The single-line spelling, which indexed correctly all along.
+  ]
+]
+EOF
+assert_exit 0 "a multi-line #section( anchor resolves" -- "$CHECK" "$SD4"
+assert_contains "layer-integrity OK" "multi-line section run stays clean"
+assert_not_contains "dangling section anchor" \
+  "neither the multi-line nor the single-line section is reported dangling"
+
+# The discriminating half: with multi-line sections indexed, an anchor naming a
+# section that genuinely does not exist must STILL fail. Without this, a fix
+# that indexed every string in the file would pass the assertion above.
+SD5="$TMP/d5"
+build_single "$SD5"
+cat >"$SD5/docs/design/design.typ" <<'EOF'
+#let title = [Design]
+#let body = [
+  #section(
+    title: "00 Foundation",
+    body: [
+      A pointer into a section nobody wrote:
+      #link("design.typ#07-not-a-real-section")[nowhere].
+    ],
+  )
+  #section(
+    title: "04 The catalog gate",
+    body: [
+      A real multi-line section, which is not the one linked above.
+    ],
+  )
+]
+EOF
+assert_exit 1 "an invented section anchor still fails once multi-line sections index" \
+  -- "$CHECK" "$SD5"
+assert_contains "dangling section anchor" "the invented section is reported dangling"
+assert_contains "07-not-a-real-section" "report names the invented section id"
+
+# --- Scenario (d6): the NUMBERING'S DOT is removed, not collapsed ------------
+# The schema (anchors.section.slug_rule) is explicit: "the numbering's dot
+# REMOVED", '### 02.1 The pending ledger' -> '021-the-pending-ledger'. Both
+# indexers instead collapsed that dot to a hyphen and produced
+# '02-1-the-pending-ledger', so a cross-document link written to the schema was
+# reported dangling. Measured on a real layer: 8 violations, every one a dotted
+# subsection anchor, against a COVERAGE.md that was correct all along.
+#
+# A dotted subsection and an undotted section are asserted together, so the rule
+# is proved to handle the numbering without breaking the plain case.
+SD6="$TMP/d6"
+build_single "$SD6"
+cat >"$SD6/docs/design/design.typ" <<'EOF'
+#let title = [Design]
+#let body = [
+  #section(
+    title: "03 The primitive",
+    body: [
+      A pointer at a dotted subsection:
+      #link("design.typ#031-the-composition-mechanism")[the mechanism].
+      And one at an undotted section:
+      #link("design.typ#03-the-primitive")[the primitive].
+    ],
+  )
+  #subsection(
+    title: "03.1 The composition mechanism",
+    body: [
+      The dotted subsection, whose id drops the numbering's dot entirely.
+    ],
+  )
+]
+EOF
+assert_exit 0 "a dotted subsection anchor resolves with the dot removed" -- "$CHECK" "$SD6"
+assert_contains "layer-integrity OK" "dotted-subsection run stays clean"
+assert_not_contains "dangling section anchor" \
+  "neither the dotted nor the undotted section is reported dangling"
+
+# The discriminating half: the OLD, wrong spelling must now FAIL. Without this,
+# a rule that emitted both spellings would pass the assertion above while still
+# leaving which id a section actually has ambiguous.
+SD7="$TMP/d7"
+build_single "$SD7"
+cat >"$SD7/docs/design/design.typ" <<'EOF'
+#let title = [Design]
+#let body = [
+  #section(
+    title: "03 The primitive",
+    body: [
+      The dot-collapsed spelling the schema does not bless:
+      #link("design.typ#03-1-the-composition-mechanism")[the mechanism].
+    ],
+  )
+  #subsection(
+    title: "03.1 The composition mechanism",
+    body: [
+      The section's real id drops the dot entirely.
+    ],
+  )
+]
+EOF
+assert_exit 1 "the dot-collapsed spelling is not a valid section id" -- "$CHECK" "$SD7"
+assert_contains "dangling section anchor" "the wrong spelling is reported dangling"
+
+# --- Scenario (d8): a NON-NUMBERING dot survives as a hyphen -----------------
+# The schema says "the numbering's dot", so the removal is SCOPED to the leading
+# number rather than applied to every dot in the heading. The numbering is the
+# only place a dot joins two halves of one identifier; anywhere else a dot is
+# ordinary punctuation and collapses to a hyphen like any other non-alphanumeric
+# run. Blanket-deleting every dot would weld a title naming 'design.typ' into
+# 'designtyp', mangling a word the reader is meant to recognise. Both scopes
+# appear in ONE heading, so they are proved distinct rather than merely stated.
+SD8="$TMP/d8"
+build_single "$SD8"
+cat >"$SD8/docs/design/design.typ" <<'EOF'
+#let title = [Design]
+#let body = [
+  #section(
+    title: "02 Foundation",
+    body: [
+      A dot inside the TITLE is punctuation, not numbering:
+      #link("design.typ#021-the-renderer-reads-design-typ")[the renderer].
+    ],
+  )
+  #subsection(
+    title: "02.1 The renderer reads design.typ",
+    body: [
+      The numbering's dot is removed and the title's dot becomes a hyphen.
+    ],
+  )
+]
+EOF
+assert_exit 0 "a non-numbering dot collapses to a hyphen" -- "$CHECK" "$SD8"
+assert_contains "layer-integrity OK" "non-numbering-dot run stays clean"
+assert_not_contains "dangling section anchor" "the mixed-dot heading resolves"
+
+# --- Scenario (d10): THE ANTI-DRIFT PROPERTY, asserted directly --------------
+# The slug rule belongs to the ANCHOR, not to the notation the target was
+# written in, so the SAME heading text must yield the SAME id on both sides.
+# Both indexers now call one section_slug, and this asserts they AGREE on the
+# id for one heading text.
+#
+# THE ASSERTION IS MADE AT THE UNIT LEVEL, DELIBERATELY, because no end-to-end
+# fixture can currently observe the markdown side of this property.
+# `section_ids` is consulted only on a link's TARGET, and the schema's
+# design_ish_markers make the only markdown targets the ADR files — whose
+# fragments classify as `adr`, never as `section`. COVERAGE.md and
+# CONTEXT-MAP.md are not design-ish targets at all. So the markdown heading slug
+# is unreachable through a link today: a black-box fixture that breaks it still
+# passes, which was measured rather than assumed. Asserting through the gate
+# here would produce a test that reports agreement while examining one side.
+#
+# The two readers are therefore called directly on the same heading text and
+# their ids compared, which is the property itself rather than a proxy for it.
+# The Typst side keeps its end-to-end coverage in d6/d7/d8 above.
+SD10="$TMP/d10"
+python3 - "$CHECK" <<'PY'
+import importlib.util, json, os, sys, tempfile
+
+spec = importlib.util.spec_from_loader("layer_integrity", None)
+mod = importlib.util.module_from_spec(spec)
+mod.__dict__["__name__"] = "layer_integrity_under_test"
+exec(compile(open(sys.argv[1]).read(), sys.argv[1], "exec"), mod.__dict__)
+
+index_markdown = mod.__dict__["index_markdown"]
+index_typst = mod.__dict__["index_typst"]
+load_schema = mod.__dict__["load_schema"]
+locate_schema = mod.__dict__["locate_schema"]
+
+schema = load_schema(locate_schema(sys.argv[1]))
+tmp = tempfile.mkdtemp()
+
+# THE REAL INDEXERS ARE CALLED, never a local re-implementation of their logic.
+# A test that mirrors the rule instead of invoking it passes while the shipped
+# function is broken — measured: a hand-rolled copy of index_markdown's slug
+# path reported agreement with the markdown reader gutted underneath it.
+def markdown_id(heading: str) -> str:
+    p = os.path.join(tmp, "COVERAGE.md")
+    with open(p, "w") as fh:
+        fh.write(heading + "\n\nBody text under the heading.\n")
+    ids = index_markdown(p, "COVERAGE.md", schema).section_ids
+    return sorted(ids)[0] if ids else ""
+
+def typst_id(title: str) -> str:
+    p = os.path.join(tmp, "design.typ")
+    # Real Typst: a DOUBLE-quoted title, in the multi-line authoring style.
+    # json.dumps gives double quotes and escapes correctly; repr() would emit
+    # Python's single quotes, which TYPST_SECTION_RE does not match — and a
+    # helper that silently indexes nothing is the failure this suite exists to
+    # catch, so the fixture must be genuine Typst.
+    with open(p, "w") as fh:
+        fh.write(
+            "#let body = [\n  #section(\n    title: %s,\n"
+            "    body: [ Body text under the section. ],\n  )\n]\n"
+            % json.dumps(title, ensure_ascii=False)
+        )
+    ids = index_typst(p, "design.typ", schema).section_ids
+    return sorted(ids)[0] if ids else ""
+
+cases = [
+    ("02 The artifact trio", "02-the-artifact-trio"),
+    ("02.1 The pending ledger", "021-the-pending-ledger"),
+    ("04.2 Token coverage — the semantic look is total",
+     "042-token-coverage-the-semantic-look-is-total"),
+    ("02.1 The renderer reads design.typ", "021-the-renderer-reads-design-typ"),
+]
+
+failed = 0
+for title, expected in cases:
+    md = markdown_id("### " + title)
+    tp = typst_id(title)
+    if md != tp:
+        print(f"FAIL: markdown/Typst slug drift for {title!r}: {md!r} != {tp!r}")
+        failed += 1
+    elif tp != expected:
+        print(f"FAIL: slug for {title!r} is {tp!r}, schema requires {expected!r}")
+        failed += 1
+    else:
+        print(f"PASS: both notations derive {tp!r}")
+
+sys.exit(1 if failed else 0)
+PY
+if [ $? -eq 0 ]; then
+  echo "PASS: markdown and Typst derive the same schema-correct id for one heading"
+  pass=$((pass + 1))
+else
+  echo "FAIL: markdown and Typst disagree on a section id"
+  fail=$((fail + 1))
+fi
+
 # --- Scenario (e): ADR filename/anchor mismatch -> exit 1 --------------------
 # THE ADRs STAY MARKDOWN. Check 2 reads them with the markdown indexer and
 # asserts the same lockstep it always did.
@@ -562,6 +830,66 @@ cat >>"$SQ/docs/design/design.typ" <<'EOF'
 EOF
 assert_exit 0 "repeated citation-only fragment is legal" -- "$CHECK" "$SQ"
 assert_not_contains "duplicate prose" "no duplicate reported for repeated citations"
+
+# --- Scenario (q2): two DISTINCT wrapped ADR citations are not duplicates -----
+# The citation helper is imported at the citing site, which is how a real
+# glossary cites a decision:
+#
+#   (#{ import "../refs.typ": adr; adr(63) }).],
+#
+# Only the inner `adr(63)` was recognised as a citation and removed, leaving the
+# import preamble behind as the entire surviving "prose". Two citations of
+# DIFFERENT decisions then normalised to the identical string
+# `#{ import "../refs.typ": adr; } .`, and the duplicate check reported
+# restatement across two lines that restate nothing. Two different ADR citations
+# are not duplicated prose.
+SQ2="$TMP/q2"
+build_single "$SQ2"
+cat >"$SQ2/docs/design/CONTEXT.typ" <<'EOF'
+#let terms = (
+  (slug: "term-drift", title: [Drift],
+   body: [The gap between the design layer and the implementation.
+      Every part binds at every write, ask, and report moment
+      (#{ import "../refs.typ": adr; adr(1) }).],
+  ),
+  (slug: "term-work-order", title: [Work Order],
+   body: [A self-contained brief handed to a coding agent.
+      A word can name its concept and still strand a reader, and both bind
+      (#{ import "../refs.typ": adr; adr(1) }).],
+  ),
+)
+EOF
+assert_exit 0 "two distinct wrapped ADR citations are not duplicate prose" -- "$CHECK" "$SQ2"
+assert_contains "layer-integrity OK" "wrapped-citation run stays clean"
+assert_not_contains "duplicate prose" "no duplicate reported for the import preamble"
+
+# --- Scenario (q3): REAL duplicated prose is STILL caught --------------------
+# The guard on the exemption above. A fix that excused too much would silence
+# the check entirely, so the restated sentence sits ON THE SAME LINE as the
+# wrapped citation. That placement is what makes this test load-bearing: an
+# over-broad fix — exempting any LINE that carries an import preamble, rather
+# than removing just the citation it wraps — still passes a fixture whose
+# duplicated prose sits on a separate line, and would ship a check that silently
+# stopped detecting restatement. Here the exemption and the restatement occupy
+# one line, so excusing too much is caught.
+SQ3="$TMP/q3"
+build_single "$SQ3"
+cat >"$SQ3/docs/design/CONTEXT.typ" <<'EOF'
+#let terms = (
+  (slug: "term-drift", title: [Drift],
+   body: [A gap opens up between the two sides of the repository.
+      The layer and the system disagree about what was actually built (#{ import "../refs.typ": adr; adr(1) }).],
+  ),
+  (slug: "term-work-order", title: [Work Order],
+   body: [A brief handed to a coding agent, carrying its own context.
+      The layer and the system disagree about what was actually built (#{ import "../refs.typ": adr; adr(1) }).],
+  ),
+)
+EOF
+assert_exit 1 "genuinely restated prose is still a violation" -- "$CHECK" "$SQ3"
+assert_contains "duplicate prose" "report still flags real restatement"
+assert_contains "The layer and the system disagree about what was actually built" \
+  "report quotes the genuinely duplicated sentence"
 
 # --- Scenario (r): gitignored broken layer is pruned -> exit 0 ----------------
 # When the target root is a git repo, gitignored trees are not part of the

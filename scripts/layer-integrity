@@ -309,6 +309,39 @@ HEADING_RE = re.compile(r"^#{1,6}[ \t]")
 ANCHOR_BRACE_RE = re.compile(r"\{#([^}]*)\}")
 LOOSE_ANCHOR_RE = re.compile(r"<a[^>]*id=")
 
+# The leading spine NUMBER of a heading — `02`, `02.1`, `04.0`, `08.2.1`. Only
+# this prefix has its dots removed; see section_slug.
+SECTION_NUMBER_RE = re.compile(r"^(\d+(?:\.\d+)*)")
+
+
+def section_slug(text: str) -> str:
+    """The rendered id of a spine heading, by the schema's declared rule
+    (anchors.section.slug_rule): the heading text lowercased with runs of
+    non-alphanumerics collapsed to single hyphens and THE NUMBERING'S DOT
+    REMOVED — '02 The artifact trio' -> '02-the-artifact-trio', and
+    '02.1 The pending ledger' -> '021-the-pending-ledger'.
+
+    ONE FUNCTION, CALLED BY BOTH INDEXERS. The rule is a property of the
+    anchor, not of the notation it was written in, so a link into a section
+    must resolve identically whether the target is authored in Typst or in
+    markdown. Stating it twice is how one side starts resolving while the other
+    dangles, which is the defect this gate exists to catch rather than commit.
+
+    The dot removal is SCOPED TO THE LEADING NUMBER, not applied to every dot in
+    the heading. The schema calls it "the numbering's dot", and the numbering is
+    the only place a dot joins two parts of one identifier: '02.1' is one
+    section number and must render '021', because a hyphen there would read as
+    the separator between the number and the title. Anywhere else a dot is
+    ordinary punctuation — a title naming 'design.typ', or a sentence period —
+    and collapses to a hyphen like any other non-alphanumeric run, which keeps
+    'design.typ' as 'design-typ' rather than welding it into 'designtyp'.
+    """
+    stripped = text.strip()
+    numbered = SECTION_NUMBER_RE.sub(
+        lambda m: m.group(1).replace(".", ""), stripped, count=1
+    )
+    return re.sub(r"[^a-z0-9]+", "-", numbered.lower()).strip("-")
+
 
 @dataclass
 class FileIndex:
@@ -384,13 +417,19 @@ def index_markdown(path: str, rel: str, schema: Schema) -> FileIndex:
         if HEADING_RE.match(line):
             for m in ANCHOR_BRACE_RE.finditer(line):
                 idx.term_anchor_ids.append(m.group(1))
-            # the rendered id of a spine heading, derived by the same rule the
-            # generator uses (anchors.section.slug_rule): drop the leading #s,
-            # lowercase, collapse every run of non-alphanumerics to one hyphen,
-            # strip the edges. '## 02.1 The pending ledger' -> '021-the-pending-ledger'.
+            # The rendered id of a spine heading: drop the leading #s and any
+            # explicit {#anchor}, then slugify by the schema's declared rule
+            # (anchors.section.slug_rule), which section_slug owns for both
+            # notations. '## 02.1 The pending ledger' -> '021-the-pending-ledger'.
+            #
+            # That example is what this comment always claimed and what the code
+            # here did NOT do: it collapsed the numbering's dot to a hyphen and
+            # produced '02-1-the-pending-ledger', so a COVERAGE.md link written
+            # to the schema was reported dangling. The schema is the authority,
+            # and the call below is now the only statement of the rule.
             _text = re.sub(r"^#+\s*", "", line).strip()
             _text = ANCHOR_BRACE_RE.sub("", _text)
-            _slug = re.sub(r"[^a-z0-9]+", "-", _text.lower()).strip("-")
+            _slug = section_slug(_text)
             if _slug:
                 idx.section_ids.add(_slug)
 
@@ -427,6 +466,20 @@ TYPST_TERM_RE = re.compile(r'slug:\s*"([^"]*)"')
 # The subset that is actually a well-formed term id. Only these become citable
 # anchors; a malformed one is collected above and reported by check 3.
 TYPST_TERM_OK_RE = re.compile(r"^term-[a-z0-9]+(?:-[a-z0-9]+)*$")
+# A SECTION HEADING, matched against the WHOLE SOURCE rather than per line. The
+# real authoring style opens a section across several lines —
+#
+#   #section(
+#     title: "04 The catalog gate",
+#
+# — and `\s*` inside a per-line scan can never cross the newline, so every
+# multi-line section fell out of the anchor index while the single-line spelling
+# stayed in. Measured on a real layer: 4 of 10 sections indexed, and every
+# cross-document link into one of the other 6 was reported as a dangling section
+# anchor. A section title needs no line number (the anchor set is a set of
+# slugs, and a violation names the TARGET file, not the heading's line), so this
+# one index is built off the joined source while everything that does need a
+# line number stays in the per-line loop.
 TYPST_SECTION_RE = re.compile(r'(?:sub)?section\(\s*title:\s*"([^"]*)"')
 TYPST_LINK_RE = re.compile(r'link\(\s*"([^"]*)"')
 TYPST_LINE_COMMENT_RE = re.compile(r"//.*$")
@@ -441,11 +494,13 @@ TYPST_CTX_CITE_RE = re.compile(r'#ctx\(\s*"([^"]*)"')
 def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
     """Read one Typst layer file and build the same indexes the checks need.
 
-    The section slug is derived by THE SAME RULE the markdown side uses
-    (anchors.section.slug_rule), so a link written against either notation
-    resolves identically: '02.1 The pending ledger' -> '021-the-pending-ledger'.
-    Two slug rules for one concept is how a cross-link starts resolving on one
-    side and dangling on the other.
+    The section slug is derived by THE SAME RULE the markdown side uses, and
+    now by literally the same function: both call section_slug, which owns the
+    schema's anchors.section.slug_rule. A link written against either notation
+    therefore resolves identically — '02.1 The pending ledger' ->
+    '021-the-pending-ledger'. Two slug rules for one concept is how a cross-link
+    starts resolving on one side and dangling on the other, and for a while the
+    two sides agreed only because both were wrong in the same way.
     """
     idx = FileIndex(path=path, rel=rel, base=os.path.basename(path))
     idx.lines = read_lines(path)
@@ -466,16 +521,21 @@ def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
             idx.term_anchor_ids.append(slug)
             if TYPST_TERM_OK_RE.match(slug):
                 idx.declared_terms.add(slug)
-        for m in TYPST_SECTION_RE.finditer(line):
-            slug = re.sub(r"[^a-z0-9]+", "-", m.group(1).lower()).strip("-")
-            if slug:
-                idx.section_ids.add(slug)
         for m in TYPST_LINK_RE.finditer(line):
             idx.link_dests.append(m.group(1))
         for m in TYPST_TERM_CITE_RE.finditer(line):
             idx.term_cites.append((lineno, m.group(1)))
         for m in TYPST_CTX_CITE_RE.finditer(line):
             idx.ctx_cites.append((lineno, m.group(1)))
+
+    # The section index is the one index built off the JOINED source, because a
+    # section call spans lines and its slug needs no line number. The comment-
+    # stripped lines are joined rather than the raw ones, so a commented-out
+    # section is no more an anchor here than it is anywhere else.
+    for m in TYPST_SECTION_RE.finditer("\n".join(idx.stripped)):
+        slug = section_slug(m.group(1))
+        if slug:
+            idx.section_ids.add(slug)
 
     return idx
 
@@ -1027,6 +1087,21 @@ WORD_RE = re.compile(r"[^\W\d_]{2,}", re.ASCII)
 # A citation is a call carrying a bare name — term("x"), ctx("y"), adr(12).
 # Repeating one is the LEGAL form of repetition: citing, never restating.
 CITE_CALL_RE = re.compile(r"#?\b(?:term|ctx|adr|lens-pill|chip)\s*\([^)]*\)")
+# The same citation, written through Typst's code-block form so the helper is
+# imported at the citing site: `#{ import "../refs.typ": adr; adr(63) }`. The
+# WHOLE wrapper is one citation and is removed as one.
+#
+# Removing only the inner `adr(63)` — which is what the citation pattern above
+# did on its own — left the import preamble behind as the entire surviving
+# "prose". Two citations of DIFFERENT decisions then normalized to the identical
+# string `#{ import "../refs.typ": adr; } .`, and the duplicate check reported
+# restatement over two lines that restate nothing. The boilerplate carries no
+# prose in the first place, so it belongs with the citation it wraps rather than
+# in the text a reader is held to.
+CITE_BLOCK_RE = re.compile(
+    r"#\{\s*import\s+\"[^\"]*\"\s*:[^;]*;\s*"
+    r"(?:term|ctx|adr|lens-pill|chip)\s*\([^)]*\)\s*\}"
+)
 # The call scaffolding on a line: a leading `#name(`, named arguments up to
 # their value, and the brackets that open or close a content block. What
 # survives is the text a reader sees.
@@ -1046,7 +1121,10 @@ def prose_of(line: str) -> str:
     if not t:
         return ""
     # A citation-only fragment is the legal repetition, so it is removed before
-    # anything is counted rather than counted and then excused.
+    # anything is counted rather than counted and then excused. The wrapped form
+    # goes first, so the whole `#{ import …; adr(N) }` is taken as one citation
+    # rather than having its inner call removed and its preamble left standing.
+    t = CITE_BLOCK_RE.sub(" ", t)
     t = CITE_CALL_RE.sub(" ", t)
     t = CALL_HEAD_RE.sub(" ", t)
     t = NAMED_ARG_RE.sub(" ", t)

@@ -123,6 +123,45 @@
   }
 }
 
+// THE SHARED DRAWING FRAME — the furniture every drawing block wears.
+//
+// A drawing is a tinted kind strip, an optional title, the drawing itself, and
+// an optional caption. That is the same for a structure diagram, a state
+// machine, a sequence, and a chart, so it is written once here and each block
+// supplies only what differs: its tint, the word naming its kind, and the
+// content it draws.
+//
+// The KIND STRIP is what makes a drawing legible before the caption is read.
+// A structure diagram spends it on its altitude, because a reader of a
+// structural view needs to know which zoom level they are at. The other kinds
+// spend it on their own name, because they have no zoom level to state — a
+// sequence is ordered by time and a machine by transition, so an altitude on
+// either would be a label with nothing behind it.
+// `kind` arrives as CONTENT, not as a string. The strip is set inside a
+// content block, and a string interpolated there joins its surroundings
+// differently from content written in place — enough to shift the drawing
+// below it by a fraction of a point. Taking content keeps every caller's
+// output identical to the markup it replaced.
+#let _drawing-frame(tint: none, kind: none, title: none, caption: none, body) = {
+  let c = if tint == none { luma(120) } else { tint }
+  block(width: 100%, inset: (x: 7pt, y: 3.5pt), fill: c.lighten(92%),
+        stroke: (left: 2.4pt + c))[
+    #text(size: 6.2pt, weight: "bold", fill: c, tracking: 0.7pt)[
+      #kind
+    ]
+    #if title != none [ #h(0.6em) #text(size: 8pt, fill: luma(70))[#title] ]
+  ]
+  v(0.45em)
+  body
+  if caption != none {
+    v(0.35em)
+    block(width: 100%, inset: (x: 2pt))[
+      #text(size: 7.4pt, fill: luma(115))[#caption]
+    ]
+  }
+  v(0.55em)
+}
+
 // THE BULLET BLOCK. Content is often written as bullets, one property each.
 // This is the convenient way to write that, never the only legal way: a
 // passage whose sense is a chain of causes reads worse chopped into bullets.
@@ -375,26 +414,16 @@
         (dash: "dashed", thickness: 0.6pt, paint: luma(110))
       } else { 0.7pt + luma(85) })
   })
-  block(width: 100%, inset: (x: 7pt, y: 3.5pt), fill: ac.lighten(92%),
-        stroke: (left: 2.4pt + ac))[
-    #text(size: 6.2pt, weight: "bold", fill: ac, tracking: 0.7pt)[
-      #if altitude == none [
-        ALTITUDE #upper(_alt-name(altitude))
-      ] else [
-        ALTITUDE #altitude · #upper(_alt-name(altitude))
-      ]
-    ]
-    #if title != none [ #h(0.6em) #text(size: 8pt, fill: luma(70))[#title] ]
-  ]
-  v(0.45em)
-  align(center, _fletcher.diagram(spacing: spacing, ..ns, ..es))
-  if caption != none {
-    v(0.35em)
-    block(width: 100%, inset: (x: 2pt))[
-      #text(size: 7.4pt, fill: luma(115))[#caption]
-    ]
-  }
-  v(0.55em)
+  _drawing-frame(
+    tint: ac,
+    kind: if altitude == none [
+      ALTITUDE #upper(_alt-name(altitude))
+    ] else [
+      ALTITUDE #altitude · #upper(_alt-name(altitude))
+    ],
+    title: title, caption: caption,
+    align(center, _fletcher.diagram(spacing: spacing, ..ns, ..es)),
+  )
 }
 
 // THE FIVE ANSWERS — the repeated component unit, made composable. EVERY FIELD

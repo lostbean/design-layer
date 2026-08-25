@@ -67,35 +67,6 @@
   v(0.45em)
 }
 
-// a diagram shape with no graph carrier keeps its source visible rather than
-// vanishing: the reader sees the drawing's content and the gate stays honest.
-#let diagram-source(kind, src) = block(
-  width: 100%, inset: 7pt, radius: 3pt, fill: luma(248),
-  stroke: (left: 2.5pt + luma(170)),
-  [
-    #text(size: 6.5pt, fill: luma(110), weight: "bold", tracking: 0.4pt,
-          upper(kind + " — awaiting its carrier"))
-    #linebreak()
-    #raw(src, block: true)
-  ])
-
-// ---- chart: a plot from a small table, no plotting spec ------------------
-#let CHART-TYPES = ("bar", "line", "pie")
-#let chart(type: none, ..a, body) = {
-  _need("chart", "type", type)
-  _enum("chart", "type", type, CHART-TYPES)
-  // the body IS the authored table: rows of (category, value)
-  block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(249),
-        stroke: (left: 2.5pt + TINT-COLOR.at("blue")),
-    [
-      #text(size: 6.5pt, fill: TINT-COLOR.at("blue"), weight: "bold",
-            tracking: 0.4pt, upper("chart — " + type))
-      #linebreak()
-      #body
-    ])
-  v(0.45em)
-}
-
 // ---- figure: the ONE block that carries renderer markup -------------------
 // Named at both ends: a distinct block kind in the source, and a visibly
 // distinct frame in the rendered document, so nobody mistakes a figure for a

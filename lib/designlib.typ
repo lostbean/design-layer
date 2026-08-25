@@ -50,6 +50,9 @@
 //   diagram.typ    diagrams, charts, and the figure block
 //   shell.typ      the document shell and the aggregate shell
 //   native.typ     the native authoring surface a design.typ calls directly
+//   machine.typ    the state machine, drawn by an automaton carrier
+//   sequence.typ   the message sequence, drawn by a sequence carrier
+//   chart.typ      the chart, drawn by a plotting carrier
 #import "schema.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *
@@ -62,3 +65,6 @@
 #import "diagram.typ": *
 #import "shell.typ": *
 #import "native.typ": *
+#import "machine.typ": *
+#import "sequence.typ": *
+#import "chart.typ": *

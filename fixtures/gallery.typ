@@ -274,9 +274,35 @@
   title: "10 Plots and figures",
   lead: "A chart states a magnitude; a figure carries renderer markup.",
   body: [
-    #chart(type: "bar")[
-      #md-table(2, ([*kind*], [*count*], [invariant], [31], [guideline], [12]))
-    ]
+    #chart(
+      kind: "column",
+      title: "rules by kind",
+      accent: "blue",
+      points: (("invariant", 31), ("guideline", 12), ("fence", 7)),
+      caption: [A column chart reads its categories across the bottom.],
+    )
+
+    #chart(
+      kind: "bar",
+      title: "coverage rows by status",
+      accent: "teal",
+      points: (("captured", 24), ("standard", 5), ("out-of-scope", 2)),
+    )
+
+    #chart(
+      kind: "line",
+      title: "decisions recorded, by version",
+      accent: "violet",
+      unit: "ADRs",
+      points: (("v1", 12), ("v2", 34), ("v3", 71)),
+    )
+
+    #chart(
+      kind: "pie",
+      title: "where the lines live",
+      accent: "amber",
+      points: (("library", 2240), ("scripts", 2621), ("schema", 900)),
+    )
 
     #figure-block(
       caption: [A figure names the vendored packages it uses, so a render stays
@@ -287,8 +313,73 @@
     ]
 
     #embedded-svg(caption: [An external drawing], file: "diagram.svg")[]
+  ],
+)
 
-    #diagram-source("mermaid", "graph LR; a --> b")
+#section(
+  title: "10.1 The state machine",
+  lead: "A machine declares states and transitions, never positions.",
+  body: [
+    #state-machine(
+      title: "an issue, from intake to its two terminals",
+      accent: "amber",
+      initial: "needs_triage",
+      accepting: ("done", "wontfix"),
+      states: (
+        "needs_triage", "needs_info", "ready_for_agent",
+        "in_progress", "done", "wontfix",
+      ),
+      transitions: (
+        ("needs_triage", "needs_info", "request-info"),
+        ("needs_info", "needs_triage", "info-received"),
+        ("needs_triage", "ready_for_agent", "brief"),
+        ("ready_for_agent", "in_progress", "start"),
+        ("in_progress", "done", "deliver"),
+        ("in_progress", "wontfix", "abandon"),
+        ("needs_triage", "wontfix", "reject"),
+      ),
+      caption: [The carrier solves the layout, draws the initial marker, and
+        rings each accepting state.],
+    )
+  ],
+)
+
+#section(
+  title: "10.2 The sequence",
+  lead: "A sequence is ordered by time, and says when a party is active.",
+  body: [
+    #sequence(
+      title: "a work order, from dispatch to accepted change",
+      accent: "violet",
+      participants: (
+        (id: "coder", label: "coder", shape: "control"),
+        (id: "wo", label: "work-order", shape: "participant"),
+        (id: "gate", label: "the gate", shape: "boundary"),
+        (id: "repo", label: "repository", shape: "database"),
+      ),
+      steps: (
+        seq-msg("coder", "wo", "dispatch one chunk", activate: true),
+        seq-note("wo", [the brief is durable], side: "right"),
+        seq-loop("until the gate is green", (
+          seq-msg("wo", "repo", "write the change"),
+          seq-msg("wo", "gate", "run the gate"),
+          seq-alt(
+            "the gate passes",
+            (seq-msg("gate", "wo", "green", dashed: true),),
+            otherwise: (
+              seq-msg("gate", "wo", "violation", dashed: true),
+              seq-msg("wo", "repo", "repair"),
+            ),
+          ),
+        )),
+        seq-msg("wo", "coder", "deliver", dashed: true, deactivate: true),
+        seq-opt("the delivery is bounced", (
+          seq-msg("coder", "wo", "re-dispatch with findings"),
+        )),
+      ),
+      caption: [Activation, branch, repetition, and an optional block —
+        the constructs a node-and-edge drawing cannot state.],
+    )
   ],
 )
 

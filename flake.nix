@@ -216,19 +216,35 @@
         # The gate, callable against ANY directory from outside this repo, with
         # nothing copied into that directory.
         #
-        #   nix run <flake>#project   -- <schema.json> <out-dir>
-        #   nix run <flake>#aggregate -- <layer-root> <out.pdf>
-        #   nix run <flake>#check     -- <layer-root> [repo-root]
+        #   nix run <flake>#project -- <schema.json> <out-dir>
+        #   nix run <flake>#render  -- <layer-root> <out.pdf>
+        #   nix run <flake>#check   -- <layer-root> [repo-root]
         #
-        # project and aggregate are thin pass-throughs to one script each.
+        # project and render are thin pass-throughs to one script each.
         # check is the COMPOSITE: the freshness check, token coverage, and
         # layer integrity in sequence.
         apps.project = gateApp "render-project" "render-project";
 
-        # The aggregate, callable on its own. `check` VERIFIES the rendered
+        # The renderer, callable on its own. `check` VERIFIES the rendered
         # document (regenerate-and-compare), which presupposes one exists — so a
         # host needs a way to BUILD it the first time, and after every authoring
         # change. That is this app.
+        #
+        # IT IS NAMED FOR WHAT IT DOES, not for how it does it. The old name,
+        # `aggregate`, described the mechanism — the script concatenates the
+        # contexts — and a caller reaching for the thing that produces the
+        # document does not think "aggregate", they think "render". Measured
+        # cost of the wrong name: the framework's own install skill documented a
+        # `render` app that did not exist, because whoever wrote it reached for
+        # the obvious word.
+        apps.render = gateApp "design-aggregate" "design-aggregate";
+
+        # The old name, kept working. A host pins this flake by revision and
+        # calls `#aggregate` from its commit hook and its CI; renaming without
+        # an alias would break every one of them at the next bump, which is a
+        # cost the rename does not justify. The alias is the whole deprecation
+        # path: both names run the same program, and the old one retires only
+        # once the hosts have moved.
         apps.aggregate = gateApp "design-aggregate" "design-aggregate";
         apps.check =
           let

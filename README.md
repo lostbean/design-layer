@@ -52,11 +52,11 @@ Everything runs through Nix — nothing is copied into your repo.
 Build the layer's rendered document, then gate it:
 
 ```sh
-nix run github:lostbean/design-layer#aggregate -- docs/design docs/design/design-layer.pdf
-nix run github:lostbean/design-layer#check     -- docs/design .
+nix run github:lostbean/design-layer#render -- docs/design docs/design/design-layer.pdf
+nix run github:lostbean/design-layer#check  -- docs/design .
 ```
 
-`aggregate` compiles every `design.typ` under the layer root into one navigable
+`render` compiles every `design.typ` under the layer root into one navigable
 PDF — a context per chapter, one alphabetized glossary, a table of contents.
 `check` then runs three things in sequence and exits 0 clean, 1 on a
 violation, 2 on an error:
@@ -81,7 +81,7 @@ the first that fires — the same escalation `DESIGN_STRICT=1` performs, as a
 named entry point. It is deliberately not part of `check`.
 
 Note what `lint` is not needed for: a guideline is **already reported** by an
-ordinary `aggregate` or `check` run, naming its rule, the offending item, and
+ordinary `render` or `check` run, naming its rule, the offending item, and
 what was expected, with a count summary at the end. `lint` changes the
 SEVERITY, not the visibility — it is for a repo that wants a guideline to stop
 a commit, not for finding out which ones fired.
@@ -94,7 +94,7 @@ nix run github:lostbean/design-layer#project -- <schema.json> <out-dir> # schema
 
 `project` is the seam between the schema and the renderer: it reads
 `schema/design-schema.json` and emits the Typst library every compile imports.
-You will not normally call it directly — `aggregate` and `check` both project
+You will not normally call it directly — `render` and `check` both project
 fresh on demand — but it is exposed for an installer or a CI job that wants
 the library as a build artifact.
 
@@ -148,7 +148,7 @@ layer; nothing about it lives beside the source it describes.
 ## Layout
 
 ```
-scripts/     the gate: aggregate, layer-integrity, token-coverage, render-project
+scripts/     the gate: design-aggregate, layer-integrity, token-coverage, render-project
 schema/      the ONE declared schema — block vocabulary, anchors, layout, enums
 fixtures/    the gallery: every projected function, and the renderer-drift tripwire
 skills/      the authoring guidance an agent loads to write a well-formed layer

@@ -63,10 +63,10 @@ nix develop                       # the dev shell: lefthook, typst, pdftotext, p
 nix flake check                   # formatting, the self-tests, projection determinism
 nix fmt                           # treefmt: nixfmt, prettier, shfmt, ruff-format
 
-nix run .#aggregate -- <layer-root> <out.pdf> [--check]
-nix run .#check     -- <layer-root> <repo-root>
-nix run .#lint      -- <layer-root>          # the guideline sweep, never a gate
-nix run .#project   -- schema/design-schema.json <out-dir>
+nix run .#render  -- <layer-root> <out.pdf> [--check]   # #aggregate: old name
+nix run .#check   -- <layer-root> <repo-root>
+nix run .#lint    -- <layer-root>            # the guideline sweep, never a gate
+nix run .#project -- schema/design-schema.json <out-dir>
 ```
 
 `check` runs the invariants and decides pass or fail. `lint` promotes every

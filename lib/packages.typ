@@ -26,15 +26,16 @@
 #import "@preview/cmarker:0.1.6"
 
 // the drawing packages a figure block's `uses` names. Three of them ALSO carry
-// a first-class block: `finite` draws the state machine, `chronos` the
-// sequence, and `lilaq` the chart. Each is bound a second time under a private
+// a first-class block: `chronos` draws the sequence, and `lilaq` and `cetz`
+// the chart. `finite` stays a figure-only package: it draws the right marks
+// for an automaton but has no layout solver, so the state machine goes to the
+// graph renderer that does. Each is bound a second time under a private
 // name that the block calls, so the block never depends on what the public
 // name happens to be bound to in a document that also imports it. The public
 // binding stays because a figure body still names the package.
 #import "@preview/chronos:0.2.1"
 #import "@preview/chronos:0.2.1" as _chronos
 #import "@preview/finite:0.5.0"
-#import "@preview/finite:0.5.0" as _finite
 #import "@preview/cetz:0.4.2"
 #import "@preview/cetz:0.4.2" as _cetz
 #import "@preview/cetz-plot:0.1.2"
@@ -44,7 +45,6 @@
 #let BORROWED = (
   "_cetz",
   "_chronos",
-  "_finite",
   "_fl-edge",
   "_fl-node",
   "_fletcher",

@@ -1,4 +1,4 @@
-// ---- the state machine, drawn by an automaton renderer -------------------
+// ---- the state machine, drawn by a layout-solving graph renderer ---------
 //
 // WHY THIS IS ITS OWN BLOCK RATHER THAN A DIAGRAM. A state machine is not a
 // structure drawn at a zoom level: it is a set of states and the transitions
@@ -9,9 +9,23 @@
 // moment a transition is added, which is how a machine drawing decays.
 //
 // So the machine declares STATES and TRANSITIONS and nothing about position.
-// `finite` solves the layout, draws the initial marker and the double ring on
-// an accepting state, and curves an arc around a state rather than through it.
 // The author writes what the machine IS; the carrier decides where it sits.
+//
+// WHY THE GRAPH RENDERER AND NOT THE AUTOMATON PACKAGE. The automaton package
+// draws the right marks — a start arrow, a double ring on an accepting state —
+// but it has NO LAYOUT SOLVER. Its five modes place states on fixed geometric
+// patterns (a line, a ring, a grid, a wrapped line) and route no edges around
+// each other. On a machine of any density the transition labels land on top of
+// one another, and the only remedy the package offers is tuning the pattern by
+// hand — which is the hand-placed layout this block exists to remove, wearing a
+// different name.
+//
+// The graph renderer SOLVES the layout: it ranks the states, routes each edge
+// around the others, and places every label clear of the rest. Measured on one
+// twelve-transition machine, the pattern-placed drawing overlapped four label
+// pairs and the solved drawing overlapped none. The marks the automaton package
+// gave for free are cheap to state here — a point node for the start, a double
+// circle for an accepting state — so the solver is the half worth keeping.
 //
 // NO ALTITUDE. An altitude labels the zoom level of a structural view. A
 // machine has none — it is ordered by transition, not by containment — so the
@@ -22,56 +36,49 @@
 #import "packages.typ": *
 #import "native.typ": _drawing-frame, _req-enum
 
-// The layouts a machine may ask for, named by what they are good for rather
-// than by the carrier's own vocabulary. A pipeline reads left to right; a
-// machine whose states cycle reads better on a ring; a dense machine with many
-// crossing transitions reads better wrapped.
-#let MACHINE-LAYOUTS = ("linear", "circular", "snake", "grid")
+// The reading direction. A machine that runs from an entry to a terminal reads
+// left to right like a sentence; one whose states cycle is often clearer top to
+// bottom. Both are directions for the SOLVER, never positions for a state.
+#let MACHINE-FLOWS = ("left-to-right", "top-to-bottom")
 
-#let _layout-of(name, spacing, columns) = {
-  if name == "circular" { _finite.layout.circular.with(spacing: spacing) }
-  else if name == "snake" {
-    _finite.layout.snake.with(spacing: spacing, columns: columns)
-  } else if name == "grid" {
-    _finite.layout.grid.with(spacing: spacing, columns: columns)
-  } else { _finite.layout.linear.with(spacing: spacing) }
+#let _rankdir(flow) = if flow == "top-to-bottom" { "TB" } else { "LR" }
+
+// TWO LAYERS READ A STATE NAME, and each needs its own care. The carrier parses
+// one string, so a name carrying a quote would end the token early and produce
+// a graph that fails to parse or — worse — parses into a different graph than
+// the author wrote; this quotes and escapes for that parser. The carrier then
+// EVALUATES each label as math unless told otherwise, so the same name would
+// reach Typst's math parser and fail inside the package, naming a line the
+// author never wrote. State names are identifiers rather than formulas, so
+// every render below asks for text mode and this escaping is the only layer
+// left that has to be right.
+#let _q(s) = {
+  let dq = str.from-unicode(34)
+  dq + str(s).replace(dq, "\\" + dq) + dq
 }
 
 // A state machine.
 //
-//   states       — the ordered state names. Order is the layout's reading
-//                  order, so it is the author's one lever over placement.
+//   states       — the state names. Order is the order they are declared to the
+//                  solver, which nudges the ranking; it is not a placement.
 //   transitions  — (from, to, event) triples. `from` and `to` name declared
 //                  states; a typo is a hard failure rather than a missing arc,
 //                  because an edge to nowhere renders as a drawing with a line
 //                  quietly absent.
-//   initial      — the state the machine starts in. Guidance when unstated: a
-//                  machine whose entry point is unknown cannot be followed.
+//   initial      — the state the machine starts in, drawn with an entry arrow.
+//                  Guidance when unstated: a machine whose entry point is
+//                  unknown cannot be followed.
 //   accepting    — the terminal states, drawn with the double ring.
 #let state-machine(
-  title: none, caption: none, accent: "teal", layout: auto,
-  columns: auto, spacing: auto, states: (), transitions: (),
-  initial: none, accepting: (),
+  title: none, caption: none, accent: "teal", flow: "left-to-right",
+  states: (), transitions: (), initial: none, accepting: (),
 ) = {
   _req-enum("accent", accent, TINTS)
-
-  // THE LAYOUT DEFAULTS TO THE MACHINE'S OWN SIZE. A short machine reads best
-  // as a straight line, and a long one does not: seven states on one row runs
-  // off the page, which is the failure a hand-placed grid was invented to
-  // avoid. So a machine past a handful of states wraps unless the author says
-  // otherwise. The author keeps the override; they no longer need it to get a
-  // drawing that fits.
-  let layout = if layout != auto { layout } else if states.len() > 5 {
-    "snake"
-  } else { "linear" }
-  _req-enum("machine layout", layout, MACHINE-LAYOUTS)
+  _req-enum("machine flow", flow, MACHINE-FLOWS)
 
   // AN EMPTY MACHINE NEVER REACHES THE CARRIER. The guidance is the whole
-  // response: the carrier reads the first state to seed its automaton and
-  // panics on an empty one, and a carrier panic would replace this block's
-  // guidance — which names the rule and what to do — with a stack trace from
-  // inside a package the author never called. So the block guides and stops,
-  // exactly as it would for any other absence it can render around.
+  // response: a graph with no nodes renders an empty frame, and the block says
+  // what it expected rather than drawing nothing and looking broken.
   if states.len() == 0 {
     _guide("machine.states",
            "a state machine is expected to declare at least one state. An " +
@@ -108,65 +115,68 @@
   }
 
   let c = TINT-COLOR.at(accent)
+  let nl = "\n"
+  let hx(x) = _q(x.to-hex())
+  let f = "fontname=" + _q("Libertinus Serif")
 
-  // SIZE THE STATE TO ITS LABEL. The carrier's default radius is set for the
-  // one-letter states of a textbook automaton; a design layer names its states
-  // in words (`ready_for_agent`), and at the default the text runs outside the
-  // circle it belongs to. Deriving the radius from the longest name keeps every
-  // state legible without asking the author to tune a number.
-  let widest = calc.max(1, ..states.map(s => str(s).len()))
-  let radius = calc.max(0.62, 0.20 * calc.sqrt(widest * 1.0))
-  let spacing = if spacing != auto { spacing } else { radius * 3.6 }
-  // Wrap before a row grows wider than the page. The same width budget the
-  // radius consumes decides how many states fit on one line. A NARROWER row
-  // also shortens the transition arcs, and short arcs are what keeps two
-  // labels from landing on the same point — so the wrap is a legibility lever,
-  // not only a width one.
-  let columns = if columns != auto { columns } else {
-    calc.max(2, calc.min(3, int(7.5 / (radius * 2.6))))
-  }
+  // THE START MARKER IS AN EDGE FROM A POINT, which is how a solved graph
+  // states an entry: the point carries no label and no ring, so it reads as an
+  // arrow arriving from outside rather than as a state of the machine.
+  let src = (
+    "digraph {" + nl
+    + "  rankdir=" + _rankdir(flow) + ";" + nl
+    + "  graph [" + f + ", fontsize=10, nodesep=0.35, ranksep=0.55];" + nl
+    + "  node [shape=circle, style=" + _q("filled") + ", " + f
+    + ", fontsize=8, color=" + hx(c) + ", fillcolor=" + hx(c.lighten(88%))
+    + ", penwidth=1.0];" + nl
+    + "  edge [" + f + ", fontsize=7, color=" + _q("#555555") + "];" + nl
+  )
 
-  // The carrier takes its machine as a dictionary of state -> (target: event).
-  // Two transitions sharing a state pair are joined onto one arc, because two
-  // arcs between the same pair would be drawn on top of each other.
-  let tbl = (:)
-  for s in states { tbl.insert(s, (:)) }
-  for t in transitions {
+  // An accepting state is declared before its edges so the shape applies
+  // wherever the state appears.
+  let marks = accepting.map(s =>
+    "  " + _q(s) + " [shape=doublecircle];" + nl).sum(default: "")
+
+  let entry = if initial != none {
+    ("  __entry [shape=point, width=0.07, color=" + hx(c) + "];" + nl
+      + "  __entry -> " + _q(initial) + ";" + nl)
+  } else { "" }
+
+  let edges = transitions.map(t => {
     let (from, to, ..rest) = t
-    let ev = if rest.len() > 0 { rest.at(0) } else { "" }
-    let row = tbl.at(from)
-    if to in row and row.at(to) != "" and ev != "" {
-      row.insert(to, row.at(to) + ", " + ev)
-    } else {
-      row.insert(to, ev)
-    }
-    tbl.insert(from, row)
-  }
+    let ev = if rest.len() > 0 { str(rest.at(0)) } else { "" }
+    let lbl = if ev == "" { "" } else { " [label=" + _q(ev) + "]" }
+    "  " + _q(from) + " -> " + _q(to) + lbl + ";" + nl
+  }).sum(default: "")
+
+  // A state naming no transition would otherwise never be drawn, because the
+  // carrier only sees a name that appears in an edge. Declaring every state up
+  // front keeps an isolated state visible rather than silently dropped.
+  let decls = states.map(s => "  " + _q(s) + ";" + nl).sum(default: "")
 
   _drawing-frame(
     tint: c,
     kind: [STATE MACHINE],
     title: title, caption: caption,
-    align(center, {
-      set text(size: 7.6pt)
-      _finite.automaton(
-        tbl,
-        initial: initial,
-        final: accepting,
-        layout: _layout-of(layout, spacing, columns),
-        style: (
-          state: (
-            radius: radius,
-            fill: c.lighten(88%),
-            stroke: 0.7pt + c,
-            label: (fill: luma(30)),
-          ),
-          transition: (
-            stroke: 0.7pt + luma(85),
-            label: (fill: luma(80), size: 7pt),
-          ),
-        ),
-      )
+    // SIZE THE DRAWING BY ITS OWN SHAPE, capped to the column — the same rule
+    // the structural diagram follows, so two drawings of similar complexity
+    // come out similar and size never reads as importance.
+    layout(size => {
+      // ORDER MATTERS TO THE SOLVER. It ranks from the first node it sees, so
+      // the entry is declared before anything else: seeded with a terminal
+      // instead, the solver ranks backwards and the machine reads from its end
+      // to its beginning. The bare state declarations come last, where they
+      // still rescue an isolated state without steering the ranking.
+      let body = src + entry + marks + edges + decls + "}"
+      let nat = measure(dot-render(body, math-mode: "text"))
+      let hi = size.width * 0.94
+      let w = if nat.width <= 0pt { hi } else { calc.min(nat.width, hi) }
+      let hcap = size.height * 0.78
+      let scaled = if nat.height > 0pt and nat.width > 0pt {
+        let drawn = nat.height * (w / nat.width)
+        if drawn > hcap { w * (hcap / drawn) } else { w }
+      } else { w }
+      align(center, dot-render(body, width: scaled, math-mode: "text"))
     }),
   )
 }

@@ -614,6 +614,28 @@ else
   printf '%s\n' "$fence_admitted_out" | head -3 | sed 's/^/       /'
 fi
 
+# INLINE MARKUP MUST NOT HIDE A FENCED TERM. The text walk reads a clause by
+# recursing its content tree, and Typst holds the gap between two words as its
+# own `space` element. A walk that dropped it welded the words together — `an
+# element with #raw("id=") set` flattened to "an element withid=set" — and a
+# pattern anchored on a word boundary then could not match. The fence went
+# blind to exactly the phrasing it exists to catch, silently, on any clause
+# carrying markup. Asserted under strict, where the guideline panics.
+fixture fence-markup '#behavior(title: "R", level: "interface")[
+  #when[an element with #raw("id=") set is clicked]
+  #then[the form is submitted]
+]'
+fence_markup_out="$(compile fence-markup strict || true)"
+if [ -f "$WORK/fence-markup.pdf" ]; then
+  fail_line "fence-markup: markup hid a fenced term from the fence"
+  rm -f "$WORK/fence-markup.pdf"
+elif printf '%s\n' "$fence_markup_out" | grep -q 'behavior.fence'; then
+  pass_line "fence: inline markup does not hide a fenced term"
+else
+  fail_line "fence-markup: strict failed, but not on the fence rule"
+  printf '%s\n' "$fence_markup_out" | head -3 | sed 's/^/       /'
+fi
+
 # A PATTERN EDITED IN THE SCHEMA CHANGES WHAT THE FENCE CATCHES. This is the
 # assertion that separates a read from a hardcode at the level that matters —
 # not what the library holds, but what it flags. The schema's real patterns are

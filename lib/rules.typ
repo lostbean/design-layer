@@ -136,9 +136,28 @@
 // content tree is a call, not literal text — this walks it down to the
 // characters the author actually wrote, the same structural walk _len (below)
 // uses to measure a card body, but returning text instead of a length.
+// THE WORD BREAKS ARE IN THE TREE, and dropping them welds words together.
+// Typst represents the gap between two words as its own `space` element, which
+// carries no text, no children, and no body — so a walk that returns "" for
+// anything it does not recognise silently deletes every space that had markup
+// on either side of it. `[the #emph[form] is submitted]` came out as
+// "theformis submitted".
+//
+// That defeats both halves of the behavior fence: a pattern anchored on a word
+// boundary cannot match `withid=`, and a forbidden term sitting next to another
+// word is never seen. It also reaches the section titles this walk feeds, so a
+// title holding any inline markup derived a slug with the words run together.
+//
+// A `space` and a `linebreak` therefore render as the single space they are.
+// The gaps are recovered from the tree rather than inserted between children,
+// which is the difference between reconstructing what the author wrote and
+// guessing at it: joining children with a separator would just as wrongly push
+// a space into `#emph[design]-layer`, where the tree holds none.
 #let _flatten-text(c) = {
   if type(c) == str { c }
   else if type(c) != content { "" }
+  else if c.func() == [ ].func() { " " }
+  else if c.func() == linebreak { " " }
   else if c.has("text") { c.text }
   else if c.has("children") { c.children.map(_flatten-text).sum(default: "") }
   else if c.has("body") { _flatten-text(c.body) }

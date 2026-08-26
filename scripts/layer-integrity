@@ -185,6 +185,9 @@ class Schema:
     homes: dict
     context_segment_re: "re.Pattern"
     staleness_threshold: Optional[int]
+    # None when the schema copy predates the key (tolerate-absent); an empty
+    # tuple would mean "declared, but no pattern", which is a different thing.
+    supersession_res: Optional[tuple]
 
 
 def locate_schema(argv0: str) -> str:
@@ -277,6 +280,17 @@ def load_schema(path: str) -> Schema:
     if isinstance(advisory, dict) and "threshold_commits" in advisory:
         threshold = advisory["threshold_commits"]
 
+    # The decision-citation advisory is tolerate-absent the same way. A schema
+    # that declares the key with an empty pattern list is NOT the same as one
+    # that omits it: the first says "no supersession is expressible in this
+    # ledger", the second says "this copy is older than the advisory".
+    supersession_res = None
+    cite_adv = layout.get("decision_citation_advisory")
+    if isinstance(cite_adv, dict) and "supersession_patterns" in cite_adv:
+        supersession_res = tuple(
+            re.compile(p) for p in cite_adv["supersession_patterns"]
+        )
+
     return Schema(
         term_id_re=re.compile(term_id_src),
         section_id_re=re.compile(section_src) if section_src else None,
@@ -295,6 +309,7 @@ def load_schema(path: str) -> Schema:
         homes=homing["homes"],
         context_segment_re=re.compile(homing["context_segment"]),
         staleness_threshold=threshold,
+        supersession_res=supersession_res,
     )
 
 
@@ -1262,6 +1277,61 @@ def staleness_advisory(repo: Repo, schema: Schema, files: list) -> None:
         )
 
 
+# --- Decision-citation advisory (schema decision_citation_advisory) -----------
+#
+# Advisory only — exit codes untouched. Every other check here is REFERENTIAL:
+# it proves a citation RESOLVES. That makes the whole gate blind in one
+# direction, because a citation that was never written resolves vacuously — a
+# layer citing 12 decisions passes exactly as green as one citing 123.
+#
+# The blindness is measured rather than supposed. A re-derivation of this
+# framework's own layer kept all 72 ADRs on disk, cited 10 of them, and passed
+# the full gate: the rationale sat there untouched and nothing said so. This is
+# the one signal that reads the UNCITED side.
+#
+# A decision a later one supersedes is legitimately dormant, so it is excluded.
+# The ledger records supersession only on the CITING side — a successor names
+# its predecessor in prose, and no ADR carries a status field saying it is dead
+# — so the relation is derived from the successors rather than read off the
+# superseded file.
+#
+# It stays an advisory because the right number of uncited decisions is not
+# zero and cannot be declared: a decision may be genuinely dormant without a
+# successor. What the reader needs is the COUNT, visible without diffing
+# against a layer they no longer have.
+
+
+def decision_citation_advisory(
+    adr_numbers: set, adr_files: list, cited: set, schema: Schema
+) -> None:
+    if schema.supersession_res is None or not adr_numbers:
+        return
+
+    superseded = set()
+    for idx in adr_files:
+        try:
+            body = open(idx.path, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        for rx in schema.supersession_res:
+            superseded.update(int(m.group(1)) for m in rx.finditer(body))
+
+    dormant = sorted(adr_numbers - cited - superseded)
+    if not dormant:
+        return
+
+    # NAME EXAMPLES, never the whole list. The count is the signal; a hundred
+    # numbers printed at a commit is noise the reader learns to scroll past.
+    shown = ", ".join(f"ADR-{n:04d}" for n in dormant[:5])
+    more = f" (+{len(dormant) - 5} more)" if len(dormant) > 5 else ""
+    print(
+        f"advisory: {len(dormant)} of {len(adr_numbers)} decision(s) are cited "
+        f"by no design document — {shown}{more}. A decision no section cites "
+        "is rationale the layer no longer carries; cite it from the section it "
+        "governs, or supersede it."
+    )
+
+
 # --- Main ---------------------------------------------------------------------
 
 
@@ -1501,6 +1571,15 @@ def main(argv: list) -> int:
         repo,
         schema,
         design_docs + contexts + map_files + coverage_files + adr_files,
+    )
+
+    # The cited set comes from the SAME adr_calls check_adr_calls resolves, so
+    # the advisory and the check can never disagree about what was cited.
+    decision_citation_advisory(
+        adr_numbers,
+        adr_files,
+        {n for idx in design_docs + contexts for _, n in idx.adr_calls},
+        schema,
     )
 
     if report.found:

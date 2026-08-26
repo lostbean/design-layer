@@ -92,6 +92,13 @@
       "threshold_commits": 30,
       "note": "an ADVISORY, never a check — exit codes untouched: when the repo has moved threshold_commits+ commits since any layer artifact last changed, layer-integrity prints one line naming the count and recommending the layer be reconciled with the system. The always-on mechanical form of the standing-directives staleness hint; runs wherever the gate is wired (pre-commit, CI, probes). A script reading an older schema copy without this key skips the advisory silently (tolerate-absent). Skipped outside git and when the layer was never committed."
     },
+    "decision_citation_advisory": {
+      "supersession_patterns": [
+        "[Ss]upersedes\\s+\\[ADR-(\\d+)\\]",
+        "[Rr]etires\\s+\\[ADR-(\\d+)\\]"
+      ],
+      "note": "an ADVISORY, never a check — exit codes untouched: layer-integrity counts the LIVE decisions no design document cites and prints one line naming the count and the lowest-numbered examples. Every other check in this gate is REFERENTIAL — it proves a citation RESOLVES, and is therefore blind to a citation that was never written: a layer citing 12 decisions passes exactly as green as one citing 123. That blindness is measured, not hypothetical — a re-derivation kept every ADR on disk, cited 10 of 72, and passed the full gate. This is the one signal that reads the uncited side. A decision a later one supersedes is legitimately dormant, so supersession_patterns are matched against every ADR body to find the numbers a SUCCESSOR declares dead, and those are excluded — the ledger records supersession only on the citing side, so it is derived there rather than from a status field no ADR carries. A script reading an older schema copy without this key skips the advisory silently (tolerate-absent)."
+    },
     "generation_debris_patterns": ["^\\s*</content>\\s*$"],
     "generation_debris_patterns_note": "python-re regexes matched line-by-line against every layer artifact (design.typ, CONTEXT.typ, CONTEXT-MAP.md, COVERAGE.md, ADRs; fenced code blocks exempt — an example is documentation): a matching line is a generation-wrapper artifact, writer leakage the sole writer must never leave behind. layer-integrity reads this list; extend it here as new wrapper shapes surface, never in the script.",
     "artifact_filenames": {

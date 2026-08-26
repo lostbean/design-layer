@@ -38,6 +38,8 @@ set -euo pipefail
 #   (w) CONTEXT-MAP.md at repo root instead of docs/ -> exit 1 (mishomed)
 #   (x) staleness advisory fires past the threshold -> exit 0 + advisory line
 #   (y) staleness advisory silent under the threshold / without the schema key
+#   (y2) decision-citation advisory counts the LIVE uncited decisions, excludes
+#        a superseded one, stays silent on a fully-cited layer, tolerate-absent
 #   (md) a layer still authored in markdown -> exit 2 (refused, names the file)
 #
 # Depends on no repo files beyond the checker + schema and leaves no
@@ -1081,6 +1083,80 @@ json.dump(s, open(sys.argv[2], "w"))' "$HERE/../schema/design-schema.json" "$NOK
 assert_exit 0 "pre-advisory schema copy is tolerated" -- \
   env DESIGN_SCHEMA="$NOKEY" "$CHECK" "$SX"
 assert_not_contains "advisory:" "no advisory without the schema key"
+
+# --- Scenario (y2): the decision-citation advisory reads the UNCITED side -----
+# The gate's other checks are referential — they prove a citation RESOLVES —
+# so a decision nothing cites is invisible to every one of them. These cases
+# assert the advisory sees what they cannot, and that it stays an advisory.
+#
+# The fixture adds two ADRs the design document never cites, one of which a
+# THIRD ADR declares superseded. The advisory must report exactly one: the live
+# uncited decision, never the dormant one.
+SY2="$TMP/y2"
+build_single "$SY2"
+cat >"$SY2/docs/adr/0002-an-uncited-decision.md" <<'EOF'
+# 0002 — An uncited decision
+
+<a id="adr-0002"></a>
+
+## Decision
+
+Nothing in the design layer cites this.
+EOF
+cat >"$SY2/docs/adr/0003-a-superseded-decision.md" <<'EOF'
+# 0003 — A superseded decision
+
+<a id="adr-0003"></a>
+
+## Decision
+
+This one is dead, and its successor says so.
+EOF
+cat >"$SY2/docs/adr/0004-the-successor.md" <<'EOF'
+# 0004 — The successor
+
+<a id="adr-0004"></a>
+
+Supersedes [ADR-0003](0003-a-superseded-decision.md#adr-0003) whole.
+
+## Decision
+
+The replacement rule.
+EOF
+# 0004 is itself uncited, so the live-uncited set is {0002, 0004} and 0003 is
+# excluded. Asserting TWO rather than one is what proves the exclusion is doing
+# work — a broken filter would report three.
+assert_exit 0 "the citation advisory keeps the exit clean" -- \
+  env DESIGN_SCHEMA="$HERE/../schema/design-schema.json" "$CHECK" "$SY2"
+assert_contains "2 of 4 decision(s) are cited by no design document" \
+  "the advisory counts only the LIVE uncited decisions"
+assert_contains "ADR-0002" "the advisory names an uncited decision"
+assert_not_contains "ADR-0003" \
+  "a decision its successor supersedes is not reported as uncited"
+
+# A layer that cites every live decision gets no advisory line at all. Without
+# this case the advisory could be firing unconditionally and the case above
+# would still pass.
+SY3="$TMP/y3"
+build_single "$SY3"
+assert_exit 0 "a fully-cited layer stays clean" -- \
+  env DESIGN_SCHEMA="$HERE/../schema/design-schema.json" "$CHECK" "$SY3"
+assert_not_contains "cited by no design document" \
+  "no citation advisory when every live decision is cited"
+
+# Tolerate-absent: a schema copy predating the key skips the advisory rather
+# than crashing on the missing entry.
+NOCITE="$TMP/schema-no-citation-advisory.json"
+python3 -c '
+import json, sys
+s = json.load(open(sys.argv[1]))
+del s["layer_layout"]["decision_citation_advisory"]
+json.dump(s, open(sys.argv[2], "w"))' \
+  "$HERE/../schema/design-schema.json" "$NOCITE"
+assert_exit 0 "pre-advisory schema copy is tolerated" -- \
+  env DESIGN_SCHEMA="$NOCITE" "$CHECK" "$SY2"
+assert_not_contains "cited by no design document" \
+  "no citation advisory without the schema key"
 
 # --- Scenario (z): mermaid click targets are design-ish links ----------------
 # A `click NODE "dest"` inside a ```mermaid fence navigates like any link; a

@@ -390,12 +390,20 @@ assert_guideline title-length "title exceeds 64 characters" \
 assert_guideline bullet-sentences "3-sentence bullet guideline" \
   '#points("One sentence. Two sentences. Three sentences. Four sentences.")'
 
+# AREA IS REQUIRED because it carries the rule's confirmed ownership. The
+# default render reports the omission and strict mode rejects the same case.
+assert_guideline behavior-area-missing "behavior is missing area" \
+  '#behavior(title: "Rule", level: "interface")[
+     #when[the check runs]
+     #then[the result is reported]
+   ]'
+
 # THE BEHAVIOR FENCE. A then clause naming the mechanism instead of the
 # observable outcome is a WORDING call, so the clause renders exactly as
 # written and the library reports what it found. Asserted here so the rule
 # cannot be deleted silently while the schema still describes it.
 assert_guideline behavior-fence "forbidden term" \
-  '#behavior(title: "Rule", level: "interface")[
+  '#behavior(title: "Rule", area: "Test area", level: "interface")[
      #when[the form is submitted]
      #then[the SignupController returns an http status code]
    ]'
@@ -568,13 +576,13 @@ assert_declared_fact fence-patterns-edited \
 # ADMITS gets a negative one. The negative case is the load-bearing half: a
 # fence that flagged every clause would pass all four positive cases.
 assert_guideline fence-pattern-id "matches the forbidden shape" \
-  '#behavior(title: "R", level: "interface")[
+  '#behavior(title: "R", area: "Test area", level: "interface")[
      #when[the form is submitted]
      #then[the field #raw("#email-input") gains focus]
    ]'
 
 assert_guideline fence-pattern-class "matches the forbidden shape" \
-  '#behavior(title: "R", level: "interface")[
+  '#behavior(title: "R", area: "Test area", level: "interface")[
      #when[the form is submitted]
      #then[#raw(".is-invalid") appears on the field]
    ]'
@@ -586,13 +594,13 @@ assert_guideline fence-pattern-class "matches the forbidden shape" \
 # boundary to match. The pattern is right; the flattening loses the gap. The
 # case is written the way an author writes the clause.
 assert_guideline fence-pattern-idattr "matches the forbidden shape" \
-  '#behavior(title: "R", level: "interface")[
+  '#behavior(title: "R", area: "Test area", level: "interface")[
      #when[the form is submitted]
      #then[an element with id=signup is marked]
    ]'
 
 assert_guideline fence-pattern-testid "matches the forbidden shape" \
-  '#behavior(title: "R", level: "interface")[
+  '#behavior(title: "R", area: "Test area", level: "interface")[
      #when[the form is submitted]
      #then[the #raw("data-testid") hook is set]
    ]'
@@ -601,7 +609,7 @@ assert_guideline fence-pattern-testid "matches the forbidden shape" \
 # wording as allowed, so a fence that flags it contradicts the declaration it
 # claims to enforce. Asserted under STRICT, where a guideline panics: a clean
 # strict compile is the only evidence that nothing fired.
-fixture fence-admitted '#behavior(title: "R", level: "interface")[
+fixture fence-admitted '#behavior(title: "R", area: "Test area", level: "interface")[
   #when[the form is submitted]
   #then[the offending field is named]
 ]'
@@ -621,7 +629,7 @@ fi
 # pattern anchored on a word boundary then could not match. The fence went
 # blind to exactly the phrasing it exists to catch, silently, on any clause
 # carrying markup. Asserted under strict, where the guideline panics.
-fixture fence-markup '#behavior(title: "R", level: "interface")[
+fixture fence-markup '#behavior(title: "R", area: "Test area", level: "interface")[
   #when[an element with #raw("id=") set is clicked]
   #then[the form is submitted]
 ]'
@@ -696,13 +704,13 @@ PY
 }
 
 assert_fence_follows_schema edited-shape-caught '["zzz-[0-9]+"]' \
-  '#behavior(title: "R", level: "interface")[
+  '#behavior(title: "R", area: "Test area", level: "interface")[
      #when[the form is submitted]
      #then[the marker zzz-42 is shown]
    ]' caught
 
 assert_fence_follows_schema real-shape-released '["zzz-[0-9]+"]' \
-  '#behavior(title: "R", level: "interface")[
+  '#behavior(title: "R", area: "Test area", level: "interface")[
      #when[the form is submitted]
      #then[the field #raw("#email-input") gains focus]
    ]' clean
@@ -774,7 +782,7 @@ assert_bad_pattern non-string '[42]' 'not a string'
 # fence that quietly stopped working.
 assert_fence_follows_schema retired-dialect-is-dead \
   '["#[%w_-]+","%.[%a][%w_-]*%-[%w_-]+","%f[%w]id=","data%-testid"]' \
-  '#behavior(title: "R", level: "interface")[
+  '#behavior(title: "R", area: "Test area", level: "interface")[
      #when[the form is submitted]
      #then[the field #raw("#email-input") gains focus]
    ]' clean

@@ -107,15 +107,17 @@
   }
 }
 
-// A behavior block's `level` is REQUIRED — the fence that forbids naming a
-// mechanism is defined per level, so a rule carrying no level is a rule no
-// fence applies to. The check is here rather than in `_statement`, which is
-// shared with kinds that carry no level at all.
+// A behavior block's `level` and `area` are REQUIRED. The fence that forbids
+// naming a mechanism is defined per level, so a rule carrying no level is a
+// rule no fence applies to. The area makes the rule's confirmed ownership
+// visible on the rule itself. These checks live here rather than in
+// `_statement`, which is shared with kinds that carry neither field.
 //
 // The clause trail is cleared as the block opens and judged after its body, so
 // each rule's clauses are counted against that rule and no other.
 #let behavior(..a, body) = {
   _need("behavior", "level", a.named().at("level", default: none))
+  _need("behavior", "area", a.named().at("area", default: none))
   _clause-trail.update(())
   _statement("behavior", ..a, body)
   _assert-clauses

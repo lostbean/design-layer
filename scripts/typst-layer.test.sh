@@ -814,28 +814,28 @@ bc_accepts() { # $1 = label, $2 = body
 }
 
 bc_guides "two when clauses are two rules" \
-  '#behavior(title: "Zb1", level: "interface")[#when[a] #when[b] #then[c]]' \
+  '#behavior(title: "Zb1", area: "Test area", level: "interface")[#when[a] #when[b] #then[c]]' \
   'expected exactly 1'
 bc_guides "a rule with no when clause is guided" \
-  '#behavior(title: "Zb2", level: "interface")[#then[c]]' \
+  '#behavior(title: "Zb2", area: "Test area", level: "interface")[#then[c]]' \
   'expected exactly 1'
 bc_guides "a rule with no then clause states no outcome" \
-  '#behavior(title: "Zb3", level: "interface")[#when[a]]' \
+  '#behavior(title: "Zb3", area: "Test area", level: "interface")[#when[a]]' \
   'no then clause'
 bc_guides "a then before a when is out of order" \
-  '#behavior(title: "Zb4", level: "interface")[#then[c] #when[a]]' \
+  '#behavior(title: "Zb4", area: "Test area", level: "interface")[#then[c] #when[a]]' \
   'out of order'
 
 bc_accepts "when + then is the minimal legal rule" \
-  '#behavior(title: "Zb5", level: "interface")[#when[a] #then[c]]'
+  '#behavior(title: "Zb5", area: "Test area", level: "interface")[#when[a] #then[c]]'
 bc_accepts "repeated given and then clauses stay legal" \
-  '#behavior(title: "Zb6", level: "interface")[#given[g1] #given[g2] #when[a] #then[c1] #then[c2]]'
+  '#behavior(title: "Zb6", area: "Test area", level: "interface")[#given[g1] #given[g2] #when[a] #then[c1] #then[c2]]'
 # THE SCOPING CASE. Without the per-block reset the second rule's `when` would
 # read as a second `when` in the first rule, and every layer carrying two
 # behavior rules would fail.
 bc_accepts "two sibling rules each carry their own when" \
-  '#behavior(title: "Zb7", level: "interface")[#when[a] #then[c]]
-    #behavior(title: "Zb8", level: "interface")[#when[b] #then[d]]'
+  '#behavior(title: "Zb7", area: "Test area", level: "interface")[#when[a] #then[c]]
+    #behavior(title: "Zb8", area: "Test area", level: "interface")[#when[b] #then[d]]'
 
 # --- 4d. THE SPINE ORDER ------------------------------------------------------
 # The spine runs gross to fine, so its numbered sections ascend. That is a rule
@@ -933,7 +933,7 @@ rm -f "$FO/sp.pdf"
 # integrity check read `#adr(N)`, the gallery's prose described it, and the
 # library defined no such function, so the one citation form the gate checked
 # was a form nobody could write.
-bc_layer '#behavior(title: "Zadr", level: "interface")[#when[a] #then[b]]
+bc_layer '#behavior(title: "Zadr", area: "Test area", level: "interface")[#when[a] #then[b]]
     The decision is #adr(7).'
 if python3 ./scripts/design-aggregate "$FO" "$FO/adr.pdf" >/dev/null 2>&1; then
   pass_line "an adr() citation compiles"

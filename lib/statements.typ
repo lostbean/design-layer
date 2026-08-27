@@ -107,7 +107,7 @@
 // the KIND of enforcement, and finding which check holds a property is the
 // gate's own job, not a claim the document makes and a human keeps current.
 #let _statement(kind, title: none, lens: none, enforcement: none,
-                since: none, level: none, adr: none,
+                since: none, level: none, area: none, adr: none,
                 ..rest, body) = {
   _title(kind, title)
   // Record the call for the document-level order check. A foundation kind is
@@ -151,6 +151,7 @@
   }
   if since != none { furniture.push(chip("since " + since)) }
   if level != none { furniture.push(chip("level: " + level)) }
+  if area != none { furniture.push(chip("area: " + area)) }
   // A behavior block's clauses (given/when/then) are nested INSIDE `body` and
   // read their enclosing level back out of this state — set before `body` is
   // shown, cleared after, the same lazy-content pattern _census-group already

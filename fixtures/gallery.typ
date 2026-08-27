@@ -220,6 +220,7 @@
   body: [
     #behavior(
       title: "A stale rendered document fails the check",
+      area: "Mechanical repository commands",
       level: "interface",
     )[
       #given[The layer's sources have changed since the document was rendered.]

@@ -153,7 +153,7 @@
       "no-goal": "explicit exclusion; attrs: title (required, the short label)",
       "principle": "aspirational, abstract value that guides judgment; attrs: title (required, the short label), lens optional",
       "invariant": "checkable property; attrs: title (required, the short label), enforcement=mechanism|partial|convention (required — the honest label for HOW the property is held), lens optional",
-      "behavior": "a conditional behavior rule — given a context, when an actor acts, then an outcome; attrs: title (required, the short label), level=interface|boundary (required), lens optional. Body is NOT prose: it is the nested clause calls declared in behavior_contract (`given` optional and repeatable, `when` exactly one, `then` one or more). Each clause states the rule with NO concrete values — the durable rule, never an example of it. Distinct from invariant: an invariant holds at all times with no trigger and no actor; a behavior rule is event-shaped and conditional",
+      "behavior": "a conditional behavior rule — given a context, when an actor acts, then an outcome; attrs: title (required, the short label), area (required, the confirmed behavior area that owns the rule), level=interface|boundary (required), lens optional. The area is rendered as declared furniture so ownership remains visible when a rule moves. Body is NOT prose: it is the nested clause calls declared in behavior_contract (`given` optional and repeatable, `when` exactly one, `then` one or more). Each clause states the rule with NO concrete values — the durable rule, never an example of it. Distinct from invariant: an invariant holds at all times with no trigger and no actor; a behavior rule is event-shaped and conditional",
       "given": "a behavior rule's context clause — legal ONLY nested inside a behavior block; optional and repeatable (a rule needing no setup has none). Body is one clause stating the context, no concrete values",
       "when": "a behavior rule's event clause — legal ONLY nested inside a behavior block; exactly one per rule. Body is one clause stating the actor's action. Two events mean two rules, never one block with two when clauses",
       "then": "a behavior rule's outcome clause — legal ONLY nested inside a behavior block; one or more (a rule with two independent outcomes carries two then clauses). Body is one clause stating an observable outcome; this is where mechanism leakage concentrates, so the behavior fence checks it hardest",
@@ -213,6 +213,7 @@
       "0N end-to-end walkthrough"
     ],
     "behavior_contract": {
+      "area_identity": "every behavior rule cites its confirmed behavior area through the required area attr. The rendered area makes ownership explicit on the rule itself, so moving the rule without reconsidering its ownership leaves a visible discrepancy rather than silently changing its meaning",
       "clause_bounds": {
         "given": "0..n",
         "when": "exactly 1",

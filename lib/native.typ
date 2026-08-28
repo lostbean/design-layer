@@ -179,47 +179,14 @@
 // notes. `visual` is OPTIONAL, and that is a contract rather than a taste
 // call: the spine mandates an end-to-end walkthrough, and a walkthrough is a
 // narrative. A required visual would make a mandated section illegal to write.
-// ---- the spine order ------------------------------------------------------
-// The spine's sections are numbered and must appear in ascending order — the
-// document goes gross to fine, and a section out of sequence means the
-// breakdown doubles back. That is a rule ACROSS sections, so no single
-// `section` call can see it; the same trail pattern the foundation uses
-// carries the numbers forward and the aggregate reads them back per context.
-//
-// Only a NUMBERED title takes part. A section titled "Pending updates" is
-// unnumbered by the spine's own rule, and an unnumbered heading is simply not
-// on the axis this orders.
-#let _spine-trail = state("spine-trail", ())
-#let _spine-number(title) = {
-  let t = _flatten-text(title).trim()
-  let m = t.match(regex("^([0-9]+)"))
-  if m == none { none } else { int(m.captures.at(0)) }
-}
-#let spine-scope-reset = _spine-trail.update(())
-#let assert-spine-order = context {
-  let prev = -1
-  let prev-t = none
-  for e in _spine-trail.get() {
-    if e.n < prev {
-      _guide("spine.order",
-             "sections are out of order: " + repr(e.title)
-             + " follows " + repr(prev-t)
-             + " — a numbered spine is expected to run gross to fine, ascending")
-    }
-    prev = e.n
-    prev-t = e.title
-  }
-}
+// ---- the spine ------------------------------------------------------------
+// The renderer owns section numbering. Authors supply only content titles, so
+// inserting or moving a section updates the displayed sequence without a
+// source rewrite.
 
 #let section(title: none, lead: none, visual: none, notes: none, body: none) = {
   _need("section", "title", title)
   _max-lead("section lead", lead)
-  {
-    let n = _spine-number(title)
-    if n != none {
-      _spine-trail.update(t => t + ((n: n, title: _flatten-text(title).trim()),))
-    }
-  }
   heading(level: 1)[#title]
   if lead != none {
     block(text(size: 9.4pt, fill: luma(70))[#lead]); v(0.3em)
@@ -734,4 +701,3 @@
   ]
   v(0.5em)
 }
-

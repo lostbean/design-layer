@@ -415,100 +415,80 @@ assert_exit 1 "an invented section anchor still fails once multi-line sections i
 assert_contains "dangling section anchor" "the invented section is reported dangling"
 assert_contains "07-not-a-real-section" "report names the invented section id"
 
-# --- Scenario (d6): the NUMBERING'S DOT is removed, not collapsed ------------
-# The schema (anchors.section.slug_rule) is explicit: "the numbering's dot
-# REMOVED", '### 02.1 The pending ledger' -> '021-the-pending-ledger'. Both
-# indexers instead collapsed that dot to a hyphen and produced
-# '02-1-the-pending-ledger', so a cross-document link written to the schema was
-# reported dangling. Measured on a real layer: 8 violations, every one a dotted
-# subsection anchor, against a COVERAGE.md that was correct all along.
-#
-# A dotted subsection and an undotted section are asserted together, so the rule
-# is proved to handle the numbering without breaking the plain case.
+# --- Scenario (d6): content-only section titles resolve ----------------------
+# The renderer owns visible numbering. A title is content only, and its anchor
+# follows that content rather than a manually maintained display number.
 SD6="$TMP/d6"
 build_single "$SD6"
 cat >"$SD6/docs/design/design.typ" <<'EOF'
 #let title = [Design]
 #let body = [
   #section(
-    title: "03 The primitive",
+    title: "The primitive",
     body: [
-      A pointer at a dotted subsection:
-      #link("design.typ#031-the-composition-mechanism")[the mechanism].
-      And one at an undotted section:
-      #link("design.typ#03-the-primitive")[the primitive].
+      #link("design.typ#the-composition-mechanism")[the mechanism].
+      #link("design.typ#the-primitive")[the primitive].
     ],
   )
   #subsection(
-    title: "03.1 The composition mechanism",
+    title: "The composition mechanism",
     body: [
-      The dotted subsection, whose id drops the numbering's dot entirely.
+      The content title owns this anchor.
     ],
   )
 ]
 EOF
-assert_exit 0 "a dotted subsection anchor resolves with the dot removed" -- "$CHECK" "$SD6"
-assert_contains "layer-integrity OK" "dotted-subsection run stays clean"
+assert_exit 0 "a content-only subsection anchor resolves" -- "$CHECK" "$SD6"
+assert_contains "layer-integrity OK" "content-only subsection run stays clean"
 assert_not_contains "dangling section anchor" \
-  "neither the dotted nor the undotted section is reported dangling"
+  "neither content-only section is reported dangling"
 
-# The discriminating half: the OLD, wrong spelling must now FAIL. Without this,
-# a rule that emitted both spellings would pass the assertion above while still
-# leaving which id a section actually has ambiguous.
+# A legacy manually numbered spelling must not resolve.
 SD7="$TMP/d7"
 build_single "$SD7"
 cat >"$SD7/docs/design/design.typ" <<'EOF'
 #let title = [Design]
 #let body = [
   #section(
-    title: "03 The primitive",
+    title: "The primitive",
     body: [
-      The dot-collapsed spelling the schema does not bless:
-      #link("design.typ#03-1-the-composition-mechanism")[the mechanism].
+      #link("design.typ#03-the-composition-mechanism")[the mechanism].
     ],
   )
   #subsection(
-    title: "03.1 The composition mechanism",
+    title: "The composition mechanism",
     body: [
-      The section's real id drops the dot entirely.
+      The title supplies the real anchor.
     ],
   )
 ]
 EOF
-assert_exit 1 "the dot-collapsed spelling is not a valid section id" -- "$CHECK" "$SD7"
+assert_exit 1 "a numbered section spelling is not a valid section id" -- "$CHECK" "$SD7"
 assert_contains "dangling section anchor" "the wrong spelling is reported dangling"
 
-# --- Scenario (d8): a NON-NUMBERING dot survives as a hyphen -----------------
-# The schema says "the numbering's dot", so the removal is SCOPED to the leading
-# number rather than applied to every dot in the heading. The numbering is the
-# only place a dot joins two halves of one identifier; anywhere else a dot is
-# ordinary punctuation and collapses to a hyphen like any other non-alphanumeric
-# run. Blanket-deleting every dot would weld a title naming 'design.typ' into
-# 'designtyp', mangling a word the reader is meant to recognise. Both scopes
-# appear in ONE heading, so they are proved distinct rather than merely stated.
+# --- Scenario (d8): title punctuation collapses to a hyphen ------------------
 SD8="$TMP/d8"
 build_single "$SD8"
 cat >"$SD8/docs/design/design.typ" <<'EOF'
 #let title = [Design]
 #let body = [
   #section(
-    title: "02 Foundation",
+    title: "Foundation",
     body: [
-      A dot inside the TITLE is punctuation, not numbering:
-      #link("design.typ#021-the-renderer-reads-design-typ")[the renderer].
+      #link("design.typ#the-renderer-reads-design-typ")[the renderer].
     ],
   )
   #subsection(
-    title: "02.1 The renderer reads design.typ",
+    title: "The renderer reads design.typ",
     body: [
-      The numbering's dot is removed and the title's dot becomes a hyphen.
+      The title's dot becomes a hyphen.
     ],
   )
 ]
 EOF
-assert_exit 0 "a non-numbering dot collapses to a hyphen" -- "$CHECK" "$SD8"
-assert_contains "layer-integrity OK" "non-numbering-dot run stays clean"
-assert_not_contains "dangling section anchor" "the mixed-dot heading resolves"
+assert_exit 0 "a title dot collapses to a hyphen" -- "$CHECK" "$SD8"
+assert_contains "layer-integrity OK" "title-punctuation run stays clean"
+assert_not_contains "dangling section anchor" "the title-punctuation heading resolves"
 
 # --- Scenario (d10): THE ANTI-DRIFT PROPERTY, asserted directly --------------
 # The slug rule belongs to the ANCHOR, not to the notation the target was
@@ -574,11 +554,11 @@ def typst_id(title: str) -> str:
     return sorted(ids)[0] if ids else ""
 
 cases = [
-    ("02 The artifact trio", "02-the-artifact-trio"),
-    ("02.1 The pending ledger", "021-the-pending-ledger"),
-    ("04.2 Token coverage — the semantic look is total",
-     "042-token-coverage-the-semantic-look-is-total"),
-    ("02.1 The renderer reads design.typ", "021-the-renderer-reads-design-typ"),
+    ("The artifact trio", "the-artifact-trio"),
+    ("The pending ledger", "the-pending-ledger"),
+    ("Token coverage — the semantic look is total",
+     "token-coverage-the-semantic-look-is-total"),
+    ("The renderer reads design.typ", "the-renderer-reads-design-typ"),
 ]
 
 failed = 0

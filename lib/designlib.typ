@@ -29,7 +29,7 @@
 // trail back. A kind missing from a finished trail was never called, which is
 // how a contract notices an absence. Three trails do this — the foundation
 // (order and per-kind minimum), a behavior block's clauses (cardinality and
-// order), and the numbered spine (ascending order).
+// order), and renderer-owned section numbering.
 //
 // What the library cannot see is anything ACROSS ARTIFACTS — a link into
 // another file, an ADR that exists on disk, a term another context declares.

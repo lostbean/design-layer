@@ -201,7 +201,7 @@ its content as bindings the aggregate reads:
 #let title = [Scheduling]
 
 #let body = [
-  #section(title: "00 Foundation", lead: "What this context is for.", body: [
+  #section(title: "Foundation", lead: "What this context is for.", body: [
     #goal(title: "Onboard any repository")[…]
   ])
 ]
@@ -295,14 +295,14 @@ declared home under `docs/`.
 
 ### Section anchors
 
-A pointer into a section of a design document uses the id derived from the
-numbered section title: lowercase the title text, collapse runs of
-non-alphanumerics to single hyphens, and drop the numbering's dot.
+A pointer into a section of a design document uses the id derived from its
+content-only title: lowercase the title text and collapse runs of
+non-alphanumerics to single hyphens. The renderer owns visible numbering.
 
-| `section(title: …)`     | Anchor                 |
-| ----------------------- | ---------------------- |
-| `"02 The artifact set"` | `#02-the-artifact-set` |
-| `"02.1 Pending ledger"` | `#021-pending-ledger`  |
+| `section(title: …)`  | Anchor              |
+| -------------------- | ------------------- |
+| `"The artifact set"` | `#the-artifact-set` |
+| `"Pending ledger"`   | `#pending-ledger`   |
 
 ### A reference is a call
 
@@ -466,7 +466,7 @@ Each row names its required arguments; the gallery shows each one written out.
 | `#components` + `#component`           | `name:`, `mission:` on each                          | a unit map: one card per component, each optionally answering the five questions                                                                                                                                                                                         |
 | `#answers`                             | —                                                    | the five questions for one unit, written out: responsibility, interface, interactions, invariants, failure                                                                                                                                                               |
 | `#section`                             | `title:`                                             | the spine's structure. Optional `lead:`, `visual:`, `notes:`, and `body:` — the body is a NAMED argument here                                                                                                                                                            |
-| `#subsection`                          | `title:` + a positional body                         | a numbered `NN.M` part of a section. Its body is **positional**, not `body:` — `#subsection(title: "01.1 X")[…]`. Passing `body:` fails with "the argument body is positional"                                                                                           |
+| `#subsection`                          | `title:` + a positional body                         | a nested part of a section. Its body is **positional**, not `body:` — `#subsection(title: "Details")[…]`. Passing `body:` fails with "the argument body is positional"                                                                                                   |
 | `#how-to-read`                         | —                                                    | the generated legend panel — it shows each mark rather than naming it                                                                                                                                                                                                    |
 
 Three things a writer might reach for **do not exist and will not render**: raw
@@ -562,11 +562,11 @@ order. Every rule in this section is reported and none of them blocks the
 render — this is the shape a design usually takes, not a shape it must take.
 
 ```
-00 Foundation          goals · no-goals · invariants · principles, in that order
-Pending updates        unnumbered, immediately after the foundation; omitted when empty
-01 System at a glance  one diagram of the whole
-02…0N-1                progressive breakdown, gross to fine, recursing via NN.M
-0N                     end-to-end walkthrough — one real usage path
+Foundation             goals · no-goals · invariants · principles, in that order
+Pending updates        immediately after the foundation; omitted when empty
+System at a glance     one diagram of the whole
+Progressive breakdown  gross to fine, recursing through subsections
+End-to-end walkthrough one real usage path
 ```
 
 Three parts of this are checked, each as a guideline that reports and lets the
@@ -580,22 +580,17 @@ render finish:
 2. **Foundation order** — the four kinds are expected in the declared order. A
    `#principle` called before an `#invariant` is reported, naming the offending
    statement's title.
-3. **Spine order** — the numbered sections are expected to ascend. A `#section`
-   whose leading number falls below the one before it is reported, naming both
-   titles. Only a **numbered** title takes part; an unnumbered section is simply
-   not on the axis this orders.
-
-`DESIGN_STRICT=1` turns all three into hard failures, which is how a repo that
-does want the fixed shape enforces it.
+   `DESIGN_STRICT=1` turns the two guidelines into hard failures, which is how a
+   repo that does want the fixed shape enforces them. Typst derives the visible
+   section sequence from position; authors never write it into a title.
 
 The foundation contract binds a document that **declares a foundation at all**.
 A document carrying no foundation — a behavior-rule sheet, a reference page —
 is not held to the per-kind minimum, because it is not a document that failed
 the minimum; it is a document not carrying a foundation.
 
-**The pending section is unnumbered on purpose**: its appearance and
-disappearance never renumber the rest of the spine, and it stays off the
-ascending-order axis.
+**The pending section is optional on purpose**: its appearance and disappearance
+cause Typst to update the visible sequence without an authored title change.
 
 **The `index_only` exemption.** A multi-context **root** that only indexes its
 child contexts exports `#let index_only = true` and is waived from the per-kind
@@ -680,9 +675,9 @@ domain document for a domain-scoped delta, the root for a cross-cutting one.
 
 A design is a recursively self-similar tree of units, and a unit is the same
 shape at every altitude: an overview, its child units, and a pointer to its
-parent. `context`, `component`, and an `NN.M` subsection are **depth labels on
+parent. `context`, `component`, and a nested subsection are **depth labels on
 one node type**, not different things. The root indexes contexts, a context
-indexes its components, a component indexes its `NN.M` sub-parts. The same
+indexes its components, a component indexes its nested sub-parts. The same
 ladder names a diagram's altitude — `L1` boundary, `L2` contexts, `L3`
 components, `L4` internals — which `#diagram-native` requires on every drawing,
 so a reader can tell which zoom level they are looking at before reading the
@@ -697,7 +692,7 @@ Two rules follow, both **convention**:
   off-node unit with a pointer, or scope the section to this unit's children,
   and say which.
 - **Recursion is not the file split.** A unit recurses deeply inside one file
-  via `NN.M.K` without any split. Where the recursion breaks into separate
+  through nested subsections without any split. Where the recursion breaks into separate
   `design.typ` files is the second-real-vocabulary judgment of §1 — a semantic
   call, not a depth counter.
 

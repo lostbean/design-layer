@@ -324,17 +324,12 @@ HEADING_RE = re.compile(r"^#{1,6}[ \t]")
 ANCHOR_BRACE_RE = re.compile(r"\{#([^}]*)\}")
 LOOSE_ANCHOR_RE = re.compile(r"<a[^>]*id=")
 
-# The leading spine NUMBER of a heading — `02`, `02.1`, `04.0`, `08.2.1`. Only
-# this prefix has its dots removed; see section_slug.
-SECTION_NUMBER_RE = re.compile(r"^(\d+(?:\.\d+)*)")
-
 
 def section_slug(text: str) -> str:
     """The rendered id of a spine heading, by the schema's declared rule
     (anchors.section.slug_rule): the heading text lowercased with runs of
-    non-alphanumerics collapsed to single hyphens and THE NUMBERING'S DOT
-    REMOVED — '02 The artifact trio' -> '02-the-artifact-trio', and
-    '02.1 The pending ledger' -> '021-the-pending-ledger'.
+    non-alphanumerics collapsed to single hyphens — 'The artifact trio' becomes
+    'the-artifact-trio'.
 
     ONE FUNCTION, CALLED BY BOTH INDEXERS. The rule is a property of the
     anchor, not of the notation it was written in, so a link into a section
@@ -342,20 +337,10 @@ def section_slug(text: str) -> str:
     markdown. Stating it twice is how one side starts resolving while the other
     dangles, which is the defect this gate exists to catch rather than commit.
 
-    The dot removal is SCOPED TO THE LEADING NUMBER, not applied to every dot in
-    the heading. The schema calls it "the numbering's dot", and the numbering is
-    the only place a dot joins two parts of one identifier: '02.1' is one
-    section number and must render '021', because a hyphen there would read as
-    the separator between the number and the title. Anywhere else a dot is
-    ordinary punctuation — a title naming 'design.typ', or a sentence period —
-    and collapses to a hyphen like any other non-alphanumeric run, which keeps
-    'design.typ' as 'design-typ' rather than welding it into 'designtyp'.
+    Every punctuation mark is ordinary title punctuation, so it collapses to a
+    hyphen. A title naming 'design.typ' becomes 'design-typ'.
     """
-    stripped = text.strip()
-    numbered = SECTION_NUMBER_RE.sub(
-        lambda m: m.group(1).replace(".", ""), stripped, count=1
-    )
-    return re.sub(r"[^a-z0-9]+", "-", numbered.lower()).strip("-")
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 @dataclass
@@ -1123,6 +1108,7 @@ CITE_BLOCK_RE = re.compile(
 CALL_HEAD_RE = re.compile(r"#[a-z][a-z0-9-]*\s*\(")
 NAMED_ARG_RE = re.compile(r"\b[a-z][a-z0-9-]*\s*:\s*")
 SCAFFOLD_RE = re.compile(r"[\[\]()<>,]+")
+TITLE_ARG_RE = re.compile(r'^title\s*:\s*"(?:[^"\\]|\\.)*",?$')
 
 
 def prose_of(line: str) -> str:
@@ -1134,6 +1120,12 @@ def prose_of(line: str) -> str:
     """
     t = line.strip()
     if not t:
+        return ""
+    # A block or section title is structure, not a prose run. The same phrase
+    # may legitimately name a section and its primary card once authored
+    # numbering is removed, so treating both titles as duplicate prose would
+    # reject the renderer-owned numbering contract.
+    if TITLE_ARG_RE.fullmatch(t):
         return ""
     # A citation-only fragment is the legal repetition, so it is removed before
     # anything is counted rather than counted and then excused. The wrapped form

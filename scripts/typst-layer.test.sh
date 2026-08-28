@@ -837,11 +837,9 @@ bc_accepts "two sibling rules each carry their own when" \
   '#behavior(title: "Zb7", area: "Test area", level: "interface")[#when[a] #then[c]]
     #behavior(title: "Zb8", area: "Test area", level: "interface")[#when[b] #then[d]]'
 
-# --- 4d. THE SPINE ORDER ------------------------------------------------------
-# The spine runs gross to fine, so its numbered sections ascend. That is a rule
-# ACROSS sections, which no single `section` call can see; a trail carries the
-# numbers and the aggregate reads them back per context. An UNNUMBERED section
-# ("Pending updates") is off this axis entirely and must not disturb it.
+# --- 4d. RENDERER-OWNED SECTION NUMBERING ------------------------------------
+# The author supplies content-only titles. Typst's heading counter derives
+# displayed sequence from document order, so no source title carries a number.
 sp_layer() { # $1 = alpha's section sequence
   cat >"$FO/design.typ" <<'XEOF'
 #import ".render/designlib.typ": *
@@ -863,62 +861,17 @@ $1
 EOF
 }
 
-sp_layer '#section(title: "00 Foundation", body: [
+sp_layer '#section(title: "Foundation", body: [
     #goal(title: "Zsag")[g]
     #invariant(title: "Zsai", enforcement: "convention")[i]
     #principle(title: "Zsap")[p]
   ])
-  #section(title: "01 At a glance", body: [x])
-  #section(title: "02 The parts", body: [y])'
+  #section(title: "At a glance", body: [x])
+  #section(title: "The parts", body: [y])'
 if python3 ./scripts/design-aggregate "$FO" "$FO/sp.pdf" >/dev/null 2>&1; then
-  pass_line "an ascending spine renders"
+  pass_line "content-only section titles render"
 else
-  fail_line "the spine check fired on a correctly ordered document"
-fi
-rm -f "$FO/sp.pdf"
-
-sp_layer '#section(title: "00 Foundation", body: [
-    #goal(title: "Zsbg")[g]
-    #invariant(title: "Zsbi", enforcement: "convention")[i]
-    #principle(title: "Zsbp")[p]
-  ])
-  #section(title: "05 Later", body: [x])
-  #section(title: "02 Earlier", body: [y])'
-sp_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/sp.pdf" 2>&1)"
-sp_rc=$?
-if [ "$sp_rc" -ne 0 ]; then
-  fail_line "a doubling-back spine was refused (exit $sp_rc) — the order should guide"
-elif [ ! -f "$FO/sp.pdf" ]; then
-  fail_line "a doubling-back spine wrote no document"
-elif ! printf '%s' "$sp_out" | grep -q 'guideline: spine\.order'; then
-  fail_line "a spine running 05 then 02 rendered with NO guidance — check deleted"
-elif printf '%s' "$sp_out" | grep -q "out of order"; then
-  pass_line "a spine that doubles back renders and is guided"
-else
-  fail_line "the spine guidance does not say what is wrong"
-fi
-rm -f "$FO/sp.pdf"
-if DESIGN_STRICT=1 python3 ./scripts/design-aggregate "$FO" "$FO/sps.pdf" \
-  >/dev/null 2>&1; then
-  fail_line "DESIGN_STRICT did not escalate the spine order guideline"
-else
-  pass_line "DESIGN_STRICT escalates the spine order guideline"
-fi
-rm -f "$FO/sps.pdf"
-
-# An unnumbered section is not on the numbered axis, so it must not be read as
-# a section numbered zero and fail every document that carries one.
-sp_layer '#section(title: "00 Foundation", body: [
-    #goal(title: "Zscg")[g]
-    #invariant(title: "Zsci", enforcement: "convention")[i]
-    #principle(title: "Zscp")[p]
-  ])
-  #section(title: "Pending updates", body: [x])
-  #section(title: "01 At a glance", body: [y])'
-if python3 ./scripts/design-aggregate "$FO" "$FO/sp.pdf" >/dev/null 2>&1; then
-  pass_line "an unnumbered section does not disturb the spine order"
-else
-  fail_line "an unnumbered section was read as a numbered one"
+  fail_line "content-only section titles did not render"
 fi
 rm -f "$FO/sp.pdf"
 

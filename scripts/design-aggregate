@@ -327,7 +327,6 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
         # context with no foundation of its own would pass the per-kind minimum
         # on the strength of the previous chapter's statements.
         L.append("#foundation-scope-reset")
-        L.append("#spine-scope-reset")
         L.append("#%s.body" % mod)
         # ...and judged at the end of that body, while the trail still holds
         # this context's calls and no other's. ORDER and the per-kind MINIMUM
@@ -338,7 +337,6 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
         # title is, so the waiver is the author's declaration rather than a
         # guess this script makes about which documents look like index roots.
         L.append("#assert-foundation-order")
-        L.append("#assert-spine-order")
         L.append('#let _io = if "index_only" in _m { _m.index_only } '
                  'else { false }')
         L.append("#assert-foundation-cardinality(index-only: _io)")

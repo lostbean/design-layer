@@ -23,7 +23,7 @@
 )
 
 #section(
-  title: "01 How this file is read",
+  title: "How this file is read",
   lead: "A section is the unit: a muted lead, one visual, then the body.",
   visual: how-to-read(),
   body: [
@@ -41,7 +41,7 @@
 )
 
 #section(
-  title: "02 The foundation statements",
+  title: "The foundation statements",
   lead: "Four kinds share one anatomy, so a reader learns the shape once.",
   body: [
     #goal(title: "Author content, never styling", lens: "composition")[
@@ -76,7 +76,7 @@
 )
 
 #section(
-  title: "03 The diagram",
+  title: "The diagram",
   lead: "Nodes and edges are data; the library lays them out.",
   visual: diagram-native(
     altitude: "L2",
@@ -102,7 +102,7 @@
 )
 
 #section(
-  title: "04 Units and their answers",
+  title: "Units and their answers",
   lead: "A component answers five questions; absent answers stay absent.",
   body: [
     #components(
@@ -143,7 +143,7 @@
 )
 
 #section(
-  title: "05 Magnitudes and breadth",
+  title: "Magnitudes and breadth",
   lead: "A tile states a fact; a coverage row states a decision.",
   body: [
     #stat-grid(
@@ -152,7 +152,7 @@
       stat-tile(value: "3", label: "silent failures caught", delta: "-2", dir: "down"),
     )
 
-    #subsection(title: "05.1 Coverage")[
+    #subsection(title: "Coverage")[
       Every row carries a status, and a row that is not `captured` states why,
       so an absence is a recorded decision rather than an oversight.
 
@@ -166,7 +166,7 @@
 )
 
 #section(
-  title: "06 Cross references",
+  title: "Cross references",
   lead: "A reference is a call, so a rename is a compile error.",
   body: [
     A context is named with #ctx("design-layer"), a term with
@@ -188,7 +188,7 @@
 )
 
 #section(
-  title: "07 The entity census",
+  title: "The entity census",
   lead: "An entity states what it is made of and how it sits against others.",
   body: [
     #entity(
@@ -215,7 +215,7 @@
 )
 
 #section(
-  title: "08 Behavior rules",
+  title: "Behavior rules",
   lead: "A rule is a context, one event, and the outcomes a reader can observe.",
   body: [
     #behavior(
@@ -232,7 +232,7 @@
 )
 
 #section(
-  title: "09 Admonitions, cards, and tables",
+  title: "Admonitions, cards, and tables",
   lead: "Each shape carries one job, and the tint says which.",
   body: [
     #info(title: "What a gate proves")[
@@ -272,7 +272,7 @@
 )
 
 #section(
-  title: "10 Plots and figures",
+  title: "Plots and figures",
   lead: "A chart states a magnitude; a figure carries renderer markup.",
   body: [
     #chart(
@@ -318,7 +318,7 @@
 )
 
 #section(
-  title: "10.1 The state machine",
+  title: "The state machine",
   lead: "A machine declares states and transitions, never positions.",
   body: [
     #state-machine(
@@ -346,7 +346,7 @@
 )
 
 #section(
-  title: "10.2 The sequence",
+  title: "The sequence",
   lead: "A sequence is ordered by time, and says when a party is active.",
   body: [
     #sequence(
@@ -385,7 +385,7 @@
 )
 
 #section(
-  title: "11 End-to-end walkthrough",
+  title: "End-to-end walkthrough",
   lead: "A prose-only section is legal, and this one demonstrates it.",
   body: [
     An author writes a `design.typ` beside its `CONTEXT.typ`. Each file is a

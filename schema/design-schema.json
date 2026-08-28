@@ -31,9 +31,9 @@
       ]
     },
     "section": {
-      "heading_form": "a numbered spine heading — `## NN Title`, `### NN.M Title` — whose rendered id the generator derives from the heading text",
-      "id_pattern": "^[0-9]{2,}[a-z0-9]*(-[a-z0-9]+)+$",
-      "slug_rule": "the heading text lowercased with runs of non-alphanumerics collapsed to single hyphens and the numbering's dot removed: '## 02 The artifact trio' -> '02-the-artifact-trio', '### 02.1 The pending ledger' -> '021-the-pending-ledger'",
+      "heading_form": "a content-only heading — `## Title`, `### Subtitle` — whose rendered number and id the renderer derives from document position and heading text",
+      "id_pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "slug_rule": "the heading text lowercased with runs of non-alphanumerics collapsed to single hyphens: '## The artifact trio' -> 'the-artifact-trio'",
       "purpose": "a link into a SECTION of a design document, as distinct from a link into a CONTEXT term or an ADR. design_doc.generation.link_rewrite documents this form ; it is the only way to point a reader at the part of a document that answers them, rather than at its top",
       "gate_rule": "layer-integrity accepts a design-ish fragment matching this pattern alongside the term and adr patterns, and resolves it against the target document's rendered ids. Before this was declared, the gate rejected the one form the schema blessed, and authors degraded their cross-document pointers to document-level"
     }
@@ -204,13 +204,13 @@
     },
     "foundation_order": ["goal", "no-goal", "invariant", "principle"],
     "foundation_required": ["goal", "invariant", "principle"],
-    "foundation_cardinality": "at least one goal, zero or more no-goals, at least one invariant, at least one principle — in that order, all inside section 00. The machine-readable halves of this sentence are declared beside it: `foundation_order` is the sequence the blocks must appear in, and `foundation_required` names the kinds that must appear at least once. The prose explains the rule to a person; those two arrays are what the projector reads. EXEMPTION: a multi-context root that only indexes its child contexts exports `index_only: true` from its module and is waived from the per-kind minimum — it carries only genuinely cross-context foundation and points down to each context for the rest, never restating a context-owned goal/invariant/principle. The flag is legal only on a document that links at least one child <context>/design.typ; on a single-domain document (no child contexts) it is a violation, so a leaf can never skip its own foundation. The order rule still binds whatever foundation the root does carry.",
+    "foundation_cardinality": "at least one goal, zero or more no-goals, at least one invariant, at least one principle — in that order, all inside the Foundation section. The machine-readable halves of this sentence are declared beside it: `foundation_order` is the sequence the blocks must appear in, and `foundation_required` names the kinds that must appear at least once. The prose explains the rule to a person; those two arrays are what the projector reads. EXEMPTION: a multi-context root that only indexes its child contexts exports `index_only: true` from its module and is waived from the per-kind minimum — it carries only genuinely cross-context foundation and points down to each context for the rest, never restating a context-owned goal/invariant/principle. The flag is legal only on a document that links at least one child <context>/design.typ; on a single-domain document (no child contexts) it is a violation, so a leaf can never skip its own foundation. The order rule still binds whatever foundation the root does carry.",
     "spine": [
-      "00 Foundation — goals, no-goals, invariants, principles: each in its block kind, in that order",
-      "Pending updates — unnumbered, immediately after the foundation; omitted when empty",
-      "01 System at a glance",
-      "02..0N-1 progressive breakdown, gross to fine — recursing via sub-numbered subsections (NN.M) until every unit passes the completeness test",
-      "0N end-to-end walkthrough"
+      "Foundation — goals, no-goals, invariants, principles: each in its block kind, in that order",
+      "Pending updates — immediately after the foundation; omitted when empty",
+      "System at a glance",
+      "Progressive breakdown, gross to fine — recursing through subsections until every unit passes the completeness test",
+      "End-to-end walkthrough"
     ],
     "behavior_contract": {
       "area_identity": "every behavior rule cites its confirmed behavior area through the required area attr. The rendered area makes ownership explicit on the rule itself, so moving the rule without reconsidering its ownership leaves a visible discrepancy rather than silently changing its meaning",

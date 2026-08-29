@@ -326,10 +326,11 @@
   chip(name, tone: LENS-COLOR.at(name))
 }
 
-// THE DIAGRAM — nodes and edges are DATA. Manual layout preserves an authored
-// grid; solved layout gives the same graph to the Graphviz carrier that state
-// machines use. The author never writes a diagram language, so no dialect or
-// label escaping leaks into a design document.
+// THE DIAGRAMS — nodes and edges are DATA. `diagram` gives the graph to the
+// Graphviz carrier that state machines use. `diagram-native` preserves an
+// authored grid when that fine control is necessary. The author never writes a
+// diagram language, so no dialect or label escaping leaks into a design
+// document.
 #let DIAGRAM-LAYOUTS = ("manual", "solved")
 #let DIAGRAM-FLOWS = ("left-to-right", "top-to-bottom")
 #let _diagram-layout-box = layout
@@ -345,7 +346,7 @@
 
 #let _diagram-rankdir(flow) = if flow == "top-to-bottom" { "TB" } else { "LR" }
 
-#let diagram-native(
+#let _diagram(
   altitude: none, title: none, caption: none, accent: "teal",
   layout: "manual", flow: "left-to-right", spacing: (16mm, 11mm), nodes: (),
   edges: (),
@@ -378,7 +379,7 @@
     for n in nodes {
       if "pos" not in n {
         panic("manual diagram node " + repr(n.id) + " is missing pos; either " +
-          "declare pos or use layout: \"solved\"")
+          "declare pos or use diagram(...) for automatic layout")
       }
     }
   }
@@ -386,13 +387,13 @@
     for n in nodes {
       if type(n.label) != str or ("sub" in n and type(n.sub) != str) {
         panic("solved diagram node " + repr(n.id) + " requires string label " +
-          "and sub values; use layout: \"manual\" for Typst content")
+          "and sub values; use diagram-native(...) for positioned Typst content")
       }
     }
     for e in edges {
       if e.len() > 2 and type(e.at(2)) != str {
         panic("solved diagram edge " + repr(e.at(0)) + " -> " + repr(e.at(1)) +
-          " requires a string label; use layout: \"manual\" for Typst content")
+          " requires a string label; use diagram-native(...) for positioned Typst content")
       }
     }
   }
@@ -485,6 +486,26 @@
     if layout == "solved" { solved } else { manual },
   )
 }
+
+// THE DEFAULT STRUCTURE DIAGRAM — Graphviz solves placement and routing from
+// declared nodes and edges. Use this unless a reader needs an authored grid.
+#let diagram(
+  altitude: none, title: none, caption: none, accent: "teal",
+  flow: "left-to-right", nodes: (), edges: (),
+) = _diagram(
+  altitude: altitude, title: title, caption: caption, accent: accent,
+  layout: "solved", flow: flow, nodes: nodes, edges: edges,
+)
+
+// THE POSITIONED STRUCTURE DIAGRAM — use only where the authored coordinates
+// carry meaning or a human requires precise visual control.
+#let diagram-native(
+  altitude: none, title: none, caption: none, accent: "teal",
+  spacing: (16mm, 11mm), nodes: (), edges: (),
+) = _diagram(
+  altitude: altitude, title: title, caption: caption, accent: accent,
+  layout: "manual", spacing: spacing, nodes: nodes, edges: edges,
+)
 
 // THE FIVE ANSWERS — the repeated component unit, made composable. EVERY FIELD
 // IS OPTIONAL, and that is load-bearing rather than convenient: a unit with no

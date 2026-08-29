@@ -78,12 +78,11 @@
 #section(
   title: "The diagram",
   lead: "Nodes and edges are data; the solver lays out this graph.",
-  visual: diagram-native(
+  visual: diagram(
     altitude: "L2",
     title: "the authoring surface over one library",
     caption: [A design document calls the library directly, so there is no
       conversion step between what was written and what is checked.],
-    layout: "solved",
     nodes: (
       (id: "typ", label: "design.typ", sub: "authored"),
       (id: "schema", label: "design-schema", sub: "declared"),
@@ -99,6 +98,28 @@
   body: [
     The altitude is a required argument, so a drawing always says which zoom
     level it is at, and its band is tinted to match.
+  ],
+)
+
+#section(
+  title: "The positioned diagram",
+  lead: "Coordinates carry this drawing's reading order.",
+  visual: diagram-native(
+    altitude: "L3",
+    title: "the explicit left-to-right path",
+    nodes: (
+      (id: "author", pos: (0, 0), label: [author]),
+      (id: "review", pos: (1, 0), label: [review]),
+      (id: "publish", pos: (2, 0), label: [publish]),
+    ),
+    edges: (
+      ("author", "review", "submits"),
+      ("review", "publish", "accepts"),
+    ),
+  ),
+  body: [
+    Use the positioned carrier only when an authored grid is part of the
+    meaning or precise visual control is necessary.
   ],
 )
 

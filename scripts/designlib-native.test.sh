@@ -181,8 +181,8 @@ fi
 # coordinates as part of their required node shape. Assert their labels reach
 # the page, not merely that the renderer exits successfully.
 fixture render-solved '#show: design-doc.with(hero_title: [Doc])
-#diagram-native(
-  altitude: "L2", layout: "solved", flow: "left-to-right", title: "shape",
+#diagram(
+  altitude: "L2", flow: "left-to-right", title: "shape",
   nodes: ((id: "a", label: "Salpha"), (id: "b", label: "Sbeta")),
   edges: (("a", "b", "Sgamma"),),
 )'
@@ -345,8 +345,8 @@ assert_invariant diagram-ghost-edge "not a declared node" \
      nodes: ((id: "a", pos: (0,0), label: [A]),),
      edges: (("a","ghost","x"),))'
 
-assert_invariant diagram-layout "diagram layout" \
-  '#diagram-native(layout: "radial", altitude: "L1", nodes: ())'
+assert_invariant diagram-native-layout "unexpected argument" \
+  '#diagram-native(layout: "solved", altitude: "L1", nodes: ())'
 
 assert_guideline diagram-empty "at least one node" \
   '#diagram-native(altitude: "L1", nodes: (), edges: ())'

@@ -177,6 +177,35 @@ else
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
+# Solved diagrams use the Graphviz carrier and do not accept authored
+# coordinates as part of their required node shape. Assert their labels reach
+# the page, not merely that the renderer exits successfully.
+fixture render-solved '#show: design-doc.with(hero_title: [Doc])
+#diagram-native(
+  altitude: "L2", layout: "solved", flow: "left-to-right", title: "shape",
+  nodes: ((id: "a", label: "Salpha"), (id: "b", label: "Sbeta")),
+  edges: (("a", "b", "Sgamma"),),
+)'
+out="$(compile render-solved plain)"
+if [ -f "$WORK/render-solved.pdf" ]; then
+  text="$(pdftotext "$WORK/render-solved.pdf" - 2>/dev/null)"
+  missing=""
+  for mark in Salpha Sbeta Sgamma; do
+    case "$text" in
+    *"$mark"*) ;;
+    *) missing="$missing $mark" ;;
+    esac
+  done
+  if [ -z "$missing" ]; then
+    pass_line "a solved diagram renders its node and edge labels"
+  else
+    fail_line "the solved diagram omitted these marks:$missing"
+  fi
+else
+  fail_line "the solved diagram did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
 # --- the altitude ladder renders, named rungs and open rungs alike -----------
 #
 # Asserted by reading the BADGE TEXT back out of the PDF, not by exit code. The
@@ -315,6 +344,9 @@ assert_invariant diagram-ghost-edge "not a declared node" \
   '#diagram-native(altitude: "L1",
      nodes: ((id: "a", pos: (0,0), label: [A]),),
      edges: (("a","ghost","x"),))'
+
+assert_invariant diagram-layout "diagram layout" \
+  '#diagram-native(layout: "radial", altitude: "L1", nodes: ())'
 
 assert_guideline diagram-empty "at least one node" \
   '#diagram-native(altitude: "L1", nodes: (), edges: ())'

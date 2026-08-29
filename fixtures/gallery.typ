@@ -77,17 +77,18 @@
 
 #section(
   title: "The diagram",
-  lead: "Nodes and edges are data; the library lays them out.",
+  lead: "Nodes and edges are data; the solver lays out this graph.",
   visual: diagram-native(
     altitude: "L2",
     title: "the authoring surface over one library",
     caption: [A design document calls the library directly, so there is no
       conversion step between what was written and what is checked.],
+    layout: "solved",
     nodes: (
-      (id: "typ", pos: (0, 0.5), label: [design.typ], sub: [authored]),
-      (id: "schema", pos: (0, 1.5), label: [design-schema], sub: [declared]),
-      (id: "lib", pos: (1, 1), label: [designlib], sub: [projected]),
-      (id: "pdf", pos: (2, 1), label: [one document], external: true),
+      (id: "typ", label: "design.typ", sub: "authored"),
+      (id: "schema", label: "design-schema", sub: "declared"),
+      (id: "lib", label: "designlib", sub: "projected"),
+      (id: "pdf", label: "one document", external: true),
     ),
     edges: (
       ("typ", "lib", "called directly"),

@@ -326,15 +326,34 @@
   chip(name, tone: LENS-COLOR.at(name))
 }
 
-// THE DIAGRAM — nodes and edges are DATA and the library lays them out, so the
-// author never writes a diagram language: there is no dialect to police and no
-// label escaping to get wrong. Altitude is required and validated.
+// THE DIAGRAM — nodes and edges are DATA. Manual layout preserves an authored
+// grid; solved layout gives the same graph to the Graphviz carrier that state
+// machines use. The author never writes a diagram language, so no dialect or
+// label escaping leaks into a design document.
+#let DIAGRAM-LAYOUTS = ("manual", "solved")
+#let DIAGRAM-FLOWS = ("left-to-right", "top-to-bottom")
+#let _diagram-layout-box = layout
+
+#let _diagram-dot-quote(value) = {
+  let quote = str.from-unicode(34)
+  quote + str(value).replace("\\", "\\\\").replace(quote, "\\" + quote) + quote
+}
+
+#let _diagram-dot-label(node) = {
+  if "sub" in node { node.label + " · " + node.sub } else { node.label }
+}
+
+#let _diagram-rankdir(flow) = if flow == "top-to-bottom" { "TB" } else { "LR" }
+
 #let diagram-native(
   altitude: none, title: none, caption: none, accent: "teal",
-  spacing: (16mm, 11mm), nodes: (), edges: (),
+  layout: "manual", flow: "left-to-right", spacing: (16mm, 11mm), nodes: (),
+  edges: (),
 ) = {
   _req-altitude(altitude)
   _req-enum("accent", accent, TINTS)
+  _req-enum("diagram layout", layout, DIAGRAM-LAYOUTS)
+  _req-enum("diagram flow", flow, DIAGRAM-FLOWS)
   if nodes.len() == 0 {
     _guide("diagram.nodes",
            "a diagram is expected to declare at least one node. An empty " +
@@ -355,32 +374,106 @@
       }
     }
   }
-  let ns = nodes.map(n => {
-    let ext = n.at("external", default: false)
-    let lbl = if "sub" in n {
-      align(center)[
-        #text(size: 8.6pt)[#n.label] \
-        #text(size: 7.6pt, fill: luma(95))[#n.sub]
-      ]
-    } else { text(size: 8.6pt)[#n.label] }
-    _fl-node(n.pos, lbl, name: label(n.id),
-      fill: if ext { white } else { c.lighten(88%) },
-      stroke: if ext {
-        (dash: "dashed", paint: luma(150), thickness: 0.7pt)
-      } else { 0.8pt + c },
-      corner-radius: 2pt, inset: 6pt)
-  })
-  let es = edges.map(e => {
-    let dashed = e.len() > 3 and e.at(3) == "dashed"
-    _fl-edge(label(e.at(0)), label(e.at(1)),
-      if dashed { "-->" } else { "->" },
-      label: text(size: 7pt, fill: luma(80))[#e.at(2)],
-      label-side: if e.len() > 4 { e.at(4) } else { auto },
-      label-sep: 3pt, label-size: 7pt,
-      stroke: if dashed {
-        (dash: "dashed", thickness: 0.6pt, paint: luma(110))
-      } else { 0.7pt + luma(85) })
-  })
+  if layout == "manual" {
+    for n in nodes {
+      if "pos" not in n {
+        panic("manual diagram node " + repr(n.id) + " is missing pos; either " +
+          "declare pos or use layout: \"solved\"")
+      }
+    }
+  }
+  if layout == "solved" {
+    for n in nodes {
+      if type(n.label) != str or ("sub" in n and type(n.sub) != str) {
+        panic("solved diagram node " + repr(n.id) + " requires string label " +
+          "and sub values; use layout: \"manual\" for Typst content")
+      }
+    }
+    for e in edges {
+      if e.len() > 2 and type(e.at(2)) != str {
+        panic("solved diagram edge " + repr(e.at(0)) + " -> " + repr(e.at(1)) +
+          " requires a string label; use layout: \"manual\" for Typst content")
+      }
+    }
+  }
+  let manual = if layout == "manual" {
+    let ns = nodes.map(n => {
+      let ext = n.at("external", default: false)
+      let lbl = if "sub" in n {
+        align(center)[
+          #text(size: 8.6pt)[#n.label] \
+          #text(size: 7.6pt, fill: luma(95))[#n.sub]
+        ]
+      } else { text(size: 8.6pt)[#n.label] }
+      _fl-node(n.pos, lbl, name: label(n.id),
+        fill: if ext { white } else { c.lighten(88%) },
+        stroke: if ext {
+          (dash: "dashed", paint: luma(150), thickness: 0.7pt)
+        } else { 0.8pt + c },
+        corner-radius: 2pt, inset: 6pt)
+    })
+    let es = edges.map(e => {
+      let dashed = e.len() > 3 and e.at(3) == "dashed"
+      _fl-edge(label(e.at(0)), label(e.at(1)),
+        if dashed { "-->" } else { "->" },
+        label: text(size: 7pt, fill: luma(80))[#e.at(2)],
+        label-side: if e.len() > 4 { e.at(4) } else { auto },
+        label-sep: 3pt, label-size: 7pt,
+        stroke: if dashed {
+          (dash: "dashed", thickness: 0.6pt, paint: luma(110))
+        } else { 0.7pt + luma(85) })
+    })
+    align(center, _fletcher.diagram(spacing: spacing, ..ns, ..es))
+  } else { none }
+  let solved = if layout == "solved" {
+    let fill = (c.lighten(88%)).to-hex()
+    let stroke = c.to-hex()
+    let node-declarations = nodes.map(n => {
+      let external = n.at("external", default: false)
+      let style = if external { "rounded,dashed" } else { "rounded,filled" }
+      let node-fill = if external { "#ffffff" } else { fill }
+      let node-stroke = if external { "#969696" } else { stroke }
+      (
+        "  " + _diagram-dot-quote(n.id) + " [label="
+        + _diagram-dot-quote(_diagram-dot-label(n)) + ", style="
+        + _diagram-dot-quote(style) + ", color=" + _diagram-dot-quote(node-stroke)
+        + ", fillcolor=" + _diagram-dot-quote(node-fill) + "];\n"
+      )
+    }).sum(default: "")
+    let edge-declarations = edges.map(e => {
+      let dashed = e.len() > 3 and e.at(3) == "dashed"
+      let edge-style = if dashed { "dashed" } else { "solid" }
+      let edge-label = if e.len() > 2 { str(e.at(2)) } else { "" }
+      (
+        "  " + _diagram-dot-quote(e.at(0)) + " -> "
+        + _diagram-dot-quote(e.at(1)) + " [label="
+        + _diagram-dot-quote(edge-label) + ", style="
+        + _diagram-dot-quote(edge-style) + "];\n"
+      )
+    }).sum(default: "")
+    let source = (
+      "digraph {\n  rankdir=" + _diagram-rankdir(flow) + ";\n"
+      + "  graph [fontname=\"Libertinus Serif\", fontsize=10, nodesep=0.35, ranksep=0.55];\n"
+      + "  node [shape=box, fontname=\"Libertinus Serif\", fontsize=9, penwidth=1.0];\n"
+      + "  edge [fontname=\"Libertinus Serif\", fontsize=7, color=\"#555555\"];\n"
+      + node-declarations + edge-declarations + "}"
+    )
+    _diagram-layout-box(size => {
+      let natural = measure(dot-render(source, math-mode: "text"))
+      let ceiling = size.width * 0.94
+      let width = if natural.width <= 0pt { ceiling } else {
+        calc.min(natural.width, ceiling)
+      }
+      let height-ceiling = size.height * 0.78
+      let scaled = if natural.height > 0pt and natural.width > 0pt {
+        let drawn-height = natural.height * (width / natural.width)
+        if drawn-height > height-ceiling {
+          width * (height-ceiling / drawn-height)
+        } else { width }
+      } else { width }
+      align(center, dot-render(source, width: scaled, math-mode: "text"))
+    })
+  } else { none }
   _drawing-frame(
     tint: ac,
     kind: if altitude == none [
@@ -389,7 +482,7 @@
       ALTITUDE #altitude · #upper(_alt-name(altitude))
     ],
     title: title, caption: caption,
-    align(center, _fletcher.diagram(spacing: spacing, ..ns, ..es)),
+    if layout == "solved" { solved } else { manual },
   )
 }
 

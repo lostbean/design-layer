@@ -165,6 +165,33 @@ blocks, and which rules are machine-checked rather than convention. It is a
 plain markdown file; read it in the browser, in a clone, or point an agent
 at it.
 
+### Diagram node tints
+
+`#diagram` and `#diagram-native` accept an optional `tint:` on each node. The
+tint must be one of the document's declared accents. A node without `tint:`
+uses the diagram-level `accent:`, so existing diagrams render unchanged.
+
+Use a node tint to state stable ownership in a cross-context diagram. Keep the
+diagram accent neutral when no one context owns the whole diagram. External
+nodes stay white with the existing dashed neutral treatment.
+
+```typst
+#diagram(
+  altitude: "L2",
+  accent: "slate",
+  nodes: (
+    (id: "orders", label: "Order management", tint: "teal"),
+    (id: "billing", label: "Billing", tint: "violet"),
+    (id: "payment", label: "Payment provider", external: true),
+  ),
+  edges: (("orders", "billing", "invoice"), ("billing", "payment", "charge")),
+)
+```
+
+The tint marks ownership. It does not transfer authority, persistence access,
+or lifecycle ownership across an edge. State those limits in the caption or
+adjacent clauses.
+
 ## Development
 
 `nix develop` provides the vendored Typst renderer (a version-exact package

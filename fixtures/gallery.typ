@@ -84,9 +84,9 @@
     caption: [A design document calls the library directly, so there is no
       conversion step between what was written and what is checked.],
     nodes: (
-      (id: "typ", label: "design.typ", sub: "authored"),
-      (id: "schema", label: "design-schema", sub: "declared"),
-      (id: "lib", label: "designlib", sub: "projected"),
+      (id: "typ", label: "design.typ", sub: "authored", tint: "teal"),
+      (id: "schema", label: "design-schema", sub: "declared", tint: "violet"),
+      (id: "lib", label: "designlib", sub: "projected", tint: "blue"),
       (id: "pdf", label: "one document", external: true),
     ),
     edges: (
@@ -97,7 +97,8 @@
   ),
   body: [
     The altitude is a required argument, so a drawing always says which zoom
-    level it is at, and its band is tinted to match.
+    level it is at. A node may declare a tint from the fixed accent vocabulary;
+    a node without one uses the diagram accent.
   ],
 )
 

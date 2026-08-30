@@ -148,8 +148,8 @@ echo "designlib-native: the native authoring surface"
 fixture render-positive '#show: design-doc.with(hero_title: [Doc])
 #section(title: "One", lead: "A lead.", visual: diagram-native(
   altitude: "L2", title: "shape",
-  nodes: ((id: "a", pos: (0,0), label: [Zalpha]),
-          (id: "b", pos: (1,0), label: [Zbeta])),
+  nodes: ((id: "a", pos: (0,0), label: [Zalpha], tint: "rose"),
+          (id: "b", pos: (1,0), label: [Zbeta], tint: "violet")),
   edges: (("a","b","Zgamma"),),
 ), body: [
   #points([A bullet.])
@@ -183,7 +183,8 @@ fi
 fixture render-solved '#show: design-doc.with(hero_title: [Doc])
 #diagram(
   altitude: "L2", flow: "left-to-right", title: "shape",
-  nodes: ((id: "a", label: "Salpha"), (id: "b", label: "Sbeta")),
+  nodes: ((id: "a", label: "Salpha", tint: "rose"),
+          (id: "b", label: "Sbeta", tint: "violet")),
   edges: (("a", "b", "Sgamma"),),
 )'
 out="$(compile render-solved plain)"
@@ -344,6 +345,10 @@ assert_invariant diagram-ghost-edge "not a declared node" \
   '#diagram-native(altitude: "L1",
      nodes: ((id: "a", pos: (0,0), label: [A]),),
      edges: (("a","ghost","x"),))'
+
+assert_invariant diagram-node-tint 'diagram node \"a\" tint' \
+  '#diagram(altitude: "L1",
+     nodes: ((id: "a", label: "A", tint: "not-a-tint"),), edges: ())'
 
 assert_invariant diagram-native-layout "unexpected argument" \
   '#diagram-native(layout: "solved", altitude: "L1", nodes: ())'

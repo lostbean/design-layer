@@ -362,11 +362,15 @@
            "failed rather than as the absence of one — declare a node, or " +
            "drop the diagram block.")
   }
-  let c = TINT-COLOR.at(accent)
   let ac = TINT-COLOR.at(_alt-tint(altitude))
   // Every endpoint must name a declared node; a typo would otherwise draw an
   // edge to nowhere, which renders as a drawing missing a line.
   let ids = nodes.map(n => n.id)
+  for n in nodes {
+    if "tint" in n {
+      _req-enum("diagram node " + repr(n.id) + " tint", n.tint, TINTS)
+    }
+  }
   for e in edges {
     for endpoint in (e.at(0), e.at(1)) {
       if endpoint not in ids {
@@ -400,6 +404,7 @@
   let manual = if layout == "manual" {
     let ns = nodes.map(n => {
       let ext = n.at("external", default: false)
+      let node-color = TINT-COLOR.at(n.at("tint", default: accent))
       let lbl = if "sub" in n {
         align(center)[
           #text(size: 8.6pt)[#n.label] \
@@ -407,10 +412,10 @@
         ]
       } else { text(size: 8.6pt)[#n.label] }
       _fl-node(n.pos, lbl, name: label(n.id),
-        fill: if ext { white } else { c.lighten(88%) },
+        fill: if ext { white } else { node-color.lighten(88%) },
         stroke: if ext {
           (dash: "dashed", paint: luma(150), thickness: 0.7pt)
-        } else { 0.8pt + c },
+        } else { 0.8pt + node-color },
         corner-radius: 2pt, inset: 6pt)
     })
     let es = edges.map(e => {
@@ -427,13 +432,12 @@
     align(center, _fletcher.diagram(spacing: spacing, ..ns, ..es))
   } else { none }
   let solved = if layout == "solved" {
-    let fill = (c.lighten(88%)).to-hex()
-    let stroke = c.to-hex()
     let node-declarations = nodes.map(n => {
       let external = n.at("external", default: false)
+      let node-color = TINT-COLOR.at(n.at("tint", default: accent))
       let style = if external { "rounded,dashed" } else { "rounded,filled" }
-      let node-fill = if external { "#ffffff" } else { fill }
-      let node-stroke = if external { "#969696" } else { stroke }
+      let node-fill = if external { "#ffffff" } else { node-color.lighten(88%).to-hex() }
+      let node-stroke = if external { "#969696" } else { node-color.to-hex() }
       (
         "  " + _diagram-dot-quote(n.id) + " [label="
         + _diagram-dot-quote(_diagram-dot-label(n)) + ", style="

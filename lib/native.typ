@@ -187,7 +187,7 @@
 #let section(title: none, lead: none, visual: none, notes: none, body: none) = {
   _need("section", "title", title)
   _max-lead("section lead", lead)
-  heading(level: 1)[#title]
+  heading(level: 2)[#title]
   if lead != none {
     block(text(size: 9.4pt, fill: luma(70))[#lead]); v(0.3em)
   }
@@ -198,7 +198,7 @@
 
 #let subsection(title: none, body) = {
   _need("subsection", "title", title)
-  heading(level: 2)[#title]
+  heading(level: 3)[#title]
   body
 }
 
@@ -723,7 +723,7 @@
   }
   // Replay each entry's deferred guidance from here, a content position.
   for e in es { _guides(e.at("_guides", default: ())) }
-  heading(level: 1)[Pending updates]
+  heading(level: 2)[Pending updates]
   v(0.3em)
   // An entry with no date sorts to the front rather than crashing the sort:
   // `since` is a guideline now, so the ledger has to be able to draw a row that

@@ -218,6 +218,18 @@ shell for the whole layer — the title page, the table of contents, the running
 footer, the per-chapter front pages. A `design.typ` exports `body` and calls no
 `design-doc`, so a context cannot decide page size, numbering, or colour.
 
+The root design is numbered chapter 1. Every context follows as a numbered
+chapter in aggregate order. `section` and `subsection` derive chapter-local
+paths, so the tenth section's first subsection in chapter 1 reads `1.10.1`,
+while the first section of chapter 2 reads `2.1`. Titles contain no number, and
+the derived section anchor continues to depend only on heading text.
+
+The aggregate table of contents groups entries by chapter. A marked chapter row
+starts each group; sections and subsections indent beneath it; page numbers stay
+aligned at the right edge. The glossary follows the design chapters as a
+separate unnumbered reference chapter. Authors do not select chapter marks,
+spacing, numbering, TOC depth, or colour.
+
 A **standalone reference page** that is not part of any layer is the one
 exception: it is compiled on its own, so it applies its own shell with
 `#show: design-doc.with(eyebrow: …, hero_title: …, lede: …, footer: …)`. That
@@ -298,6 +310,8 @@ declared home under `docs/`.
 A pointer into a section of a design document uses the id derived from its
 content-only title: lowercase the title text and collapse runs of
 non-alphanumerics to single hyphens. The renderer owns visible numbering.
+Changing a chapter's aggregate position therefore changes its visible number
+without changing any section anchor or authored cross-reference.
 
 | `section(title: …)`  | Anchor              |
 | -------------------- | ------------------- |

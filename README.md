@@ -57,7 +57,11 @@ nix run github:lostbean/design-layer#check  -- docs/design .
 ```
 
 `render` compiles every `design.typ` under the layer root into one navigable
-PDF — a context per chapter, one alphabetized glossary, a table of contents.
+PDF. The root design is chapter 1, and each context follows as its own chapter.
+Sections and subsections use chapter-local numbers such as `1.10.1`; authors
+still supply content-only titles. The grouped table of contents marks chapter
+boundaries, nests sections and subsections, and aligns page numbers. The
+alphabetized glossary closes the document as an unnumbered reference chapter.
 `check` then runs three things in sequence and exits 0 clean, 1 on a
 violation, 2 on an error:
 

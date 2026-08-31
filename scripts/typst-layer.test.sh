@@ -72,6 +72,18 @@ cat >"$LAYER/design.typ" <<'EOF'
     #goal(title: "Zrootgoal")[Root goal body.]
     #invariant(title: "Zrootinv", enforcement: "mechanism")[Root invariant.]
     #principle(title: "Zrootprin")[Root principle.]
+    #subsection(title: "Zroot detail")[Root detail.]
+  ])
+  #section(title: "Zroot section 2", body: [Two.])
+  #section(title: "Zroot section 3", body: [Three.])
+  #section(title: "Zroot section 4", body: [Four.])
+  #section(title: "Zroot section 5", body: [Five.])
+  #section(title: "Zroot section 6", body: [Six.])
+  #section(title: "Zroot section 7", body: [Seven.])
+  #section(title: "Zroot section 8", body: [Eight.])
+  #section(title: "Zroot section 9", body: [Nine.])
+  #section(title: "Zroot section 10", body: [
+    #subsection(title: "Zroot tenth detail")[Tenth detail.]
   ])
 ]
 EOF
@@ -83,6 +95,7 @@ cat >"$LAYER/alpha/design.typ" <<'EOF'
     #goal(title: "Zalphagoal")[Alpha goal.]
     #invariant(title: "Zalphainv", enforcement: "convention")[Alpha invariant.]
     #principle(title: "Zalphaprin")[Alpha principle.]
+    #subsection(title: "Zalpha detail")[Alpha detail.]
   ])
 ]
 EOF
@@ -152,6 +165,40 @@ if [ "$rc" -eq 0 ] && [ -f "$LAYER/design-layer.pdf" ]; then
   *"3 context(s)"*) pass_line "the summary counts all three contexts" ;;
   *) fail_line "the summary miscounts the contexts: $out" ;;
   esac
+
+  # --- chapters own the displayed section number --------------------------
+  # Chapter headings are level one. Authored sections and subsections render
+  # beneath them, so the same content-only source naturally reads 1.1,
+  # 1.1.1, 1.10.1, then 2.1 and 2.1.1 in the next context.
+  for numbered in \
+    '1 Zroot document' \
+    '1.1 00 Foundation' \
+    '1.1.1 Zroot detail' \
+    '1.10.1 Zroot tenth detail' \
+    '2 Zalpha context' \
+    '2.1 00 Foundation' \
+    '2.1.1 Zalpha detail'; do
+    if printf '%s\n' "$text" | grep -qE "${numbered//./\\.}"; then
+      pass_line "chapter-local number reaches $numbered"
+    else
+      fail_line "chapter-local number is missing: $numbered"
+    fi
+  done
+  if printf '%s\n' "$text" | grep -qE '^[0-9.]+ +Glossary *$'; then
+    fail_line "the glossary is numbered as a design chapter"
+  else
+    pass_line "the glossary is an unnumbered reference chapter"
+  fi
+
+  # The TOC is page two in this fixture. Read that page alone so the assertion
+  # proves navigation depth rather than matching the chapter body later on.
+  toc_text="$(pdftotext -layout -f 2 -l 2 "$LAYER/design-layer.pdf" - 2>/dev/null)"
+  if printf '%s\n' "$toc_text" | grep -q 'Zroot document' &&
+    printf '%s\n' "$toc_text" | grep -q 'Zroot detail'; then
+    pass_line "the table of contents includes chapters through subsections"
+  else
+    fail_line "the table of contents omits a chapter or subsection"
+  fi
   case "$out" in
   *"3 term(s)"*) pass_line "the summary counts every glossary term" ;;
   *) fail_line "the summary miscounts the terms: $out" ;;
@@ -167,10 +214,10 @@ if [ "$rc" -eq 0 ] && [ -f "$LAYER/design-layer.pdf" ]; then
   else
     pass_line "the term heading carries no literal source brackets"
   fi
-  if printf '%s' "$text" | grep -qE '^[0-9.]+ +Zthing *$'; then
-    pass_line "the term heading renders as Zthing"
+  if printf '%s' "$text" | grep -qE '^Zthing *$'; then
+    pass_line "the unnumbered term heading renders as Zthing"
   else
-    fail_line "no numbered heading reads exactly 'Zthing'"
+    fail_line "no unnumbered heading reads exactly 'Zthing'"
     printf '%s' "$text" | grep -i "zthing" | head -3 | sed 's/^/       got: /'
   fi
   if printf '%s' "$text" | grep -q '\[A Zthing is a thing\.\]'; then

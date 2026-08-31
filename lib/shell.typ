@@ -46,7 +46,10 @@
     })
   set text(size: 9.5pt, font: "Libertinus Serif")
   set par(justify: true, leading: 0.62em)
-  set heading(numbering: "1.1")
+  // Level one is the aggregate-owned chapter. Author-owned sections begin at
+  // level two, so Typst derives chapter-local paths such as 1.10.1 without a
+  // number entering authored source or an anchor.
+  set heading(numbering: "1.1.1")
   show heading: set block(above: 1.3em, below: 0.7em)
   show heading.where(level: 1): set text(size: 16pt)
   show heading.where(level: 2): set text(size: 12pt)
@@ -61,8 +64,21 @@
   v(1fr)
   pagebreak()
 
-  // the table of contents — the navigation the aggregate exists for
-  outline(depth: 2, indent: auto)
+  // The chapter row is a visible boundary rather than one more entry in a
+  // flat list. `it` remains the native outline entry, so its destination and
+  // right-aligned page number retain Typst's link and layout behaviour.
+  show outline.entry.where(level: 1): it => block(
+    width: 100%,
+    above: 11pt,
+    below: 4pt,
+    inset: (left: 8pt, bottom: 5pt),
+    stroke: (left: 2.4pt + TINT-COLOR.at("blue"), bottom: 0.45pt + luma(210)),
+  )[
+    #text(size: 10.5pt, weight: "bold", fill: luma(45), it)
+  ]
+  show outline.entry.where(level: 2): set text(size: 9pt, fill: luma(65))
+  show outline.entry.where(level: 3): set text(size: 8pt, fill: luma(105))
+  outline(title: [Contents], depth: 3, indent: auto)
   pagebreak()
 
   body

@@ -343,7 +343,7 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
         L.append("")
 
     if terms:
-        L.append("= Glossary <glossary>")
+        L.append('#heading(level: 1, numbering: none)[Glossary] <glossary>')
         L.append("Every term the layer declares, with the context that owns it.")
         L.append("")
         # A term's title and body are SPLICED here as the source text the author
@@ -367,7 +367,7 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
         # characters, so every term headed itself `[Accent]` and closed its body
         # on a stray `]`. Nothing was wrong with the splice; the extra wrap was.
         for t in sorted(terms, key=lambda x: x["sort_key"]):
-            L.append('#heading(level: 2, outlined: false)[%s] <%s>'
+            L.append('#heading(level: 2, numbering: none, outlined: false)[%s] <%s>'
                      % (_splice(t["title_src"]), t["slug"]))
             L.append("#context-owner(%s)" % _typ_str(t["context"]))
             L.append(_splice(t["body_src"]))

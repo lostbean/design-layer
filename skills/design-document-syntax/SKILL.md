@@ -807,16 +807,17 @@ clauses, then the relates clauses — nothing else.
 ```typst
 #entity(
   title: "Booking",
+  description: [A reservation for a customer during a requested time window.],
   kind: "aggregate",
   owner: "scheduling",
   lifecycle: "stateful",
   domain: "scheduling",
   tint: "violet",
 )[
-  #attribute(provenance: "authored")[
+  #attribute(name: "Requested window", type: "Time window", provenance: "authored")[
     the requested time window, stated by the person booking
   ]
-  #attribute(provenance: "derived")[
+  #attribute(name: "Duration", type: "Elapsed time", provenance: "derived")[
     the duration, computed from the requested window
   ]
   #relates(cardinality: "n : 1")[belongs to one *Customer*]
@@ -825,16 +826,17 @@ clauses, then the relates clauses — nothing else.
 
 **Entity arguments, all required except `tint` and `lens`:**
 
-| Argument     | Values                                      | Means                                         |
-| ------------ | ------------------------------------------- | --------------------------------------------- |
-| `title:`     | the entity's name                           | required                                      |
-| `kind:`      | `entity` `value-object` `aggregate` `event` | required; see below                           |
-| `owner:`     | free text                                   | required; the unit responsible for it         |
-| `lifecycle:` | `immutable` `append-only` `stateful`        | required; how it changes over time            |
-| `domain:`    | free text                                   | required; the discovered domain it belongs to |
-| `tint:`      | one of the six accents                      | optional; the domain's colour                 |
+| Argument       | Values                                      | Means                                                         |
+| -------------- | ------------------------------------------- | ------------------------------------------------------------- |
+| `description:` | content or string                           | required; a sentence or short paragraph describing the entity |
+| `title:`       | the entity's name                           | required                                                      |
+| `kind:`        | `entity` `value-object` `aggregate` `event` | required; see below                                           |
+| `owner:`       | free text                                   | required; the unit responsible for it                         |
+| `lifecycle:`   | `immutable` `append-only` `stateful`        | required; how it changes over time                            |
+| `domain:`      | free text                                   | required; the discovered domain it belongs to                 |
+| `tint:`        | one of the six accents                      | optional; the domain's colour                                 |
 
-Omitting any of the five required arguments is reported as a guideline naming
+Omitting any of the six required arguments is reported as a guideline naming
 the field, and the card still renders. The reason to fill them all in anyway: a
 card missing one renders as a card that simply does not answer that question,
 which reads as "not applicable" rather than "never stated".
@@ -873,6 +875,23 @@ of the model then scans down one column.
 - **The census is a model, not an inventory.** It names the entities whose
   identity and lifecycle the design must respect, not every field an
   implementation will store. Derivable internals stay out.
+
+#### Attribute name, type, and description
+
+- Each `#attribute` models one value. Its `name:` identifies the value, its
+  `type:` states a readable domain type, and its body describes its meaning.
+- Use domain types such as `Time window`, `Booking reference`, `Elapsed time`,
+  or `Allow, block, or review`. Do not substitute storage types such as `string`
+  or programming-language expressions such as `Option<UUID>`.
+- A composite value may occupy one clause when its domain type is named and its
+  component fields are explicit. Independent values need separate clauses.
+- Both `name:` and `type:` accept strings or Typst content. Content may reference
+  a defined domain type. An unresolved reference still fails compilation.
+- Omitting `description:` on an entity or `name:` or `type:` on an attribute
+  records a guideline. Strict mode rejects the omission. Existing clauses still
+  render without inventing names or types.
+- A type that is unknown remains unstated until its domain meaning is settled.
+  The renderer does not parse or validate a type language.
 
 #### Provenance — the field that earns the block
 

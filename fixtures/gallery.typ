@@ -216,15 +216,16 @@
   body: [
     #entity(
       title: "Design layer",
+      description: [The authored model and the document rendered from it.],
       kind: "aggregate",
       owner: "the author",
       lifecycle: "stateful",
       domain: "documentation",
     )[
-      #attribute(provenance: "authored")[
+      #attribute(name: "Notation", type: "Authoring notation", provenance: "authored")[
         The notation the layer is written in.
       ]
-      #attribute(provenance: "derived")[
+      #attribute(name: "Rendered document", type: [Design document], provenance: "derived")[
         The rendered document, produced by the renderer and never hand-edited.
       ]
       #relates(cardinality: "1 : 0..n")[

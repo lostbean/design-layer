@@ -207,6 +207,108 @@ else
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
+# Census fields remain readable through the public authoring surface.
+fixture census-fields '#set page(width: 360pt, height: 420pt, margin: 24pt)
+#set heading(numbering: "1.")
+= Time window <time-window>
+#entity(title: "Booking", description: [EntitySummary describes the reservation.],
+  kind: "aggregate", owner: "Scheduling", lifecycle: "stateful", domain: "Scheduling")[
+  #attribute(name: [Requested window], type: [Time window (@time-window)], provenance: "authored")[WindowMeaning supplied by the customer.]
+  #attribute(name: "Duration", type: "Elapsed time", provenance: "derived")[DurationMeaning computed from the window.]
+  #for n in range(40) {
+    attribute(name: "Field " + str(n), type: "Booking reference", provenance: "observed")[RecordedValue #n]
+  }
+  #relates(cardinality: "n : 1")[FinalRelationship belongs to a Customer.]
+]'
+out="$(compile census-fields strict)"
+if [ -f "$WORK/census-fields.pdf" ]; then
+  text="$(pdftotext "$WORK/census-fields.pdf" - 2>/dev/null)"
+  for mark in EntitySummary 'Requested window' 'Time window' WindowMeaning Duration 'Elapsed time' DurationMeaning authored derived observed 'Field 39' FinalRelationship; do
+    if [[ $text == *"$mark"* ]]; then
+      pass_line "census renders $mark"
+    else
+      fail_line "census omitted $mark"
+    fi
+  done
+  for n in $(seq 0 39); do
+    if printf '%s\n' "$text" | grep -Eq "^Field $n · Booking reference$"; then
+      pass_line "long census retains Field $n"
+    else
+      fail_line "long census lost Field $n"
+    fi
+  done
+  pdftotext "$WORK/census-fields.pdf" "$WORK/census-fields.txt"
+  if python3 - "$WORK/census-fields.txt" <<'PYTEST'; then
+import pathlib, re, sys
+pages = pathlib.Path(sys.argv[1]).read_text().split("\f")
+for n in range(40):
+    heading = next(i for i, page in enumerate(pages) if re.search(rf"^Field {n} · Booking reference$", page, re.M))
+    description = next(i for i, page in enumerate(pages) if re.search(rf"^RecordedValue {n}$", page, re.M))
+    if heading != description:
+        sys.exit(f"Field {n} heading and description split across pages")
+PYTEST
+    pass_line "attribute headings stay with their descriptions"
+  else
+    fail_line "an attribute heading was orphaned"
+  fi
+  pages="$(pdfinfo "$WORK/census-fields.pdf" | awk '/^Pages:/ {print $2}')"
+  if [ "$pages" -gt 1 ]; then
+    pass_line "long census spans $pages pages"
+  else
+    fail_line "long census did not split across pages"
+  fi
+else
+  fail_line "complete census did not compile"
+  printf '%s\n' "$out" | head -5
+fi
+fixture census-boundaries '#set page(width: 360pt, height: 420pt, margin: 24pt)
+#for n in range(12) {
+  if n > 0 { pagebreak() }
+  [Preceding content]
+  v((180 + 10 * n) * 1pt)
+  entity(title: "Entity" + str(n), description: [Summary #n], kind: "aggregate", owner: "Scheduling", lifecycle: "stateful", domain: "Scheduling")[
+    #attribute(name: "First" + str(n), type: "Time window", provenance: "authored")[Meaning #n]
+    #attribute(name: "Second" + str(n), type: "Time window", provenance: "derived")[Second meaning #n]
+    #relates(cardinality: "n : 1")[Relationship #n]
+  ]
+}
+'
+out="$(compile census-boundaries strict)"
+if [ -f "$WORK/census-boundaries.pdf" ]; then
+  pdftotext "$WORK/census-boundaries.pdf" "$WORK/census-boundaries.txt"
+  if python3 - "$WORK/census-boundaries.txt" <<'PYTEST'; then
+import pathlib, re, sys
+pages = pathlib.Path(sys.argv[1]).read_text().split("\f")
+for n in range(12):
+    title = next(i for i, page in enumerate(pages) if f"Entity{n}\n" in page)
+    first = next(i for i, page in enumerate(pages) if f"First{n} ·" in page)
+    if title != first:
+        sys.exit(f"Entity{n} starts on a page without its first attribute")
+for page in pages:
+    compact = re.sub(r"\s", "", page)
+    if compact.endswith(("ATTRIBUTES", "RELATIONSHIPS")):
+        sys.exit("A census group heading has no following item on its page")
+PYTEST
+    pass_line "entity and group headings retain their first item at page boundaries"
+  else
+    fail_line "a census heading starts without its first item"
+  fi
+else
+  fail_line "census boundary fixture did not compile"
+  printf '%s\n' "$out" | head -5
+fi
+
+assert_guideline entity-description-missing "entity is missing description" \
+  '#entity(title: "Booking", kind: "aggregate", owner: "Scheduling", lifecycle: "stateful", domain: "Scheduling")[body]'
+assert_guideline attribute-name-missing "attribute is missing name" \
+  '#attribute(type: "Time window", provenance: "authored")[Requested time.]'
+assert_guideline attribute-type-missing "attribute is missing type" \
+  '#attribute(name: "Window", provenance: "authored")[Requested time.]'
+assert_invariant attribute-invalid-provenance "provenance" \
+  '#attribute(name: "Window", type: "Time window", provenance: "invented")[Requested time.]'
+assert_invariant attribute-invalid-reference "does not exist" \
+  '#attribute(name: "Window", type: [@missing-domain-type], provenance: "authored")[Requested time.]'
+
 # --- the altitude ladder renders, named rungs and open rungs alike -----------
 #
 # Asserted by reading the BADGE TEXT back out of the PDF, not by exit code. The

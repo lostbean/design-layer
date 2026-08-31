@@ -201,3 +201,7 @@ formatter.
 `nix fmt` formats the tree. `nix flake check` runs the formatter check, the
 gate's self-tests (`scripts/*.test.sh`), and the projector's determinism
 check (projecting the schema twice must yield identical bytes).
+
+## Migrations
+
+- [Entity descriptions and typed attributes](docs/migrations/entity-descriptions-and-types.md) covers bundle updates, census rewrites, and PDF verification.

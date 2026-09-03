@@ -41,6 +41,9 @@ import subprocess
 import sys
 import tempfile
 
+from typst_policy import command as typst_command
+from typst_policy import environment as typst_environment
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -166,7 +169,7 @@ def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
     The assembly and the freshness contract are separate concerns, so the part
     that decides pass or fail has one implementation.
     """
-    typst = os.environ.get("TYPST", "typst")
+    typst = typst_command()
     # Under --check the fresh render goes to a temp file and the committed
     # document is left alone, so a stale artifact is REPORTED rather than
     # silently repaired.
@@ -179,7 +182,7 @@ def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
     # is undocumented behavior, and a gate resting on it is resting on an
     # accident, the same shape as a read-only package cache standing in for an
     # offline contract.
-    env = dict(os.environ, SOURCE_DATE_EPOCH="0")
+    env = typst_environment()
     # THE STRICT RATCHET, off unless the caller asks for it. A guideline REPORTS
     # on every render and blocks none of them; `--input strict=1` promotes each
     # to a hard error, for a CI or an author who wants the stricter pass. The

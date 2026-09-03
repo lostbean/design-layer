@@ -58,6 +58,33 @@
           ]
         );
 
+        # Every supplied Typst command uses this policy wrapper. Embedded fonts
+        # are the stable font source; host font paths and the embedded-font
+        # opt-out are removed before the pinned renderer runs. The CLI option
+        # that adds an explicit font directory is rejected at this seam.
+        typstRenderer = pkgs.writeShellApplication {
+          name = "typst";
+          runtimeInputs = [ renderer ];
+          text = ''
+            for arg in "$@"; do
+              case "$arg" in
+                --font-path|--font-path=*)
+                  echo "typst: error: --font-path is not permitted by the design renderer policy" >&2
+                  exit 2
+                  ;;
+                --ignore-embedded-fonts|--ignore-embedded-fonts=*)
+                  echo "typst: error: embedded fonts are required by the design renderer policy" >&2
+                  exit 2
+                  ;;
+              esac
+            done
+            unset TYPST_FONT_PATHS
+            unset TYPST_IGNORE_EMBEDDED_FONTS
+            export TYPST_IGNORE_SYSTEM_FONTS=true
+            exec ${renderer}/bin/typst "$@"
+          '';
+        };
+
         # ---------------------------------------------------------------------
         # The gate as a CALLABLE BUNDLE
         # ---------------------------------------------------------------------
@@ -116,7 +143,7 @@
           pkgs.bash
           pkgs.python3
           pkgs.git
-          renderer
+          typstRenderer
         ];
 
         # One app wrapper per entry point. Every app exports the two variables
@@ -128,8 +155,10 @@
         #                    imports the BUNDLED library instead of looking for
         #                    a `.render/` inside the target directory
         #
-        # Neither variable is overwritten when the caller already set one: a
-        # host pointing at its own schema or library keeps that choice.
+        # DESIGN_SCHEMA and DESIGN_LIB_DIR are not overwritten when the caller
+        # already set one: a host pointing at its own schema or library keeps
+        # that choice. The runtime PATH supplies the pinned policy wrapper, so
+        # an ambient executable cannot replace the renderer.
         #
         # The store is read-only, so nothing is written into $out at run time —
         # the scripts write their scratch and their output under the TARGET
@@ -150,6 +179,81 @@
           {
             type = "app";
             program = "${wrapper}/bin/${name}";
+          };
+
+        # The composite check app is also exposed to the self-test fixture so
+        # the public render and freshness entry points remain covered.
+        checkApp =
+          let
+            checkWrapper = pkgs.writeShellApplication {
+              name = "design-check";
+              runtimeInputs = gateRuntime;
+              text = ''
+                if [ "$#" -lt 1 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+                  cat >&2 <<'USAGE'
+                usage: design-check <layer-root> [repo-root]
+
+                  <layer-root>  the directory holding the root design.md and the
+                                per-context subdirectories (e.g. docs/design)
+                  [repo-root]   the repo whose cross-links are checked; defaults
+                                to the layer root's grandparent, else the cwd
+
+                Runs, in order: the aggregate freshness check, token coverage,
+                and layer integrity. Exit: 0 clean, 1 violation, 2 error.
+                USAGE
+                  exit 2
+                fi
+
+                export DESIGN_SCHEMA="''${DESIGN_SCHEMA:-${gateBundle}/schema/design-schema.json}"
+                export DESIGN_LIB_DIR="''${DESIGN_LIB_DIR:-${gateBundle}/render}"
+                if [ ! -d "$1" ]; then
+                  echo "design-check: error: layer root not found: $1" >&2
+                  exit 2
+                fi
+                layer_root="$(cd "$1" && pwd)"
+                shift
+                if [ "$#" -ge 1 ]; then
+                  repo_root="$1"
+                  shift
+                else
+                  # DERIVE THE REPO FROM THE LAYER, never from the cwd.
+                  #
+                  # layer-integrity takes a REPO root — it walks a whole repo
+                  # to find every layer artifact and ADR — so this wrapper has
+                  # to name the repo the given layer belongs to. It used to
+                  # guess by walking two levels up, on the convention that a
+                  # layer sits at <repo>/docs/design. That guess is silent
+                  # when it is wrong: `cd "$layer_root/../.."` succeeds for
+                  # almost any path, so the $PWD branch below it was very
+                  # nearly unreachable, and a layer that does NOT sit exactly
+                  # two levels down resolved to whatever directory happened to
+                  # be there — the repo's parent, a sibling checkout, or a
+                  # tree with no layer in it at all. Checking an out-of-tree
+                  # layer then reported on a repo the caller never named.
+                  #
+                  # The layer's own enclosing git repo is the answer that
+                  # cannot drift, because it is a property of the layer rather
+                  # than of the caller's shell. The two-levels-up convention
+                  # stays only as the fallback for a layer outside any repo.
+                  if repo_root="$(git -C "$layer_root" rev-parse --show-toplevel 2>/dev/null)"; then
+                    :
+                  elif repo_root="$(cd "$layer_root/../.." 2>/dev/null && pwd)"; then
+                    :
+                  else
+                    repo_root="$PWD"
+                  fi
+                fi
+
+                ${gateBundle}/scripts/design-aggregate \
+                  "$layer_root" "$layer_root/design-layer.pdf" --check
+                ${gateBundle}/scripts/token-coverage "$layer_root"
+                ${gateBundle}/scripts/layer-integrity "$repo_root"
+              '';
+            };
+          in
+          {
+            type = "app";
+            program = "${checkWrapper}/bin/design-check";
           };
 
         # treefmt config — one formatter per language present in this repo.
@@ -203,9 +307,19 @@
             treefmtEval.config.build.wrapper
             pkgs.shfmt
             pkgs.python3
-            # the vendored renderer — the same binary CI and the gate run
-            renderer
+            pkgs.git
+            pkgs.actionlint
+            # the vendored renderer — the same binary CI and the gate run,
+            # wrapped by the shared deterministic font policy
+            typstRenderer
+            pkgs.dejavu_fonts
           ];
+          shellHook = ''
+            export DESIGN_TEST_FONT_DIR=${pkgs.dejavu_fonts}/share/fonts
+            export DESIGN_RAW_TYPST=${renderer}/bin/typst
+            export DESIGN_RENDER_APP=${(gateApp "design-aggregate" "design-aggregate").program}
+            export DESIGN_CHECK_APP=${checkApp.program}
+          '';
         };
 
         # The bundle itself, buildable: `nix build .#gate-bundle` gives the
@@ -246,79 +360,7 @@
         # path: both names run the same program, and the old one retires only
         # once the hosts have moved.
         apps.aggregate = gateApp "design-aggregate" "design-aggregate";
-        apps.check =
-          let
-            checkWrapper = pkgs.writeShellApplication {
-              name = "design-check";
-              runtimeInputs = gateRuntime;
-              text = ''
-                if [ "$#" -lt 1 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-                  cat >&2 <<'USAGE'
-                usage: design-check <layer-root> [repo-root]
-
-                  <layer-root>  the directory holding the root design.md and the
-                                per-context subdirectories (e.g. docs/design)
-                  [repo-root]   the repo whose cross-links are checked; defaults
-                                to the layer root's grandparent, else the cwd
-
-                Runs, in order: the aggregate freshness check, token coverage,
-                and layer integrity. Exit: 0 clean, 1 violation, 2 error.
-                USAGE
-                  exit 2
-                fi
-
-                export DESIGN_SCHEMA="''${DESIGN_SCHEMA:-${gateBundle}/schema/design-schema.json}"
-                export DESIGN_LIB_DIR="''${DESIGN_LIB_DIR:-${gateBundle}/render}"
-
-                if [ ! -d "$1" ]; then
-                  echo "design-check: error: layer root not found: $1" >&2
-                  exit 2
-                fi
-                layer_root="$(cd "$1" && pwd)"
-                shift
-                if [ "$#" -ge 1 ]; then
-                  repo_root="$1"
-                  shift
-                else
-                  # DERIVE THE REPO FROM THE LAYER, never from the cwd.
-                  #
-                  # layer-integrity takes a REPO root — it walks a whole repo
-                  # to find every layer artifact and ADR — so this wrapper has
-                  # to name the repo the given layer belongs to. It used to
-                  # guess by walking two levels up, on the convention that a
-                  # layer sits at <repo>/docs/design. That guess is silent
-                  # when it is wrong: `cd "$layer_root/../.."` succeeds for
-                  # almost any path, so the $PWD branch below it was very
-                  # nearly unreachable, and a layer that does NOT sit exactly
-                  # two levels down resolved to whatever directory happened to
-                  # be there — the repo's parent, a sibling checkout, or a
-                  # tree with no layer in it at all. Checking an out-of-tree
-                  # layer then reported on a repo the caller never named.
-                  #
-                  # The layer's own enclosing git repo is the answer that
-                  # cannot drift, because it is a property of the layer rather
-                  # than of the caller's shell. The two-levels-up convention
-                  # stays only as the fallback for a layer outside any repo.
-                  if repo_root="$(git -C "$layer_root" rev-parse --show-toplevel 2>/dev/null)"; then
-                    :
-                  elif repo_root="$(cd "$layer_root/../.." 2>/dev/null && pwd)"; then
-                    :
-                  else
-                    repo_root="$PWD"
-                  fi
-                fi
-
-                ${gateBundle}/scripts/design-aggregate \
-                  "$layer_root" "$layer_root/design-layer.pdf" --check
-                ${gateBundle}/scripts/token-coverage "$layer_root"
-                ${gateBundle}/scripts/layer-integrity "$repo_root"
-              '';
-            };
-          in
-          {
-            type = "app";
-            program = "${checkWrapper}/bin/design-check";
-          };
+        apps.check = checkApp;
 
         # THE GUIDELINE PASS — reference, deliberately NOT a gate.
         #
@@ -393,6 +435,17 @@
         # `nix flake check` verifies everything is formatted.
         checks.formatting = treefmtEval.config.build.check ./.;
 
+        checks.workflow-lint =
+          pkgs.runCommand "workflow-lint"
+            {
+              nativeBuildInputs = [ pkgs.actionlint ];
+            }
+            ''
+              cd ${./.}
+              actionlint .github/workflows/*.yml
+              touch $out
+            '';
+
         # Every gate script's fixture-based self-test. This is what establishes
         # the correctness of this repo: it holds no design layer of its own, so
         # tests — not dogfooding — are the proof.
@@ -404,7 +457,8 @@
                 pkgs.python3
                 pkgs.git # layer-integrity's gitignore-prune fixture
                 pkgs.poppler-utils # pdftotext — the chapter assertion reads the PDF
-                renderer # the render seam
+                typstRenderer # the render seam with the deterministic font policy
+                pkgs.dejavu_fonts # real host-font conflict in the font regression
               ];
             }
             ''
@@ -417,6 +471,13 @@
               export GIT_CONFIG_NOSYSTEM=1
               export GIT_AUTHOR_NAME=check GIT_AUTHOR_EMAIL=check@localhost
               export GIT_COMMITTER_NAME=check GIT_COMMITTER_EMAIL=check@localhost
+              export DESIGN_TEST_FONT_DIR=${pkgs.dejavu_fonts}/share/fonts
+              # Keep the raw packaged binary available to the regression. The
+              # PATH command is policy-wrapped, so the test must bypass that
+              # outer shell to prove the Python subprocess policy itself.
+              export DESIGN_RAW_TYPST=${renderer}/bin/typst
+              export DESIGN_RENDER_APP=${(gateApp "design-aggregate" "design-aggregate").program}
+              export DESIGN_CHECK_APP=${checkApp.program}
               # The tests exec the gate scripts directly; /usr/bin/env does
               # not exist in the sandbox.
               patchShebangs scripts

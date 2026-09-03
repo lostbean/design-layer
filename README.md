@@ -195,9 +195,17 @@ adjacent clauses.
 ## Development
 
 `nix develop` provides the vendored Typst renderer (a version-exact package
-set, pinned so a render resolves nothing at run time), Python, and the
-formatter.
+set, pinned so a render resolves nothing at run time). The renderer ignores
+ambient system font paths and uses its embedded fonts, so the same source
+produces the same PDF bytes on each supported host. Python and the formatter
+are provided as well.
 
 `nix fmt` formats the tree. `nix flake check` runs the formatter check, the
 gate's self-tests (`scripts/*.test.sh`), and the projector's determinism
 check (projecting the schema twice must yield identical bytes).
+
+## Migrations
+
+- [Reproducible font resolution](docs/migrations/reproducible-fonts.md) covers the embedded-font policy and host migration.
+
+The [changelog](CHANGELOG.md) records unreleased renderer changes.

@@ -975,6 +975,151 @@ ri_refuses "a malformed adr() citation still hard-fails" \
   'The decision is #adr("7").' \
   'takes the ADR NUMBER as an integer'
 
+# --- 4f. HOST FONTS CANNOT CHANGE RENDERED BYTES ------------------------------
+# Typst searches supplied font paths before its embedded fonts. A host can
+# therefore render the same source with a different font file while every
+# visible mark remains present. The gate must remove ambient font paths and
+# keep the embedded families (Libertinus Serif and DejaVu Sans Mono) selected.
+FONT_LAYER="$WORK/font-layer/docs/design"
+mkdir -p "$FONT_LAYER"
+# Typst resolves --root against canonical paths. macOS exposes /tmp as a
+# symlink to /private/tmp, so retain the physical path or an external bundled
+# library can be addressed as /private/nix/... and fail to resolve.
+FONT_LAYER="$(cd "$FONT_LAYER" && pwd -P)"
+bash ./scripts/render-project schema/design-schema.json "$FONT_LAYER/.render" >/dev/null
+cat >"$FONT_LAYER/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Zfont document]
+#let body = [
+  #set text(font: "Libertinus Serif")
+  #section(title: "Zfont section", body: [
+    #text(font: "DejaVu Sans Mono")[Zfont embedded family 1234567890.]
+  ])
+]
+EOF
+
+FONT_DIR="${DESIGN_TEST_FONT_DIR:-}"
+RAW_TYPST="${DESIGN_RAW_TYPST:-}"
+if [ -z "$FONT_DIR" ] || [ ! -d "$FONT_DIR" ] ||
+  [ -z "$RAW_TYPST" ] || [ ! -x "$RAW_TYPST" ]; then
+  fail_line "the font regression has no real DejaVu font directory"
+else
+  cat >"$FONT_LAYER/font-probe.typ" <<'EOF'
+#set text(font: "DejaVu Sans Mono")
+Zfont raw probe 1234567890.
+EOF
+  clean_raw_env=(env TYPST_IGNORE_SYSTEM_FONTS=true)
+  ambient_raw_env=(env TYPST_FONT_PATHS="$FONT_DIR" TYPST_IGNORE_SYSTEM_FONTS=false)
+  clean_env=(env TYPST_IGNORE_SYSTEM_FONTS=true)
+  ambient_env=(env TYPST_FONT_PATHS="$FONT_DIR" TYPST_IGNORE_SYSTEM_FONTS=false)
+  embedded_env=(env TYPST_IGNORE_EMBEDDED_FONTS=true)
+
+  if "${clean_raw_env[@]}" "$RAW_TYPST" compile --root "$FONT_LAYER" \
+    "$FONT_LAYER/font-probe.typ" "$FONT_LAYER/raw-clean.pdf" >/dev/null 2>&1 &&
+    "${ambient_raw_env[@]}" "$RAW_TYPST" compile --root "$FONT_LAYER" \
+      "$FONT_LAYER/font-probe.typ" "$FONT_LAYER/raw-ambient.pdf" >/dev/null 2>&1 &&
+    ! cmp -s "$FONT_LAYER/raw-clean.pdf" "$FONT_LAYER/raw-ambient.pdf"; then
+    pass_line "the raw Typst renderer exposes the real font conflict"
+  else
+    fail_line "the real font fixture does not expose a raw renderer conflict"
+  fi
+
+  if "${clean_env[@]}" python3 ./scripts/design-aggregate \
+    "$FONT_LAYER" "$FONT_LAYER/design-layer.pdf" >/dev/null 2>&1; then
+    pass_line "the embedded-font fixture renders"
+  else
+    fail_line "the embedded-font fixture did not render"
+  fi
+
+  if "${clean_env[@]}" python3 ./scripts/design-aggregate \
+    "$FONT_LAYER" "$FONT_LAYER/design-layer.pdf" --check >/dev/null 2>&1; then
+    pass_line "the embedded-font fixture is fresh"
+  else
+    fail_line "the embedded-font fixture was reported stale"
+  fi
+
+  if "${ambient_env[@]}" python3 ./scripts/design-aggregate \
+    "$FONT_LAYER" "$FONT_LAYER/ambient.pdf" >/dev/null 2>&1 &&
+    cmp -s "$FONT_LAYER/design-layer.pdf" "$FONT_LAYER/ambient.pdf"; then
+    pass_line "ambient font paths cannot change rendered bytes"
+  else
+    fail_line "ambient font paths changed the rendered bytes"
+  fi
+
+  if "${ambient_env[@]}" python3 ./scripts/design-aggregate \
+    "$FONT_LAYER" "$FONT_LAYER/design-layer.pdf" --check >/dev/null 2>&1; then
+    pass_line "freshness ignores ambient font path configuration"
+  else
+    fail_line "ambient font path configuration made a fresh PDF stale"
+  fi
+
+  if "${embedded_env[@]}" python3 ./scripts/design-aggregate \
+    "$FONT_LAYER" "$FONT_LAYER/design-layer.pdf" --check >/dev/null 2>&1; then
+    pass_line "an embedded-font opt-out cannot change freshness"
+  else
+    fail_line "an embedded-font opt-out changed the render policy"
+  fi
+
+  PUBLIC_RENDER="${DESIGN_RENDER_APP:-}"
+  PUBLIC_CHECK="${DESIGN_CHECK_APP:-}"
+  FONT_REPO="${FONT_LAYER%/docs/design}"
+  git init -q "$FONT_REPO"
+  if [ -z "$PUBLIC_RENDER" ] || [ ! -x "$PUBLIC_RENDER" ] ||
+    [ -z "$PUBLIC_CHECK" ] || [ ! -x "$PUBLIC_CHECK" ]; then
+    fail_line "the public render/check apps are missing from the gate test"
+  else
+    public_env=(env TYPST=/bin/false TYPST_FONT_PATHS="$FONT_DIR"
+      TYPST_IGNORE_SYSTEM_FONTS=false TYPST_IGNORE_EMBEDDED_FONTS=true)
+    cp "$FONT_LAYER/design-layer.pdf" "$FONT_LAYER/public-clean.pdf"
+    if "${public_env[@]}" "$PUBLIC_RENDER" "$FONT_LAYER" \
+      "$FONT_LAYER/design-layer.pdf" >/dev/null 2>&1 &&
+      cmp -s "$FONT_LAYER/design-layer.pdf" "$FONT_LAYER/public-clean.pdf"; then
+      cp "$FONT_LAYER/design-layer.pdf" "$FONT_LAYER/public-good.pdf"
+      pass_line "the public render app ignores ambient font and binary settings"
+    else
+      fail_line "the public render app did not render the font fixture"
+    fi
+
+    if "${public_env[@]}" "$PUBLIC_CHECK" "$FONT_LAYER" "$FONT_REPO" \
+      >/dev/null 2>&1; then
+      pass_line "the public check app accepts the fresh ambient-font render"
+    else
+      fail_line "the public check app rejected its fresh render"
+    fi
+
+    cp "$FONT_LAYER/public-good.pdf" "$FONT_LAYER/design-layer.pdf"
+    printf '\n%% public-stale-marker\n' >>"$FONT_LAYER/design-layer.pdf"
+    cp "$FONT_LAYER/design-layer.pdf" "$FONT_LAYER/public-stale.pdf"
+    public_stale_out="$FONT_LAYER/public-stale.out"
+    if "${public_env[@]}" "$PUBLIC_CHECK" "$FONT_LAYER" "$FONT_REPO" \
+      >"$public_stale_out" 2>&1; then
+      fail_line "the public check app accepted a stale PDF"
+    elif grep -q "is stale" "$public_stale_out" &&
+      cmp -s "$FONT_LAYER/design-layer.pdf" "$FONT_LAYER/public-stale.pdf"; then
+      pass_line "the public check app detects stale bytes without rewriting"
+    else
+      fail_line "the public check app did not report the stale PDF correctly"
+    fi
+    cp "$FONT_LAYER/public-good.pdf" "$FONT_LAYER/design-layer.pdf"
+  fi
+
+  if typst compile --root "$FONT_LAYER" --font-path "$FONT_DIR" \
+    "$FONT_LAYER/design.typ" "$FONT_LAYER/cli.pdf" >/dev/null 2>&1; then
+    fail_line "an explicit Typst font path bypassed the renderer policy"
+    rm -f "$FONT_LAYER/cli.pdf"
+  else
+    pass_line "an explicit Typst font path is rejected by the renderer policy"
+  fi
+
+  if typst compile --root "$FONT_LAYER" --ignore-embedded-fonts \
+    "$FONT_LAYER/design.typ" "$FONT_LAYER/cli-embedded.pdf" >/dev/null 2>&1; then
+    fail_line "the embedded-font opt-out bypassed the renderer policy"
+    rm -f "$FONT_LAYER/cli-embedded.pdf"
+  else
+    pass_line "the embedded-font opt-out is rejected by the renderer policy"
+  fi
+fi
+
 # --- 5. an empty layer is an error, not an empty document ---------------------
 EMPTY="$WORK/empty/docs/design"
 mkdir -p "$EMPTY"

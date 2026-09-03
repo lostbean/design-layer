@@ -37,6 +37,9 @@ import subprocess
 import sys
 import tempfile
 
+from typst_policy import command as typst_command
+from typst_policy import environment as typst_environment
+
 # a lookup a block renderer performs: `TABLE.at("key")` or `TABLE.key`. This
 # half stays TEXTUAL, deliberately: it asks whether any line in the library
 # names a token, and a lookup that is never reached at runtime leaves no trace
@@ -115,10 +118,10 @@ def probe(lib_dir):
         with open(probe_typ, "w", encoding="utf-8") as f:
             f.write(body % {"entry": entry} + "\n")
         proc = subprocess.run(
-            [os.environ.get("TYPST", "typst"), "query", "--root", root,
+            [typst_command(), "query", "--root", root,
              probe_typ, "<tokens>", "--field", "value"],
             capture_output=True, text=True,
-            env=dict(os.environ, SOURCE_DATE_EPOCH="0"))
+            env=typst_environment())
         if proc.returncode != 0:
             raise RuntimeError("the library could not be compiled:\n%s"
                                % proc.stderr.strip())

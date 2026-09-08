@@ -41,6 +41,8 @@ set -euo pipefail
 #   (y2) decision-citation advisory counts the LIVE uncited decisions, excludes
 #        a superseded one, stays silent on a fully-cited layer, tolerate-absent
 #   (md) a layer still authored in markdown -> exit 2 (refused, names the file)
+#   (nested) exact nested projects are checked independently by design-check;
+#            stale/broken nested layers and invalid declarations fail loud
 #
 # Depends on no repo files beyond the checker + schema and leaves no
 # artifacts behind. Accepts an optional path to the checker as $1
@@ -110,6 +112,21 @@ assert_not_contains() {
   else
     echo "PASS: $label"
     pass=$((pass + 1))
+  fi
+}
+
+# assert_count_at_least <needle> <minimum> <label> -- checks LAST_OUT.
+assert_count_at_least() {
+  local needle="$1" minimum="$2" label="$3"
+  local count
+  count=$(printf '%s' "$LAST_OUT" | grep -cF -- "$needle" || true)
+  if [ "$count" -ge "$minimum" ]; then
+    echo "PASS: $label ($count matches)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: $label -- expected at least $minimum '$needle' matches, got $count"
+    echo "      output: $LAST_OUT"
+    fail=$((fail + 1))
   fi
 }
 
@@ -251,6 +268,34 @@ EOF
   ]
 ]
 EOF
+}
+
+# build_public_layer <project-root> -- a minimal renderable Typst layer used by
+# the public design-check wrapper. The root opts out of foundation cardinality
+# because this fixture tests scope dispatch, not document vocabulary. The
+# aggregate still renders a real PDF, so freshness failures are observable.
+build_public_layer() {
+  local project="$1"
+  mkdir -p "$project/docs/design"
+  cat >"$project/docs/design/design.typ" <<'EOF'
+#let title = [Public test layer]
+#let index_only = true
+#let body = [The public gate checks this layer.]
+EOF
+}
+
+# render_public_layer <project-root> -- render the fixture through the same
+# public render app that design-check's bundle supplies. A direct test run has
+# no app, so callers guard the whole public-wrapper section below.
+render_public_layer() {
+  local project="$1"
+  local layer="$project/docs/design"
+  if [ ! -f "$layer/.render/designlib.typ" ]; then
+    bash "$HERE/render-project" "$HERE/../schema/design-schema.json" \
+      "$layer/.render" >/dev/null
+  fi
+  DESIGN_LIB_DIR="$layer/.render" "$DESIGN_RENDER_APP" "$layer" \
+    "$layer/design-layer.pdf" >/dev/null 2>&1
 }
 
 # --- Scenario (a): clean single-context -> exit 0 ---------------------------
@@ -1464,6 +1509,119 @@ assert_exit 1 "the layer-derived repo root checks the named layer" -- \
   "$CHECK" "$RR_NEW"
 assert_contains "0099-absent.md" \
   "the correct root reports the named layer's own dangling link"
+
+# --- Scenario (nested): exact nested projects through public design-check -----
+# The composite gate receives the OUTER layer root and a repo root. Each
+# --nested-project value is a repo-relative project directory whose own layer
+# lives at <project>/docs/design. The outer integrity pass must omit exactly
+# that canonical project subtree, then the same invocation must run all three
+# checks against the nested project independently.
+if [ -n "${DESIGN_CHECK_APP:-}" ] && [ -n "${DESIGN_RENDER_APP:-}" ]; then
+  NC="$TMP/nested-current"
+  build_public_layer "$NC"
+  render_public_layer "$NC"
+  export DESIGN_LIB_DIR="$NC/docs/design/.render"
+  assert_exit 0 "public design-check keeps current no-option behavior" -- \
+    "$DESIGN_CHECK_APP" "$NC/docs/design" "$NC"
+
+  NP="$TMP/nested-projects"
+  build_public_layer "$NP"
+  build_public_layer "$NP/projects/one"
+  render_public_layer "$NP"
+  render_public_layer "$NP/projects/one"
+  export DESIGN_LIB_DIR="$NP/docs/design/.render"
+
+  assert_exit 0 "an exact nested project passes both integrity scopes" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" \
+    --nested-project projects/one
+  assert_count_at_least "layer-integrity OK" 2 \
+    "nested invocation reports independent outer and nested integrity passes"
+  assert_count_at_least "token-coverage: OK" 2 \
+    "nested invocation runs token coverage for outer and nested layer roots"
+  assert_contains "projects/one/docs/design/design-layer.pdf is fresh" \
+    "nested invocation runs aggregate freshness at the nested layer root"
+
+  # Freshness is checked before integrity, so the nested stale artifact must be
+  # named and must not be repaired as a side effect of the check.
+  printf '\n%% nested-stale-marker\n' >>"$NP/projects/one/docs/design/design-layer.pdf"
+  assert_exit 1 "a stale nested PDF fails the composite gate" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" \
+    --nested-project projects/one
+  assert_contains "projects/one/docs/design/design-layer.pdf is stale" \
+    "stale nested PDF is reported at the nested path"
+  render_public_layer "$NP/projects/one"
+
+  # A broken term anchor is rendered into a fresh nested PDF, so this failure
+  # proves the nested integrity pass ran rather than being masked by freshness.
+  cat >"$NP/projects/one/docs/design/CONTEXT.typ" <<'EOF'
+#let terms = (
+  (slug: "term-present", title: [Present], body: [A present term.]),
+)
+EOF
+  cat >"$NP/projects/one/docs/design/design.typ" <<'EOF'
+#let title = [Public test layer]
+#let index_only = true
+#let body = [A broken #link("CONTEXT.typ#term-missing")[term] link.]
+EOF
+  render_public_layer "$NP/projects/one"
+  assert_exit 1 "a broken nested term link fails nested integrity" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" \
+    --nested-project projects/one
+  assert_contains "term-missing" \
+    "nested integrity reports the broken term anchor"
+
+  # An unrelated layer artifact remains in the outer scan. The allowlist is an
+  # exact subtree exclusion, not a generic host-layer exclusion.
+  NU="$TMP/nested-unrelated"
+  build_public_layer "$NU"
+  build_public_layer "$NU/projects/one"
+  render_public_layer "$NU"
+  render_public_layer "$NU/projects/one"
+  export DESIGN_LIB_DIR="$NU/docs/design/.render"
+  mkdir -p "$NU/unrelated"
+  cat >"$NU/unrelated/design.typ" <<'EOF'
+#let title = [Unrelated stray]
+#let body = [This layer is outside every declared home.]
+EOF
+  assert_exit 1 "an unrelated mishomed layer still fails with an allowlist" -- \
+    "$DESIGN_CHECK_APP" "$NU/docs/design" "$NU" \
+    --nested-project projects/one
+  assert_contains "unrelated/design.typ" \
+    "the outer scan reports the unrelated mishomed layer"
+
+  # Invalid values are usage errors, not empty scopes or silently ignored
+  # exclusions. Cover lexical escapes, shell glob syntax, missing/non-directory
+  # paths, canonical symlink escapes, duplicates, and repo-root itself.
+  nested_external="$TMP/nested-external"
+  mkdir -p "$nested_external" "$NP/projects/empty"
+  printf 'not a directory\n' >"$NP/not-a-directory"
+  ln -s "$nested_external" "$NP/projects/escape"
+  assert_exit 2 "an empty nested project value fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" --nested-project ""
+  assert_contains "nested project" "empty nested project error names the option"
+  assert_exit 2 "a glob nested project value fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" --nested-project 'projects/*'
+  assert_exit 2 "a parent escape nested project value fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" --nested-project '../outside'
+  assert_exit 2 "an absolute nested project value fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" --nested-project "$NP"
+  assert_exit 2 "a missing nested project value fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" \
+    --nested-project projects/missing
+  assert_exit 2 "a non-directory nested project value fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" --nested-project not-a-directory
+  assert_exit 2 "a symlink escape nested project value fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" --nested-project projects/escape
+  assert_exit 2 "the repo root is not a nested project" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" --nested-project .
+  assert_exit 2 "a nested project missing docs/design fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" --nested-project projects/empty
+  assert_exit 2 "a duplicate nested project value fails loud" -- \
+    "$DESIGN_CHECK_APP" "$NP/docs/design" "$NP" \
+    --nested-project projects/one --nested-project projects/one
+else
+  echo "NOTE: public nested-project scenarios require DESIGN_CHECK_APP and DESIGN_RENDER_APP"
+fi
 
 # --- Summary ------------------------------------------------------------------
 echo

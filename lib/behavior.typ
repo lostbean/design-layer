@@ -60,7 +60,10 @@
            "(design_doc.behavior_contract.fence): restate the OBSERVABLE " +
            "outcome instead")
   }
-  block(inset: (left: 10pt), [*#word* #body])
+  block(inset: (left: 10pt), [
+    #text(size: RENDERER-META, weight: "bold")[#word]
+    #text(size: RENDERER-BODY)[#body]
+  ])
 }
 // The trail update sits OUTSIDE the `context` block above, because a context
 // block is laid out lazily and an update inside it would not be visible to a

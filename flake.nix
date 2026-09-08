@@ -191,30 +191,72 @@
               text = ''
                 if [ "$#" -lt 1 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
                   cat >&2 <<'USAGE'
-                usage: design-check <layer-root> [repo-root]
+                usage: design-check <layer-root> [repo-root] [--nested-project <repo-relative-project-root>]...
 
-                  <layer-root>  the directory holding the root design.md and the
+                  <layer-root>  the directory holding the root design.typ and the
                                 per-context subdirectories (e.g. docs/design)
                   [repo-root]   the repo whose cross-links are checked; defaults
-                                to the layer root's grandparent, else the cwd
+                                to the layer's enclosing git repo, else a fallback
+                  --nested-project
+                                repeatable exact repo-relative project root;
+                                its layer is <project>/docs/design
 
-                Runs, in order: the aggregate freshness check, token coverage,
-                and layer integrity. Exit: 0 clean, 1 violation, 2 error.
+                Runs aggregate freshness, token coverage, and layer integrity
+                for the outer layer and each declared nested project. Exit: 0
+                clean, 1 violation, 2 error.
                 USAGE
                   exit 2
                 fi
 
                 export DESIGN_SCHEMA="''${DESIGN_SCHEMA:-${gateBundle}/schema/design-schema.json}"
                 export DESIGN_LIB_DIR="''${DESIGN_LIB_DIR:-${gateBundle}/render}"
-                if [ ! -d "$1" ]; then
-                  echo "design-check: error: layer root not found: $1" >&2
+                layer_arg="$1"
+                if [ ! -d "$layer_arg" ]; then
+                  echo "design-check: error: layer root not found: $layer_arg" >&2
                   exit 2
                 fi
-                layer_root="$(cd "$1" && pwd)"
+                layer_root="$(cd "$layer_arg" && pwd -P)"
                 shift
-                if [ "$#" -ge 1 ]; then
-                  repo_root="$1"
-                  shift
+
+                repo_arg=""
+                repo_set=0
+                nested_values=()
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    --nested-project)
+                      if [ "$#" -lt 2 ]; then
+                        echo "design-check: error: --nested-project requires a value" >&2
+                        exit 2
+                      fi
+                      nested_values+=("$2")
+                      shift 2
+                      ;;
+                    --help|-h)
+                      echo "design-check: error: --help must be the first argument" >&2
+                      exit 2
+                      ;;
+                    -* )
+                      echo "design-check: error: unknown option: $1" >&2
+                      exit 2
+                      ;;
+                    *)
+                      if [ "$repo_set" -eq 1 ]; then
+                        echo "design-check: error: too many positional arguments" >&2
+                        exit 2
+                      fi
+                      repo_arg="$1"
+                      repo_set=1
+                      shift
+                      ;;
+                  esac
+                done
+
+                if [ "$repo_set" -eq 1 ]; then
+                  if [ ! -d "$repo_arg" ]; then
+                    echo "design-check: error: repo root not found: $repo_arg" >&2
+                    exit 2
+                  fi
+                  repo_root="$(cd "$repo_arg" && pwd -P)"
                 else
                   # DERIVE THE REPO FROM THE LAYER, never from the cwd.
                   #
@@ -244,10 +286,85 @@
                   fi
                 fi
 
+                # document this exact repo-relative path and docs/design home
+                # contract in the declared CLI schema.
+                nested_projects=()
+                nested_relpaths=()
+                nested_seen=()
+                for nested_value in "''${nested_values[@]}"; do
+                  case "$nested_value" in
+                    ""|/*|*\**|*\?*|*\[*|*\]*|*\{*|*\}*|*\\*)
+                      echo "design-check: error: invalid nested project path: $nested_value" >&2
+                      exit 2
+                      ;;
+                  esac
+                  IFS='/' read -r -a nested_segments <<< "$nested_value"
+                  for nested_segment in "''${nested_segments[@]}"; do
+                    if [ -z "$nested_segment" ] ||
+                      [ "$nested_segment" = "." ] ||
+                      [ "$nested_segment" = ".." ]; then
+                      echo "design-check: error: invalid nested project path: $nested_value" >&2
+                      exit 2
+                    fi
+                  done
+
+                  nested_lexical="$repo_root/$nested_value"
+                  if [ ! -d "$nested_lexical" ]; then
+                    echo "design-check: error: nested project not found or not a directory: $nested_value" >&2
+                    exit 2
+                  fi
+                  nested_project="$(cd "$nested_lexical" && pwd -P)"
+                  case "$nested_project/" in
+                    "$repo_root/"*) ;;
+                    *)
+                      echo "design-check: error: nested project escapes repo root: $nested_value" >&2
+                      exit 2
+                      ;;
+                  esac
+                  if [ "$nested_project" = "$repo_root" ]; then
+                    echo "design-check: error: nested project cannot be the repo root: $nested_value" >&2
+                    exit 2
+                  fi
+                  nested_layer_lexical="$nested_project/docs/design"
+                  if [ ! -d "$nested_layer_lexical" ]; then
+                    echo "design-check: error: nested project has no layer root at <project>/docs/design: $nested_value" >&2
+                    exit 2
+                  fi
+                  nested_layer="$(cd "$nested_layer_lexical" && pwd -P)"
+                  case "$nested_layer/" in
+                    "$nested_project/"*) ;;
+                    *)
+                      echo "design-check: error: nested layer escapes its project: $nested_value" >&2
+                      exit 2
+                      ;;
+                  esac
+                  for seen_project in "''${nested_seen[@]}"; do
+                    if [ "$seen_project" = "$nested_project" ]; then
+                      echo "design-check: error: duplicate nested project: $nested_value" >&2
+                      exit 2
+                    fi
+                  done
+                  nested_seen+=("$nested_project")
+                  nested_projects+=("$nested_project")
+                  nested_relpaths+=("$nested_value")
+                done
+
                 ${gateBundle}/scripts/design-aggregate \
                   "$layer_root" "$layer_root/design-layer.pdf" --check
                 ${gateBundle}/scripts/token-coverage "$layer_root"
-                ${gateBundle}/scripts/layer-integrity "$repo_root"
+                integrity_args=("$repo_root")
+                for nested_relpath in "''${nested_relpaths[@]}"; do
+                  integrity_args+=(--exclude-project "$nested_relpath")
+                done
+                ${gateBundle}/scripts/layer-integrity "''${integrity_args[@]}"
+
+                for nested_project in "''${nested_projects[@]}"; do
+                  nested_layer="$nested_project/docs/design"
+                  ${gateBundle}/scripts/design-aggregate \
+                    "$nested_layer" "$nested_layer/design-layer.pdf" --check
+                  ${gateBundle}/scripts/token-coverage "$nested_layer"
+                  ${gateBundle}/scripts/layer-integrity "$nested_project"
+                done
               '';
             };
           in
@@ -456,6 +573,7 @@
                 pkgs.bash
                 pkgs.python3
                 pkgs.git # layer-integrity's gitignore-prune fixture
+                pkgs.ripgrep # rendered SVG/PDF assertions in native tests
                 pkgs.poppler-utils # pdftotext — the chapter assertion reads the PDF
                 typstRenderer # the render seam with the deterministic font policy
                 pkgs.dejavu_fonts # real host-font conflict in the font regression
@@ -489,6 +607,7 @@
               # with a warm cache.
               bash ./scripts/vendored-offline.test.sh
               bash ./scripts/designlib-native.test.sh
+              bash ./scripts/diagram-viewpoints.test.sh
               bash ./scripts/typst-layer.test.sh
               bash ./scripts/token-coverage.test.sh
               touch $out

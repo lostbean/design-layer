@@ -15,6 +15,15 @@
 // `.at(k)` on a missing key would otherwise do far away from the cause.
 #import "schema.typ": *
 
+// The renderer's text surfaces share four sizes. Primary prose uses BODY;
+// headings use TITLE; dense supporting copy uses COMPACT; labels and furniture
+// use META. Keeping these values here prevents one block family from quietly
+// becoming denser or louder than another.
+#let RENDERER-TITLE = 10pt
+#let RENDERER-BODY = 8pt
+#let RENDERER-COMPACT = 7.6pt
+#let RENDERER-META = 6.5pt
+
 // A vocabulary member with no declared colour is an error, raised at the point
 // where the table is built rather than at the first card that reads it.
 #let _assert-total(name, table, keys) = {

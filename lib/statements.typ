@@ -163,8 +163,8 @@
   block(width: 100%, inset: (left: 9pt, rest: 7pt), fill: c.lighten(94%),
         stroke: (left: 2.5pt + c), radius: (right: 2pt), breakable: false,
     [
-      #text(size: 6.5pt, fill: c, weight: "bold", tracking: 0.4pt, upper(kind))
-      #linebreak() #text(weight: "bold", size: 10pt, title)
+      #text(size: RENDERER-META, fill: c, weight: "bold", tracking: 0.4pt, upper(kind))
+      #linebreak() #text(weight: "bold", size: RENDERER-TITLE, title)
       #linebreak() #body
       #if furniture.len() > 0 [ #v(4pt) #furniture.join(h(3pt)) ]
     ])

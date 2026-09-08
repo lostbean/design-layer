@@ -345,6 +345,12 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
         L.append("#assert-foundation-cardinality(index-only: _io)")
         L.append("")
 
+    # Entity, state-type, attribute, and state-machine calls contribute one
+    # document-wide trail. Their ids cross context boundaries, so this assertion
+    # runs once after every body rather than once per chapter.
+    L.append("#assert-state-links")
+    L.append("")
+
     if terms:
         L.append('#heading(level: 1, numbering: none)[Glossary] <glossary>')
         L.append("Every term the layer declares, with the context that owns it.")

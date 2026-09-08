@@ -35,6 +35,8 @@
 #import "rules.typ": *
 #import "packages.typ": *
 #import "native.typ": _drawing-frame, _req-enum
+#import "furniture.typ": chip
+#import "census.typ": _note-state-type, _note-state-machine
 
 // The reading direction. A machine that runs from an entry to a terminal reads
 // left to right like a sentence; one whose states cycle is often clearer top to
@@ -57,6 +59,41 @@
   dq + str(s).replace(dq, "\\" + dq) + dq
 }
 
+// A state type is only the closed value set shared by an attribute and its
+// machine. Transitions, entry, and accepting states remain machine concerns.
+#let state-type(id: none, title: none, variants: none) = {
+  if id == none or title == none or variants == none {
+    _fail("state-type", "requires id, title, and variants")
+  }
+  let normalized = variants.map(variant => {
+    if type(variant) == dictionary {
+      if "id" not in variant {
+        _fail("state-type", "variant records require id")
+      }
+      variant.id
+    } else {
+      variant
+    }
+  })
+  _note-state-type(id, title, normalized)
+  [#metadata(id)#label("state-type-" + id)
+   #block(width: 100%, breakable: true, radius: 3pt,
+          inset: (x: 9pt, y: 7pt), stroke: 0.6pt + luma(210), [
+    #text(weight: "bold", title)
+    #h(5pt)
+    #for variant in variants {
+      if type(variant) == dictionary {
+        [#chip(variant.id)
+         #if "description" in variant { [#h(4pt)#variant.description] }
+         #h(6pt)]
+      } else {
+        [#chip(variant)#h(3pt)]
+      }
+    }
+  ])]
+  v(0.5em)
+}
+
 // A state machine.
 //
 //   states       — the state names. Order is the order they are declared to the
@@ -70,9 +107,19 @@
 //                  unknown cannot be followed.
 //   accepting    — the terminal states, drawn with the double ring.
 #let state-machine(
+  id: none, subject: none, state-field: none, state-type: none,
   title: none, caption: none, accent: "teal", flow: "left-to-right",
   states: (), transitions: (), initial: none, accepting: (),
 ) = {
+  let link-values = (id, subject, state-field, state-type)
+  let linked = link-values.any(v => v != none)
+  if linked and link-values.any(v => v == none) {
+    _fail("state-machine", "state link requires id, subject, state-field, and state-type together")
+  }
+  if linked { _note-state-machine(id, subject, state-field, state-type, states) }
+  let with-target(body) = if linked {
+    [#metadata(id)#label("state-machine-" + id)#body]
+  } else { body }
   _req-enum("accent", accent, TINTS)
   _req-enum("machine flow", flow, MACHINE-FLOWS)
 
@@ -84,10 +131,10 @@
            "a state machine is expected to declare at least one state. An " +
            "empty machine renders a blank frame, which reads as a drawing " +
            "that failed rather than as the absence of one.")
-    return _drawing-frame(
+    return with-target(_drawing-frame(
       tint: TINT-COLOR.at(accent), kind: [STATE MACHINE],
       title: title, caption: caption, [],
-    )
+    ))
   }
   if initial == none {
     _guide("machine.initial",
@@ -154,7 +201,7 @@
   // front keeps an isolated state visible rather than silently dropped.
   let decls = states.map(s => "  " + _q(s) + ";" + nl).sum(default: "")
 
-  _drawing-frame(
+  let drawing = _drawing-frame(
     tint: c,
     kind: [STATE MACHINE],
     title: title, caption: caption,
@@ -179,4 +226,5 @@
       align(center, dot-render(body, width: scaled, math-mode: "text"))
     }),
   )
+  with-target(drawing)
 }

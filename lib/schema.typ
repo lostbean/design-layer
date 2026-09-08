@@ -38,6 +38,10 @@
 #let PROVENANCES = schema.enums.provenance.values
 #let ENTITY-KINDS = schema.design_doc.entity_contract.kinds
 #let ENTITY-LIFECYCLES = schema.design_doc.entity_contract.lifecycles
+#let DIAGRAM-VIEWPOINTS = schema.design_doc.diagram_contract.viewpoints
+#let DIAGRAM-GROUP-KINDS = schema.design_doc.diagram_contract.group_kinds
+#let DIAGRAM-NODE-KINDS = schema.design_doc.diagram_contract.node_kinds
+#let DIAGRAM-RELATIONS = schema.design_doc.diagram_contract.relations
 #let COVERAGE-STATUSES = schema.layer_layout.coverage_map.statuses.keys()
 #let FOUNDATION-ORDER = schema.design_doc.foundation_order
 #let FOUNDATION-REQUIRED = schema.design_doc.foundation_required
@@ -195,6 +199,14 @@
       _schema-fail(
         "design_doc.entity_contract declares no " + ek + " — the entity block "
           + "would validate against an empty vocabulary",
+      )
+    }
+  }
+  for field in ("viewpoints", "group_kinds", "node_kinds", "relations") {
+    if schema.design_doc.diagram_contract.at(field, default: ()).len() == 0 {
+      _schema-fail(
+        "design_doc.diagram_contract." + field
+          + " is empty — solved diagrams would validate against no declared vocabulary",
       )
     }
   }

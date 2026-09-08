@@ -39,7 +39,9 @@
 # line recommends reconciling before relying on the layer
 # (schema layer_layout.staleness_advisory; tolerate-absent for older copies).
 #
-# Usage: layer-integrity [repo-root]     (default: .)
+# Usage: layer-integrity [repo-root]
+#        layer-integrity [repo-root] --exclude-project <repo-relative-project-root>
+#          (the exclusion is repeatable; default repo-root is .)
 #
 # SHAPE — parse once, then answer every check as a lookup.
 # The gate reads each layer file exactly ONCE, into an index of its lines,
@@ -704,17 +706,42 @@ class Repo:
         )
 
 
-def walk_layer_files(repo: Repo, names: set) -> dict:
+def path_is_within(path: str, root: str) -> bool:
+    """Whether path is root itself or a descendant of root."""
+    return path == root or path.startswith(root + os.sep)
+
+
+def walk_layer_files(repo: Repo, names: set, excluded: tuple = ()) -> dict:
     """One filesystem walk collecting every wanted basename. Dot-dirs and
-    node_modules are pruned; gitignored paths are pruned in one batch."""
+    node_modules are pruned; gitignored paths are pruned in one batch. The
+    excluded paths are canonical project subtrees, so a valid nested project's
+    own layer is not judged against the outer repository's homes."""
     found = {name: [] for name in names}
+    excluded = tuple(os.path.realpath(p) for p in excluded)
     for dirpath, dirnames, filenames in os.walk(repo.root):
+        canonical_dir = os.path.realpath(dirpath)
+        if any(path_is_within(canonical_dir, p) for p in excluded):
+            dirnames[:] = []
+            continue
         dirnames[:] = [
-            d for d in dirnames if not d.startswith(".") and d != "node_modules"
+            d
+            for d in dirnames
+            if not d.startswith(".")
+            and d != "node_modules"
+            and not any(
+                path_is_within(
+                    os.path.realpath(os.path.join(dirpath, d)), excluded_root
+                )
+                for excluded_root in excluded
+            )
         ]
         for fname in filenames:
-            if fname in found:
-                found[fname].append(os.path.join(dirpath, fname))
+            path = os.path.join(dirpath, fname)
+            if fname in found and not any(
+                path_is_within(os.path.realpath(path), excluded_root)
+                for excluded_root in excluded
+            ):
+                found[fname].append(path)
     everything = sorted({p for group in found.values() for p in group})
     kept = set(repo.prune_ignored(everything))
     return {
@@ -1327,16 +1354,104 @@ def decision_citation_advisory(
 # --- Main ---------------------------------------------------------------------
 
 
-def main(argv: list) -> int:
+NESTED_PROJECT_GLOB_RE = re.compile(r"[\*\?\[\]\{\}]")
+
+
+def parse_cli(argv: list):
+    """Parse the legacy repo-root argument plus repeatable subtree exclusions."""
+    positional = []
+    excluded = []
     args = argv[1:]
-    if len(args) > 1:
-        print(f"usage: {os.path.basename(argv[0])} [repo-root]", file=sys.stderr)
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--exclude-project":
+            if i + 1 >= len(args):
+                print(
+                    "usage: layer-integrity [repo-root] "
+                    "[--exclude-project <repo-relative-project-root>]...",
+                    file=sys.stderr,
+                )
+                return None
+            excluded.append(args[i + 1])
+            i += 2
+            continue
+        if arg.startswith("-"):
+            print(
+                "usage: layer-integrity [repo-root] "
+                "[--exclude-project <repo-relative-project-root>]...",
+                file=sys.stderr,
+            )
+            return None
+        positional.append(arg)
+        i += 1
+
+    if len(positional) > 1:
+        print(
+            "usage: layer-integrity [repo-root] "
+            "[--exclude-project <repo-relative-project-root>]...",
+            file=sys.stderr,
+        )
+        return None
+    return (positional[0] if positional else "."), excluded
+
+
+def resolve_excluded_projects(repo_root: str, values: list) -> tuple:
+    """Validate and canonicalize exact project subtrees for the outer scan."""
+    resolved = []
+    seen = set()
+    for value in values:
+        segments = value.split("/") if value else []
+        if (
+            not value
+            or os.path.isabs(value)
+            or "\\" in value
+            or NESTED_PROJECT_GLOB_RE.search(value)
+            or any(not segment or segment in {".", ".."} for segment in segments)
+        ):
+            die(
+                "error: invalid --exclude-project value: %r; expected a "
+                "non-empty repo-relative path with no ., .., or glob "
+                "segments" % value
+            )
+
+        lexical = os.path.join(repo_root, value)
+        if not os.path.isdir(lexical):
+            die("error: excluded project is not a directory: %s" % value)
+        canonical = os.path.realpath(lexical)
+        if not path_is_within(canonical, repo_root) or canonical == repo_root:
+            die(
+                "error: excluded project escapes the repo root or is the repo "
+                "root: %s" % value
+            )
+        layer = os.path.join(canonical, "docs", "design")
+        if not os.path.isdir(layer):
+            die(
+                "error: excluded project has no layer root at "
+                "%s/docs/design: %s" % (value, value)
+            )
+        canonical_layer = os.path.realpath(layer)
+        if not path_is_within(canonical_layer, canonical) or not path_is_within(
+            canonical_layer, repo_root
+        ):
+            die("error: excluded project layer escapes its project: %s" % value)
+        if canonical in seen:
+            die("error: duplicate --exclude-project value: %s" % value)
+        seen.add(canonical)
+        resolved.append(canonical)
+    return tuple(resolved)
+
+
+def main(argv: list) -> int:
+    parsed = parse_cli(argv)
+    if parsed is None:
         return 2
-    repo_arg = args[0] if args else "."
+    repo_arg, excluded_values = parsed
     if not os.path.isdir(repo_arg):
         print(f"error: repo root not found: {repo_arg}", file=sys.stderr)
         return 2
     root = os.path.realpath(repo_arg)
+    excluded = resolve_excluded_projects(root, excluded_values)
 
     schema = load_schema(locate_schema(argv[0]))
     repo = Repo(root)
@@ -1363,7 +1478,7 @@ def main(argv: list) -> int:
         "CONTEXT-MAP.md",
         "COVERAGE.md",
     }
-    walked = walk_layer_files(repo, layer_names)
+    walked = walk_layer_files(repo, layer_names, excluded)
 
     map_abs = os.path.join(root, schema.map_rel)
     adr_dir = os.path.join(root, schema.adr_dir_rel)

@@ -77,28 +77,38 @@
 
 #section(
   title: "The diagram",
-  lead: "Nodes and edges are data; the solver lays out this graph.",
+  lead: "Nodes, semantic boundaries, and typed relations are data; the solver lays out this graph.",
   visual: diagram(
     altitude: "L2",
+    viewpoint: "context-ownership",
     title: "the authoring surface over one library",
     caption: [A design document calls the library directly, so there is no
-      conversion step between what was written and what is checked.],
+      conversion step between what was written and what is checked. Boundary
+      labels name what each enclosing group means.],
+    groups: (
+      (id: "framework", label: "Design framework", kind: "domain", tint: "teal"),
+      (id: "authoring", label: "Authoring", kind: "subdomain", parent: "framework", tint: "violet"),
+      (id: "renderer", label: "Renderer", kind: "bounded-context", parent: "authoring", tint: "blue"),
+      (id: "adopter", label: "Adopter", kind: "domain", tint: "slate"),
+    ),
     nodes: (
-      (id: "typ", label: "design.typ", sub: "authored", tint: "teal"),
-      (id: "schema", label: "design-schema", sub: "declared", tint: "violet"),
-      (id: "lib", label: "designlib", sub: "projected", tint: "blue"),
-      (id: "pdf", label: "one document", external: true),
+      (id: "typ", label: "design.typ", sub: "authored", kind: "entity", group: "authoring", tint: "violet"),
+      (id: "schema", label: "design-schema", sub: "declared", kind: "value-object", group: "renderer", tint: "blue"),
+      (id: "lib", label: "designlib", sub: "projected", kind: "component", group: "renderer", tint: "blue"),
+      (id: "pdf", label: "one document", kind: "external-system", group: "adopter"),
     ),
     edges: (
-      ("typ", "lib", "called directly"),
-      ("schema", "lib", "projects"),
-      ("lib", "pdf", "renders", "dashed"),
+      (from: "typ", to: "lib", relation: "call", label: "called directly"),
+      (from: "schema", to: "lib", relation: "dependency", label: "declares projection"),
+      (from: "lib", to: "pdf", relation: "dataflow", label: "renders document"),
     ),
   ),
   body: [
-    The altitude is a required argument, so a drawing always says which zoom
-    level it is at. A node may declare a tint from the fixed accent vocabulary;
-    a node without one uses the diagram accent.
+    Altitude states the depth. Viewpoint states the question answered at that
+    depth. A group declares one semantic boundary, a node kind selects its
+    framework architecture role and Graphviz shape, and a dictionary edge
+    declares one directional relation. Graphviz solves placement but does not
+    define those roles. Separate diagrams do not share an identity registry.
   ],
 )
 
@@ -133,6 +143,7 @@
         name: "projector",
         lens: "composition",
         mission: "Turns the declared schema into the library.",
+        body: [Primary component prose uses the renderer body size.],
         answers: answers-data(
           responsibility: [One schema in, one library out.],
           failure: [Refuses a schema missing a required vocabulary.],
@@ -152,6 +163,13 @@
         lens: "state",
         mission: "Assembles the contexts into one document.",
       ),
+    )
+
+    #components(
+      cols: "3",
+      component(name: "schema", mission: "Declares the vocabulary."),
+      component(name: "renderer", mission: "Draws the declared structure."),
+      component(name: "gate", mission: "Checks the rendered document."),
     )
 
     #answers(
@@ -192,7 +210,8 @@
   title: "Cross references",
   lead: "A reference is a call, so a rename is a compile error.",
   body: [
-    A context is named with #ctx("design-layer"), a term with
+    A context is named with #ctx("design-layer"), or explicitly tinted with
+    #ctx("design-layer", accent: "teal"), a term with
     #term("term-pending-ledger"), and a judgement axis with
     #lens-pill("robustness"). A decision is cited by number — #adr(65) — and
     the number is the whole citation: the gate resolves it against the files on
@@ -230,6 +249,20 @@
       ]
       #relates(cardinality: "1 : 0..n")[
         A layer holds many contexts, and a context belongs to exactly one layer.
+      ]
+    ]
+
+    #entity(
+      title: "Rendered layer",
+      description: [The document produced from the authored layer.],
+      kind: "entity",
+      owner: "the renderer",
+      lifecycle: "append-only",
+      domain: "documentation",
+      tint: "blue",
+    )[
+      #attribute(name: "Pages", type: [Rendered pages], provenance: "derived")[
+        The pages produced by the renderer.
       ]
     ]
 
@@ -275,9 +308,12 @@
       tint: "blue",
       items: (
         (title: "Invariant", body: [A rule whose violation makes the model
-          wrong. It panics.]),
+          wrong. It panics. This long explanation keeps the explicit two-column
+          contract visible even when automatic layout would prefer one column.]),
         (title: "Guideline", body: [A rule of style. It is silent unless the
-          author asks for it.]),
+          author asks for it. This long explanation keeps the explicit
+          two-column contract visible even when automatic layout would prefer
+          one column.]),
       ),
     )
 
@@ -345,7 +381,39 @@
   title: "The state machine",
   lead: "A machine declares states and transitions, never positions.",
   body: [
+    #state-type(
+      id: "issue-state",
+      title: "Issue state",
+      variants: (
+        "needs_triage", "needs_info", "ready_for_agent",
+        "in_progress", "done", "wontfix",
+      ),
+    )
+
+    #entity(
+      id: "issue",
+      title: "Issue",
+      description: [A tracked unit of work.],
+      kind: "entity",
+      owner: "the tracker",
+      lifecycle: "stateful",
+      domain: "delivery",
+    )[
+      #attribute(
+        id: "state",
+        name: "State",
+        type: "Issue state",
+        provenance: "derived",
+        state-type: "issue-state",
+        state-machine: "issue-lifecycle",
+      )[The issue's current lifecycle state.]
+    ]
+
     #state-machine(
+      id: "issue-lifecycle",
+      subject: "issue",
+      state-field: "state",
+      state-type: "issue-state",
       title: "an issue, from intake to its two terminals",
       accent: "amber",
       initial: "needs_triage",

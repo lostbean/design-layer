@@ -20,6 +20,10 @@ __pycache__/
 fixtures/*.pdf
 fixtures/.render/
 
+# The renderer's local projection when invoked against the repository root.
+# It is regenerated on demand and is not a committed source artifact.
+.render/
+
 # OS / editor cruft
 .DS_Store
 *.swp

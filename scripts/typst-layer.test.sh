@@ -1176,6 +1176,63 @@ else
   pass_line "a layer with no design document is an error"
 fi
 
+# --- state-link metadata is validated across the completed document ---------
+STATE_ROOT="$WORK/state-links/repo/docs/design"
+mkdir -p "$STATE_ROOT"
+if ! bash ./scripts/render-project schema/design-schema.json "$STATE_ROOT/.render" >/dev/null; then
+  echo "typst-layer: could not project the state-link fixture" >&2
+  exit 2
+fi
+
+state_layer() {
+  printf '#import ".render/designlib.typ": *\n#let title = [State links]\n#let body = [%s]\n' "$1" >"$STATE_ROOT/design.typ"
+  rm -f "$STATE_ROOT/out.pdf"
+}
+
+state_accepts() {
+  local name="$1" body="$2"
+  state_layer "$body"
+  local out
+  out="$(python3 ./scripts/design-aggregate "$STATE_ROOT" "$STATE_ROOT/out.pdf" 2>&1)"
+  if [ -f "$STATE_ROOT/out.pdf" ]; then
+    pass_line "state links accept $name"
+  else
+    fail_line "state links rejected $name"
+    printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+  fi
+}
+
+state_rejects() {
+  local name="$1" needle="$2" body="$3"
+  state_layer "$body"
+  local out
+  out="$(python3 ./scripts/design-aggregate "$STATE_ROOT" "$STATE_ROOT/out.pdf" 2>&1)"
+  if [ -f "$STATE_ROOT/out.pdf" ]; then
+    fail_line "state links accepted $name"
+  elif [[ $out == *"$needle"* ]]; then
+    pass_line "state links reject $name with a useful diagnostic"
+  else
+    fail_line "state links rejected $name without naming $needle"
+    printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+  fi
+}
+
+state_accepts "legacy unlinked calls" '#entity(title: "Booking", description: [A reservation.], kind: "aggregate", owner: "Scheduling", lifecycle: "stateful", domain: "Scheduling")[#attribute(name: "Status", type: "Text", provenance: "derived")[Current state.]] #state-machine(title: "Lifecycle", states: ("draft",), transitions: ())'
+state_accepts "multiple state fields on one entity" '#state-type(id: "status-type", title: "Status", variants: ((id: "draft", description: [Not submitted.]), (id: "confirmed", description: [Accepted.]))) #state-type(id: "payment-type", title: "Payment", variants: ("unpaid", "paid")) #entity(id: "booking", title: "Booking", description: [A reservation.], kind: "aggregate", owner: "Scheduling", lifecycle: "stateful", domain: "Scheduling")[#attribute(id: "status", name: "Status", type: "Status", provenance: "derived", state-type: "status-type", state-machine: "lifecycle")[Current state.] #attribute(id: "payment", name: "Payment", type: "Payment", provenance: "derived", state-type: "payment-type", state-machine: "payment-flow")[Payment state.]] #state-machine(id: "lifecycle", subject: "booking", state-field: "status", state-type: "status-type", title: "Lifecycle", states: ("draft", "confirmed"), transitions: (("draft", "confirmed", "confirm"),)) #state-machine(id: "payment-flow", subject: "booking", state-field: "payment", state-type: "payment-type", title: "Payment flow", states: ("unpaid", "paid"), transitions: (("unpaid", "paid", "pay"),))'
+state_accepts "the same field id on different entities" '#state-type(id: "status-type", title: "Status", variants: ("draft",)) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "Status", provenance: "derived", state-type: "status-type", state-machine: "a-flow")[State.]] #entity(id: "b", title: "B", description: [B.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "Status", provenance: "derived", state-type: "status-type", state-machine: "b-flow")[State.]] #state-machine(id: "a-flow", subject: "a", state-field: "status", state-type: "status-type", states: ("draft",), transitions: ()) #state-machine(id: "b-flow", subject: "b", state-field: "status", state-type: "status-type", states: ("draft",), transitions: ())'
+
+state_rejects "duplicate entity ids" "duplicate entity id" '#entity(id: "same", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[] #entity(id: "same", title: "B", description: [B.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[]'
+state_rejects "duplicate type ids" "duplicate state type id" '#state-type(id: "same", title: "A", variants: ("x",)) #state-type(id: "same", title: "B", variants: ("x",))'
+state_rejects "duplicate machine ids" "duplicate state machine id" '#state-machine(id: "same", subject: "a", state-field: "status", state-type: "t", states: ("x",), transitions: ()) #state-machine(id: "same", subject: "a", state-field: "other", state-type: "t", states: ("x",), transitions: ())'
+state_rejects "duplicate field ids within one entity" "duplicate attribute id" '#state-type(id: "t", title: "T", variants: ("x",)) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "First", type: "T", provenance: "derived", state-type: "t", state-machine: "m")[One.] #attribute(id: "status", name: "Second", type: "T", provenance: "derived", state-type: "t", state-machine: "m")[Two.]] #state-machine(id: "m", subject: "a", state-field: "status", state-type: "t", states: ("x",), transitions: ())'
+state_rejects "a linked attribute outside an identified entity" "outside an identified entity" '#attribute(id: "status", name: "Status", type: "Status", provenance: "derived", state-type: "t", state-machine: "m")[State.]'
+state_rejects "an unknown attribute type" "unknown state type" '#entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "Status", provenance: "derived", state-type: "missing", state-machine: "m")[State.]]'
+state_rejects "an unknown attribute machine" "unknown state machine" '#state-type(id: "t", title: "T", variants: ("x",)) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "Status", provenance: "derived", state-type: "t", state-machine: "missing")[State.]]'
+state_rejects "machine subject ownership mismatch" "subject" '#state-type(id: "t", title: "T", variants: ("x",)) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "Status", provenance: "derived", state-type: "t", state-machine: "m")[State.]] #entity(id: "b", title: "B", description: [B.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[] #state-machine(id: "m", subject: "b", state-field: "status", state-type: "t", states: ("x",), transitions: ())'
+state_rejects "machine field mismatch" "state-field" '#state-type(id: "t", title: "T", variants: ("x",)) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "Status", provenance: "derived", state-type: "t", state-machine: "m")[State.]] #state-machine(id: "m", subject: "a", state-field: "other", state-type: "t", states: ("x",), transitions: ())'
+state_rejects "attribute and machine type mismatch" "state-type" '#state-type(id: "a-type", title: "A", variants: ("x",)) #state-type(id: "b-type", title: "B", variants: ("x",)) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "A", provenance: "derived", state-type: "a-type", state-machine: "m")[State.]] #state-machine(id: "m", subject: "a", state-field: "status", state-type: "b-type", states: ("x",), transitions: ())'
+state_rejects "state variants and machine states mismatch" "variants" '#state-type(id: "t", title: "T", variants: ("x", "y")) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "T", provenance: "derived", state-type: "t", state-machine: "m")[State.]] #state-machine(id: "m", subject: "a", state-field: "status", state-type: "t", states: ("x", "z"), transitions: ())'
+
 echo
 echo "typst-layer: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

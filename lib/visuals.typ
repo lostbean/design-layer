@@ -20,9 +20,9 @@
 #let warning(title: none, tint: none, ..a, body) = _clue("warning", title, tint, body)
 
 // ---- cards, stat tiles, tables, figures ---------------------------------
-// COLUMN COUNT IS DERIVED FROM CONTENT: a card carrying a paragraph of prose
-// reads badly in a narrow column, so a card set whose bodies are long stacks
-// in one column and reads as a list.
+// COLUMN COUNT IS DERIVED FROM CONTENT only when the author leaves `cols`
+// absent. An explicit count is part of the layout contract and must not be
+// replaced by the automatic fallback because a body is long.
 #let _len(c) = {
   if type(c) == str { c.len() }
   else if type(c) != content { 0 }
@@ -31,15 +31,26 @@
   else if c.has("body") { _len(c.body) }
   else { 0 }
 }
-#let cards(cols: "2", tint: none, size: none, items: (), ..a) = {
+#let _cards-columns(cols, longest, count) = {
+  if cols == none {
+    if longest > 160 { 1 } else { calc.min(count, 2) }
+  } else {
+    int(cols)
+  }
+}
+#let cards(cols: none, tint: none, size: none, items: (), ..a) = {
   _enum("cards", "tint", tint, TINTS)
+  _enum("cards", "cols", cols, ("2", "3", "4"))
+  _enum("cards", "size", size, ("md", "sm"))
   let c = if tint == none { luma(180) } else { TINT-COLOR.at(tint) }
   let longest = calc.max(..items.map(it => _len(it.body)), 0)
-  let n = if longest > 160 { 1 } else { int(cols) }
+  let n = _cards-columns(cols, longest, items.len())
+  let body-size = if size == "sm" { RENDERER-COMPACT } else { RENDERER-BODY }
   block(width: 100%, grid(columns: (1fr,) * n, gutter: 7pt, row-gutter: 6pt,
     ..items.map(it => block(width: 100%, inset: 8pt, radius: 3pt,
       fill: c.lighten(96%), stroke: 0.6pt + c.lighten(35%),
-      [#text(weight: "bold", size: 9.5pt, it.title) #linebreak() #it.body]))))
+      [#text(weight: "bold", size: RENDERER-TITLE, it.title) #linebreak()
+       #text(size: body-size)[#it.body]]))))
   v(0.45em)
 }
 #let stat-grid(cols: "3", tiles: (), ..a) = {

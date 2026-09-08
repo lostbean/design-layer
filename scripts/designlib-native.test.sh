@@ -53,7 +53,11 @@ if ! command -v pdftotext >/dev/null 2>&1; then
 fi
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+if [ "${KEEP_DESIGNLIB_NATIVE_WORK:-0}" = "1" ]; then
+  printf 'designlib-native: work directory %s\n' "$WORK"
+else
+  trap 'rm -rf "$WORK"' EXIT
+fi
 
 if ! bash ./scripts/render-project schema/design-schema.json "$WORK" >/dev/null; then
   echo "designlib-native: could not project the schema" >&2
@@ -81,6 +85,13 @@ compile() {
   [ "$strict" = "strict" ] && args+=(--input strict=1)
   env TYPST_PACKAGE_PATH="$WORK/nope" TYPST_PACKAGE_CACHE_PATH="$WORK/nope" \
     "$TYPST" compile "${args[@]}" --root "$WORK" "$src" "$WORK/$name.pdf" 2>&1
+}
+
+compile_svg() {
+  local name="$1"
+  local src="$WORK/$name.typ"
+  env TYPST_PACKAGE_PATH="$WORK/nope" TYPST_PACKAGE_CACHE_PATH="$WORK/nope" \
+    "$TYPST" compile --format svg --root "$WORK" "$src" "$WORK/$name.svg" 2>&1
 }
 
 fixture() {
@@ -174,6 +185,286 @@ if [ -f "$WORK/render-positive.pdf" ]; then
   fi
 else
   fail_line "the positive fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# Component grids default to two columns and honor an explicit three-column
+# request. The same rendered fixture proves table cells share row height and
+# place their headings at a common top coordinate.
+fixture component-grid '#set page(width: 420pt, height: 700pt, margin: 24pt)
+#components(
+  component(name: "Zdefault0", mission: "Mission", body: [A tall body with enough words to wrap across several lines and make its row taller than the short peer beside it.]),
+  component(name: "Zdefault1", mission: "Mission", body: [Short.] ),
+  component(name: "Zdefault2", mission: "Mission", body: [Short.] ),
+  component(name: "Zdefault3", mission: "Mission", body: [Short.] ),
+)
+#components(cols: "3",
+  component(name: "Zthree0", mission: "Mission"),
+  component(name: "Zthree1", mission: "Mission"),
+  component(name: "Zthree2", mission: "Mission"),
+)
+#components(component(name: "Ztype", mission: "Mission", body: [Zmetric]))
+#behavior(title: "Typography", area: "Test", level: "interface")[[#given[Zmetric]]]
+'
+out="$(compile component-grid plain)"
+if [ -f "$WORK/component-grid.pdf" ]; then
+  pdftotext -bbox "$WORK/component-grid.pdf" "$WORK/component-grid.xml" 2>/dev/null
+  if [ "$(rg -c '<page ' "$WORK/component-grid.xml")" -ne 1 ]; then
+    fail_line "component grid fixture paginated before SVG inspection"
+  else
+    compile_svg component-grid >/dev/null
+  fi
+  if [ -f "$WORK/component-grid.svg" ] && python3 - "$WORK/component-grid.xml" "$WORK/component-grid.svg" <<'PYTEST'; then
+import re, sys
+import xml.etree.ElementTree as ET
+xml = open(sys.argv[1]).read()
+svg = open(sys.argv[2]).read()
+
+def boxes(prefix, count):
+    result = []
+    for i in range(count):
+        match = re.search(r'<word xMin="([0-9.]+)" yMin="([0-9.]+)"[^>]*>%s%d</word>' % (prefix, i), xml)
+        if not match:
+            raise SystemExit("missing %s%d" % (prefix, i))
+        result.append((float(match.group(1)), float(match.group(2))))
+    return result
+
+default = boxes("Zdefault", 4)
+three = boxes("Zthree", 3)
+if len({round(x, 2) for x, _ in default}) != 2:
+    raise SystemExit("default component grid did not render two columns: %r" % (default,))
+if len({round(x, 2) for x, _ in three}) != 3:
+    raise SystemExit("explicit component grid did not render three columns: %r" % (three,))
+if abs(default[0][1] - default[1][1]) > 0.2:
+    raise SystemExit("same-row component headings are not top aligned: %r" % (default[:2],))
+
+rects = []
+for element in ET.fromstring(svg).iter():
+    attrs = element.attrib
+    fill = attrs.get("fill")
+    path = attrs.get("d", "")
+    if fill in (None, "none", "#ffffff"):
+        continue
+    match = re.match(
+        r'M 0 0v ([0-9.]+) h ([0-9.]+) v -[0-9.]+ Z', path
+    )
+    if match is None:
+        continue
+    transform = attrs.get("transform", "matrix(1 0 0 1 0 0)")
+    offset = re.match(r'matrix\(1 0 0 1 ([0-9.-]+) ([0-9.-]+)\)', transform)
+    if offset is None:
+        raise SystemExit("component fill has an unknown transform: %s" % transform)
+    rects.append(
+        (
+            fill,
+            float(offset.group(1)),
+            float(offset.group(2)),
+            float(match.group(2)),
+            float(match.group(1)),
+        )
+    )
+
+# The default grid is the only two-column family in this fixture. Grouping its
+# cells by rendered row proves the table gives short and tall peers one height.
+default_rects = [rect for rect in rects if abs(rect[3] - 183) < 0.2]
+if len(default_rects) != 4:
+    raise SystemExit("expected four default component fills, got %r" % (rects,))
+rows = {}
+for _, _, y, _, height in default_rects:
+    rows.setdefault(round(y, 2), []).append(height)
+if sorted(map(len, rows.values())) != [2, 2]:
+    raise SystemExit("default component fills do not form two rows: %r" % rows)
+if any(max(heights) - min(heights) > 0.2 for heights in rows.values()):
+    raise SystemExit("component cell backgrounds do not share row height: %r" % rows)
+
+metrics = re.findall(r'<word xMin="[0-9.]+" yMin="([0-9.]+)" xMax="[0-9.]+" yMax="([0-9.]+)">Zmetric</word>', xml)
+if len(metrics) != 2:
+    raise SystemExit("expected component and behavior Zmetric words, got %d" % len(metrics))
+heights = [float(ymax) - float(ymin) for ymin, ymax in metrics]
+if abs(heights[0] - heights[1]) > 0.2:
+    raise SystemExit("component and behavior body sizes differ: %r" % heights)
+PYTEST
+    pass_line "component grids render requested columns, equal row fills, top alignment, and shared body size"
+  else
+    fail_line "component grid geometry or shared typography contract failed"
+  fi
+else
+  fail_line "component grid fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# Standalone answers and component grids are different authoring concepts, but
+# they share one rendered card anatomy. The fixture compares their public
+# output: title and body glyph heights, left padding, frame fill/stroke, and the
+# full-width singleton against a later two-card row.
+fixture card-anatomy '#set page(width: 420pt, height: 520pt, margin: 24pt)
+#answers(
+  title: "Zanswers-title",
+  accent: "rose",
+  responsibility: [Zanswers-body],
+)
+#components(
+  accent: "rose",
+  component(name: "Zsingle-title", mission: [Zsingle-body]),
+)
+#components(
+  accent: "rose",
+  component(name: "Zmulti-title-a", mission: [Zmulti-body-a]),
+  component(name: "Zmulti-title-b", mission: [Zmulti-body-b]),
+)
+'
+out="$(compile card-anatomy plain)"
+if [ -f "$WORK/card-anatomy.pdf" ]; then
+  pdftotext -bbox "$WORK/card-anatomy.pdf" "$WORK/card-anatomy.xml" 2>/dev/null
+  if [ "$(rg -c '<page ' "$WORK/card-anatomy.xml")" -ne 1 ]; then
+    fail_line "shared card anatomy fixture paginated before SVG inspection"
+  else
+    compile_svg card-anatomy >/dev/null
+  fi
+  if [ -f "$WORK/card-anatomy.svg" ] && python3 - "$WORK/card-anatomy.xml" "$WORK/card-anatomy.svg" <<'PYTEST'; then
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+xml = open(sys.argv[1], encoding="utf-8").read()
+svg = open(sys.argv[2], encoding="utf-8").read()
+
+def word_box(mark):
+    match = re.search(
+        r'<word xMin="([0-9.]+)" yMin="([0-9.]+)" '
+        r'xMax="([0-9.]+)" yMax="([0-9.]+)">%s</word>' % re.escape(mark),
+        xml,
+    )
+    if not match:
+        raise SystemExit("missing rendered word %s" % mark)
+    return tuple(map(float, match.groups()))
+
+answers_title = word_box("Zanswers-title")
+single_title = word_box("Zsingle-title")
+answers_body = word_box("Zanswers-body")
+single_body = word_box("Zsingle-body")
+multi_a = word_box("Zmulti-title-a")
+multi_b = word_box("Zmulti-title-b")
+
+def height(box):
+    return box[3] - box[1]
+
+if abs(height(answers_title) - height(single_title)) > 0.2:
+    raise SystemExit("answers and component heading sizes differ")
+if abs(height(answers_body) - height(single_body)) > 0.2:
+    raise SystemExit("answers and component body sizes differ")
+if abs(answers_title[0] - single_title[0]) > 0.2:
+    raise SystemExit("answers and component left padding differs")
+
+# Typst emits block borders and table-cell borders as separate SVG paths. The
+# visible contract is therefore one fill colour and one stroke treatment across
+# the four cards, not that both attributes occupy one implementation element.
+shapes = [
+    element.attrib
+    for element in ET.fromstring(svg).iter()
+    if element.attrib.get("class") == "typst-shape"
+]
+fills = [
+    attrs for attrs in shapes
+    if attrs.get("fill") not in (None, "none", "#ffffff")
+]
+strokes = [
+    attrs for attrs in shapes
+    if attrs.get("stroke") not in (None, "none")
+]
+if len(fills) != 4 or len({attrs["fill"] for attrs in fills}) != 1:
+    raise SystemExit("four cards do not share one fill treatment: %r" % fills)
+stroke_treatments = {
+    (attrs["stroke"], attrs.get("stroke-width", "1")) for attrs in strokes
+}
+if len(stroke_treatments) != 1:
+    raise SystemExit("cards do not share one border treatment: %r" % stroke_treatments)
+
+# A singleton begins at the same left edge and occupies the combined width of
+# the two-card row. Its right edge is therefore beyond the second heading,
+# while the multi-card headings still occupy two distinct columns.
+if abs(single_title[0] - multi_a[0]) > 0.2:
+    raise SystemExit("singleton and grid cards do not share the first column")
+if multi_b[0] - multi_a[0] < 120:
+    raise SystemExit("the multi-card row did not render two columns")
+horizontal_spans = []
+for attrs in fills:
+    values = [
+        abs(float(value))
+        for value in re.findall(r'[hH]\s*(-?[0-9.]+)', attrs.get("d", ""))
+    ]
+    if values:
+        horizontal_spans.append(max(values))
+if len(horizontal_spans) != 4:
+    raise SystemExit("card fills have no measurable horizontal extent: %r" % fills)
+horizontal_spans.sort()
+if horizontal_spans[2] < 1.8 * horizontal_spans[1] or horizontal_spans[3] < 1.8 * horizontal_spans[1]:
+    raise SystemExit("singleton component did not expand to full width")
+PYTEST
+    pass_line "answers and component cards share anatomy; singleton is full width"
+  else
+    fail_line "shared card anatomy or singleton geometry failed"
+  fi
+else
+  fail_line "shared card anatomy fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# Ownership tint is explicit: a known tint colors the frame and ownership
+# chips, while an omitted tint retains the neutral treatment.
+fixture entity-known-tint '#set page(width: 360pt, height: 400pt, margin: 24pt)
+#entity(title: "Known", description: [Known owner.], kind: "value-object", owner: "Sales", lifecycle: "immutable", domain: "Ordering", tint: "rose")[]'
+fixture entity-neutral-tint '#set page(width: 360pt, height: 400pt, margin: 24pt)
+#entity(title: "Neutral", description: [Unknown owner.], kind: "value-object", owner: "Shared", lifecycle: "immutable", domain: "Shared")[]'
+compile_svg entity-known-tint >/dev/null
+compile_svg entity-neutral-tint >/dev/null
+if rg -q '#fad6de|#f299ad|#ef839a' "$WORK/entity-known-tint.svg" &&
+  ! rg -q '#fad6de|#f299ad|#ef839a' "$WORK/entity-neutral-tint.svg" &&
+  rg -q '#e2e2e2' "$WORK/entity-neutral-tint.svg"; then
+  pass_line "known ownership is tinted and unknown ownership stays neutral"
+else
+  fail_line "entity ownership tint did not distinguish known from neutral"
+fi
+
+assert_invariant "cards-invalid-cols" "cards block: invalid cols" \
+  '#cards(cols: "1", items: ((title: "One", body: [Body]),))'
+assert_invariant "components-invalid-cols" "cols=" \
+  '#components(cols: "4", component(name: "One", mission: "Mission"))'
+assert_invariant "ctx-invalid-accent" "ctx block: invalid accent" \
+  '#ctx("sample", accent: "chartreuse")'
+
+# Explicit card columns are honored even when a body is long enough that the
+# automatic policy would choose one column. The assertion reads x positions
+# from the rendered PDF, so it tests the effective grid rather than the call
+# spelling.
+fixture cards-explicit-long '#set page(width: 360pt, height: 500pt, margin: 24pt)
+#cards(cols: "2", items: (
+  (title: "Zcard0", body: [A long card body that deliberately exceeds the automatic one-column threshold because the author explicitly requested two columns. Repeat this explanation so the body remains long enough to exercise the automatic policy.]),
+  (title: "Zcard1", body: [A long card body that deliberately exceeds the automatic one-column threshold because the author explicitly requested two columns. Repeat this explanation so the body remains long enough to exercise the automatic policy.]),
+  (title: "Zcard2", body: [A long card body that deliberately exceeds the automatic one-column threshold because the author explicitly requested two columns. Repeat this explanation so the body remains long enough to exercise the automatic policy.]),
+  (title: "Zcard3", body: [A long card body that deliberately exceeds the automatic one-column threshold because the author explicitly requested two columns. Repeat this explanation so the body remains long enough to exercise the automatic policy.]),
+))'
+out="$(compile cards-explicit-long plain)"
+if [ -f "$WORK/cards-explicit-long.pdf" ]; then
+  pdftotext -bbox "$WORK/cards-explicit-long.pdf" "$WORK/cards-explicit-long.xml" 2>/dev/null
+  if python3 - "$WORK/cards-explicit-long.xml" <<'PYTEST'; then
+import re, sys
+source = open(sys.argv[1]).read()
+positions = []
+for card in range(4):
+    match = re.search(r'<word xMin="([0-9.]+)"[^>]*>Zcard%d</word>' % card, source)
+    if not match:
+        raise SystemExit("missing Zcard%d" % card)
+    positions.append(float(match.group(1)))
+if len(set(positions)) != 2:
+    raise SystemExit("expected two rendered card columns, got %r" % positions)
+PYTEST
+    pass_line "explicit long cards retain two rendered columns"
+  else
+    fail_line "explicit long cards collapsed their rendered columns"
+  fi
+else
+  fail_line "explicit long card fixture did not compile"
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
@@ -308,6 +599,46 @@ assert_invariant attribute-invalid-provenance "provenance" \
   '#attribute(name: "Window", type: "Time window", provenance: "invented")[Requested time.]'
 assert_invariant attribute-invalid-reference "does not exist" \
   '#attribute(name: "Window", type: [@missing-domain-type], provenance: "authored")[Requested time.]'
+
+# State links are an additive contract. Legacy calls remain valid, while any
+# constructor that starts a link must provide its complete link tuple.
+fixture state-links-complete '#state-type(
+  id: "booking-status", title: "Booking status",
+  variants: ((id: "draft", description: [Not submitted.]), (id: "confirmed", description: [Accepted.])),
+)
+#entity(id: "booking", title: "Booking", description: [A reservation.],
+  kind: "aggregate", owner: "Scheduling", lifecycle: "stateful", domain: "Scheduling")[
+  #attribute(id: "status", name: "Status", type: "Booking status", provenance: "derived",
+    state-type: "booking-status", state-machine: "booking-lifecycle")[Current lifecycle state.]
+]
+#state-machine(id: "booking-lifecycle", subject: "booking", state-field: "status",
+  state-type: "booking-status", title: "Booking lifecycle",
+  states: ("draft", "confirmed"), transitions: (("draft", "confirmed", "confirm"),),
+  initial: "draft", accepting: ("confirmed",))'
+out="$(compile state-links-complete plain)"
+if [ -f "$WORK/state-links-complete.pdf" ]; then
+  text="$(pdftotext "$WORK/state-links-complete.pdf" - 2>/dev/null)"
+  pdftohtml -xml -hidden "$WORK/state-links-complete.pdf" \
+    "$WORK/state-links-complete-links" >/dev/null 2>&1
+  links="$(rg -o 'href="[^"]+"' "$WORK/state-links-complete-links.xml" 2>/dev/null || true)"
+  link_count="$(printf '%s\n' "$links" | rg -c 'href=' || true)"
+  link_count="${link_count:-0}"
+  if [[ $text == *"Booking status"* ]] && [[ $text == *"booking-lifecycle"* ]] &&
+    [ "$link_count" -ge 2 ]; then
+    pass_line "linked state attributes render clickable type and machine references"
+  else
+    fail_line "linked state attributes omitted clickable type or machine references"
+    printf '%s\n' "$links" | head -8 | sed 's/^/       /'
+  fi
+else
+  fail_line "complete state links did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+assert_invariant attribute-partial-state-link "requires id, state-type, and state-machine together" \
+  '#entity(id: "booking", title: "Booking", description: [A reservation.], kind: "aggregate", owner: "Scheduling", lifecycle: "stateful", domain: "Scheduling")[#attribute(id: "status", name: "Status", type: "Booking status", provenance: "derived", state-type: "booking-status")[Current state.]]'
+assert_invariant machine-partial-state-link "requires id, subject, state-field, and state-type together" \
+  '#state-machine(id: "booking-lifecycle", subject: "booking", title: "Booking lifecycle", states: ("draft",), transitions: ())'
 
 # --- the altitude ladder renders, named rungs and open rungs alike -----------
 #

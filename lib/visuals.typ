@@ -8,8 +8,9 @@
   _enum(kind, "tint", tint, TINTS)
   let c = if tint == none { KIND-COLOR.at(kind) } else { TINT-COLOR.at(tint) }
   block(width: 100%, inset: 7pt, fill: c.lighten(93%),
-        stroke: (left: 2.5pt + c), radius: (right: 2pt),
+    stroke: (left: 2.5pt + c), radius: (right: 2pt),
     [
+      #set par(justify: false)
       #text(size: 6.5pt, fill: c, weight: "bold", tracking: 0.4pt,
             upper(if title != none { title } else { kind }))
       #linebreak() #body
@@ -38,19 +39,55 @@
     int(cols)
   }
 }
+#let _card-item(item, body-size) = [
+  #set par(justify: false)
+  #text(weight: "bold", size: RENDERER-TITLE, item.title) #linebreak()
+  #text(size: body-size)[#item.body]
+]
+
+#let _cards-item-color(item, fallback) = {
+  let item-tint = item.at("tint", default: none)
+  if item-tint == none {
+    fallback
+  } else { TINT-COLOR.at(item-tint) }
+}
 #let cards(cols: none, tint: none, size: none, items: (), ..a) = {
   _enum("cards", "tint", tint, TINTS)
   _enum("cards", "cols", cols, ("2", "3", "4"))
   _enum("cards", "size", size, ("md", "sm"))
+  for it in items {
+    _enum("cards item", "tint", it.at("tint", default: none), TINTS)
+  }
   let c = if tint == none { luma(180) } else { TINT-COLOR.at(tint) }
   let longest = calc.max(..items.map(it => _len(it.body)), 0)
   let n = _cards-columns(cols, longest, items.len())
   let body-size = if size == "sm" { RENDERER-COMPACT } else { RENDERER-BODY }
-  block(width: 100%, grid(columns: (1fr,) * n, gutter: 7pt, row-gutter: 6pt,
-    ..items.map(it => block(width: 100%, inset: 8pt, radius: 3pt,
-      fill: c.lighten(96%), stroke: 0.6pt + c.lighten(35%),
-      [#text(weight: "bold", size: RENDERER-TITLE, it.title) #linebreak()
-       #text(size: body-size)[#it.body]]))))
+  // A table, rather than a grid, gives every cell in one row the height of
+  // the tallest cell. The frame therefore closes on one baseline even when a
+  // neighbouring card has much less content. The table also retains the grid's
+  // two-dimensional placement and can break between rows when a long card
+  // reaches a page boundary.
+  block(width: 100%)[
+    #table(
+      columns: (1fr,) * n,
+      gutter: 7pt,
+      inset: (x: 8pt, y: 8pt),
+      fill: (x, y) => if x + y * n >= items.len() {
+        none
+      } else {
+        let color = _cards-item-color(items.at(x + y * n), c)
+        color.lighten(96%)
+      },
+      stroke: (x, y) => if x + y * n >= items.len() {
+        none
+      } else {
+        let color = _cards-item-color(items.at(x + y * n), c)
+        0.6pt + color.lighten(35%)
+      },
+      align: left + top,
+      ..items.map(it => _card-item(it, body-size)),
+    )
+  ]
   v(0.45em)
 }
 #let stat-grid(cols: "3", tiles: (), ..a) = {
@@ -86,9 +123,12 @@
       ]))))
   v(0.45em)
 }
-#let md-table(ncol, cells) = block(width: 100%, table(
-  columns: ncol, stroke: 0.4pt + luma(215), inset: 5pt,
-  fill: (_, y) => if y == 0 { luma(243) }, ..cells))
+#let md-table(ncol, cells) = block(width: 100%)[
+  #set par(justify: false)
+  #table(
+    columns: ncol, stroke: 0.4pt + luma(215), inset: 5pt,
+    fill: (_, y) => if y == 0 { luma(243) }, ..cells)
+]
 #let code-block(lang, src) = raw(src, block: true, lang: lang)
 #let embedded-svg(caption: none, file: none, ..a, body) = block(
   width: 100%, inset: 6pt, stroke: 0.5pt + luma(200), radius: 3pt,

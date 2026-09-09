@@ -124,5 +124,11 @@
 // the context that OWNS a glossary term, shown beside the definition so a
 // reader sees ownership without leaving the page.
 #let context-owner(name) = {
-  block(inset: (bottom: 3pt), chip("owned by " + name))
+  context {
+    let tint = _context-tint(name)
+    block(
+      inset: (bottom: 3pt),
+      chip("owned by " + name, tone: if tint == none { none } else { tint }),
+    )
+  }
 }

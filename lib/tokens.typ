@@ -126,6 +126,17 @@
 
 #let LENS-COLOR = _assert-total("LENS-COLOR", _LENS-HUES, LENSES)
 #let TINT-COLOR = _assert-total("TINT-COLOR", _TINT-HUES, TINTS)
+
+// Context ownership is one shared palette registry. The aggregate populates
+// it from each context module's optional `accent` binding before any chapter
+// body or glossary entry renders. Unknown and unassigned owners stay neutral.
+#let CONTEXT-ACCENTS = state("design-context-accents", (:))
+#let TERM-OWNERS = state("design-term-owners", (:))
+
+#let _context-tint(name) = {
+  let accent = CONTEXT-ACCENTS.final().at(name, default: none)
+  if accent == none { none } else { TINT-COLOR.at(accent) }
+}
 #let ENFORCEMENT-COLOR = _assert-total(
   "ENFORCEMENT-COLOR",
   _ENFORCEMENT-HUES,

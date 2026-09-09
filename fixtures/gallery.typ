@@ -94,12 +94,14 @@
     nodes: (
       (id: "typ", label: "design.typ", sub: "authored", kind: "entity", group: "authoring", tint: "violet"),
       (id: "schema", label: "design-schema", sub: "declared", kind: "value-object", group: "renderer", tint: "blue"),
+      (id: "context", label: "bounded context", sub: "owns vocabulary", kind: "bounded-context", group: "renderer", tint: "blue"),
       (id: "lib", label: "designlib", sub: "projected", kind: "component", group: "renderer", tint: "blue"),
       (id: "pdf", label: "one document", kind: "external-system", group: "adopter"),
     ),
-    edges: (
+      edges: (
       (from: "typ", to: "lib", relation: "call", label: "called directly"),
       (from: "schema", to: "lib", relation: "dependency", label: "declares projection"),
+      (from: "context", to: "lib", relation: "dependency", label: "owns contract"),
       (from: "lib", to: "pdf", relation: "dataflow", label: "renders document"),
     ),
   ),
@@ -141,6 +143,7 @@
     #components(
       component(
         name: "projector",
+        tint: "violet",
         lens: "composition",
         mission: "Turns the declared schema into the library.",
         body: [Primary component prose uses the renderer body size.],
@@ -151,6 +154,7 @@
       ),
       component(
         name: "library",
+        tint: "blue",
         lens: "invariants",
         mission: "Holds every block contract as a signature.",
         answers: answers-data(
@@ -307,10 +311,10 @@
       cols: "2",
       tint: "blue",
       items: (
-        (title: "Invariant", body: [A rule whose violation makes the model
+        (title: "Invariant", tint: "rose", body: [A rule whose violation makes the model
           wrong. It panics. This long explanation keeps the explicit two-column
           contract visible even when automatic layout would prefer one column.]),
-        (title: "Guideline", body: [A rule of style. It is silent unless the
+        (title: "Guideline", tint: "teal", body: [A rule of style. It is silent unless the
           author asks for it. This long explanation keeps the explicit
           two-column contract visible even when automatic layout would prefer
           one column.]),

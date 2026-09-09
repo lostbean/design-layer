@@ -273,6 +273,22 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
     terms = typst_glossary_terms(root, docs)
 
     L = ['#import "%s": *' % rel_lib, ""]
+
+    # Import every design module before declaring the shared vocabulary. The
+    # optional module-level `accent` is the one authored palette binding for a
+    # context, so citations and glossary ownership chips can resolve it without
+    # repeating a tint at every call site.
+    module_names = {}
+    for name, doc in docs:
+        stem = "root" if name is None else name
+        rel_doc = os.path.relpath(os.path.abspath(doc),
+                                  os.path.abspath(gen_dir))
+        mod = "_ctx_%s" % re.sub(r"[^A-Za-z0-9]", "_", stem)
+        module_names[(name, doc)] = mod
+        L.append('#import %s as %s' % (_typ_str(rel_doc), mod))
+        L.append('#let _m_%s = dictionary(%s)' % (mod, mod))
+    L.append("")
+
     L.append("#show: aggregate-doc.with(")
     L.append('  title: [Design layer],')
     L.append('  subtitle: [the whole layer, as one document],')
@@ -291,6 +307,9 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
     _titles = ", ".join(
         "%s: %s" % (_typ_str(t["slug"]), _typ_str(t["title_text"]))
         for t in sorted(terms, key=lambda x: x["slug"]))
+    _owners = ", ".join(
+        "%s: %s" % (_typ_str(t["slug"]), _typ_str(t["context"]))
+        for t in sorted(terms, key=lambda x: x["slug"]))
     # A Typst array literal needs a TRAILING COMMA to stay an array at length
     # one: `("alpha")` is the string "alpha", while `("alpha",)` is the
     # one-element array. Without it a single-context layer declared its context
@@ -299,18 +318,25 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
     # got a type error instead of the citation check.
     _ctx_names = "".join(
         "%s, " % _typ_str(name) for name, _doc in docs if name is not None)
+    _ctx_accents = ", ".join(
+        "%s: _m_%s.at(\"accent\", default: none)" % (
+            _typ_str("root" if name is None else name),
+            module_names[(name, doc)],
+        )
+        for name, doc in docs)
     L.append("#declare-vocabulary(")
     L.append("  terms: (%s)," % (_titles if _titles else ":"))
-    L.append("  contexts: (%s)," % _ctx_names)
+    L.append("  term-owners: (%s)," % (_owners if _owners else ":"))
+    L.append("  contexts: %s," % ("(%s)" % _ctx_names
+                                  if _ctx_names else "()"))
+    L.append("  context-accents: (%s)," % _ctx_accents)
     L.append(")")
     L.append("")
 
     for name, doc in docs:
         stem = "root" if name is None else name
-        rel_doc = os.path.relpath(os.path.abspath(doc),
-                                  os.path.abspath(gen_dir))
-        mod = "_ctx_%s" % re.sub(r"[^A-Za-z0-9]", "_", stem)
-        L.append('#import %s as %s' % (_typ_str(rel_doc), mod))
+        mod = module_names[(name, doc)]
+        L.append('#let _m = _m_%s' % mod)
         # The chapter heading carries the context label, so a cross-document
         # reference resolves to it. A document declaring its own `title` names
         # the chapter; otherwise the directory name does. A Typst module is not

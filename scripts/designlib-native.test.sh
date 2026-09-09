@@ -426,6 +426,106 @@ else
   fail_line "entity ownership tint did not distinguish known from neutral"
 fi
 
+# A context declares its ownership palette once. Context, term, and glossary
+# owner surfaces all consume that registry; an owner without a declaration stays
+# neutral. This fixture reads the SVG marks rather than the source spelling.
+fixture owner-palette '#set page(width: 420pt, height: 300pt, margin: 24pt)
+#declare-vocabulary(
+  terms: ("term-owned": "Owned term", "term-neutral": "Neutral term"),
+  term-owners: ("term-owned": "sales", "term-neutral": "unknown"),
+  contexts: ("sales", "neutral"),
+  context-accents: ("sales": "rose"),
+)
+#ctx("sales") #ctx("neutral")
+#term("term-owned") #term("term-neutral")
+#context-owner("sales") #context-owner("unknown")'
+compile_svg owner-palette >/dev/null
+if [ -f "$WORK/owner-palette.svg" ] &&
+  rg -q '#e11d48|#fad6de|#f299ad|#ef839a' "$WORK/owner-palette.svg"; then
+  pass_line "declared context palette reaches context, term, and owner chips"
+else
+  fail_line "declared context palette did not reach owner surfaces"
+fi
+
+# Compact answers stack each label above its value and retain left alignment;
+# semantic lens furniture keeps its lens colour when the card has an ownership
+# tint. The output evidence reads word boxes and rendered SVG colours.
+fixture answers-stack '#set page(width: 420pt, height: 500pt, margin: 24pt)
+#answers(title: "Zanswers", responsibility: [Zanswer-value], failure: [Zfailure-value])
+#components(
+  component(
+    name: "Zcomponent",
+    tint: "rose",
+    lens: "composition",
+    mission: "Zmission",
+    answers: answers-data(
+      responsibility: [Zcompact-value],
+      interface: [Zcompact-interface],
+    ),
+  ),
+)'
+out="$(compile answers-stack plain)"
+if [ -f "$WORK/answers-stack.pdf" ]; then
+  pdftotext -bbox "$WORK/answers-stack.pdf" "$WORK/answers-stack.xml" 2>/dev/null
+  if python3 - "$WORK/answers-stack.xml" <<'PYTEST'; then
+import re, sys
+xml = open(sys.argv[1], encoding="utf-8").read()
+
+def boxes(word):
+    matches = re.findall(
+        r'<word xMin="([0-9.]+)" yMin="([0-9.]+)" '
+        r'xMax="([0-9.]+)" yMax="([0-9.]+)">%s</word>' % re.escape(word),
+        xml,
+    )
+    if not matches:
+        raise SystemExit("missing %s" % word)
+    return [tuple(map(float, match)) for match in matches]
+
+labels = boxes("responsibility")
+label = labels[0]
+value = boxes("Zanswer-value")[0]
+failure_label = boxes("failure")[0]
+failure_value = boxes("Zfailure-value")[0]
+if value[1] <= label[1]:
+    raise SystemExit("answer value is not below its label")
+if abs(value[0] - label[0]) > 2:
+    raise SystemExit("answer label and value are not left aligned")
+if not 0 < value[1] - label[3] <= 8:
+    raise SystemExit("answer label-to-value gap is not compact: %r" % (label, value))
+if failure_label[1] - value[3] <= value[1] - label[3]:
+    raise SystemExit("answer item gap is not larger than its label-to-value gap")
+compact_label = labels[-1]
+compact_value = boxes("Zcompact-value")[0]
+compact_interface_label = boxes("interface")[-1]
+compact_interface_value = boxes("Zcompact-interface")[0]
+mission = boxes("Zmission")[0]
+component = boxes("Zcomponent")[0]
+if not 0 < mission[1] - component[3] <= 10:
+    raise SystemExit("component title-to-mission gap is not compact: %r" % (component, mission))
+if compact_value[1] <= compact_label[1]:
+    raise SystemExit("compact answer value is not below its label")
+if not 0 < compact_value[1] - compact_label[3] <= 8:
+    raise SystemExit("compact label-to-value gap is not compact")
+if compact_interface_label[1] - compact_value[3] <= compact_value[1] - compact_label[3]:
+    raise SystemExit("compact answer item gap is not larger than its label-to-value gap")
+PYTEST
+    compile_svg answers-stack >/dev/null
+    if [ -f "$WORK/answers-stack.svg" ] &&
+      rg -q '#e11d48|#fad6de|#f299ad|#ef839a' "$WORK/answers-stack.svg" &&
+      rg -q '#14b8a6|#a7e8e1' "$WORK/answers-stack.svg" &&
+      ! rg -q 'fill="#737373"' "$WORK/answers-stack.svg"; then
+      pass_line "answers stack compact label gaps, item spacing, and ownership colours"
+    else
+      fail_line "answers stack rendered without distinct ownership and lens colours"
+    fi
+  else
+    fail_line "answers and compact component values are not stacked left-aligned"
+  fi
+else
+  fail_line "answers-stack fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
 assert_invariant "cards-invalid-cols" "cards block: invalid cols" \
   '#cards(cols: "1", items: ((title: "One", body: [Body]),))'
 assert_invariant "components-invalid-cols" "cols=" \
@@ -466,6 +566,87 @@ PYTEST
 else
   fail_line "explicit long card fixture did not compile"
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# Generic cards retain the shared grid anatomy while allowing each item to
+# declare its owning domain tint. The rendered SVG must carry three distinct
+# card fills: the grid fallback and two item overrides.
+fixture cards-item-tints '#set page(width: 420pt, height: 360pt, margin: 24pt)
+#cards(tint: "teal", cols: "3", items: (
+  (title: "Zteal", body: [Fallback item.]),
+  (title: "Zrose", body: [Rose item.], tint: "rose"),
+  (title: "Zblue", body: [Blue item.], tint: "blue"),
+))'
+compile_svg cards-item-tints >/dev/null
+if [ -f "$WORK/cards-item-tints.svg" ] && python3 - "$WORK/cards-item-tints.svg" <<'PYTEST'; then
+import re, sys
+svg = open(sys.argv[1], encoding="utf-8").read()
+fills = {
+    fill for fill in re.findall(r'<[^>]+class="typst-shape"[^>]+fill="([^"]+)"', svg)
+    if fill not in ("none", "#ffffff")
+}
+if len(fills) < 3:
+    raise SystemExit("expected fallback and two per-item card fills, got %r" % fills)
+PYTEST
+  pass_line "generic card items carry independent ownership tints"
+else
+  fail_line "generic card item tints did not reach rendered geometry"
+fi
+
+# Generic cards use a table-backed grid just like component cards, so peers in
+# one row share the tallest cell's frame height. This fixture makes the first
+# peer deliberately tall and asserts the equal-height contract from the
+# rendered geometry rather than from the authoring call.
+fixture cards-equal-rows '#set page(width: 420pt, height: 520pt, margin: 24pt)
+#cards(cols: "2", items: (
+  (title: "Zlong", body: [A deliberately long card body wraps across several lines so its short peer must receive the same row height. This is the regression case.]),
+  (title: "Zshort", body: [Short.]),
+  (title: "Zshort2", body: [Short.]),
+  (title: "Zshort3", body: [Short.]),
+))'
+compile_svg cards-equal-rows >/dev/null
+if [ -f "$WORK/cards-equal-rows.svg" ] && python3 - "$WORK/cards-equal-rows.svg" <<'PYTEST'; then
+import re, sys
+import xml.etree.ElementTree as ET
+
+svg = open(sys.argv[1], encoding="utf-8").read()
+rects = []
+for element in ET.fromstring(svg).iter():
+    attrs = element.attrib
+    fill = attrs.get("fill")
+    path = attrs.get("d", "")
+    if fill in (None, "none", "#ffffff"):
+        continue
+    match = re.match(
+        r'M 0 0v ([0-9.]+) h ([0-9.]+) v -[0-9.]+ Z', path
+    )
+    if match is None:
+        continue
+    transform = attrs.get("transform", "matrix(1 0 0 1 0 0)")
+    offset = re.match(r'matrix\(1 0 0 1 ([0-9.-]+) ([0-9.-]+)\)', transform)
+    if offset is None:
+        continue
+    width = float(match.group(2))
+    if width < 100:
+        continue
+    rects.append((float(offset.group(2)), width, float(match.group(1))))
+
+if len(rects) != 4:
+    raise SystemExit("expected four generic card fills, got %r" % (rects,))
+rows = {}
+for y, _, height in rects:
+    rows.setdefault(round(y, 2), []).append(height)
+if sorted(map(len, rows.values())) != [2, 2]:
+    raise SystemExit("generic card fills do not form two rows: %r" % rows)
+if any(max(heights) - min(heights) > 0.2 for heights in rows.values()):
+    raise SystemExit("generic card cells in one row have different heights: %r" % rows)
+ordered = sorted(rows.items())
+if ordered[0][1][0] <= ordered[1][1][0] + 1:
+    raise SystemExit("tall and short generic rows did not retain different heights: %r" % rows)
+PYTEST
+  pass_line "generic cards fill each row to its tallest peer"
+else
+  fail_line "generic cards did not equalize row heights"
 fi
 
 # Solved diagrams use the Graphviz carrier and do not accept authored

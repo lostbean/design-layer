@@ -178,6 +178,7 @@
       #_census-group.update(none)
       #_state-link-owner.update(id)
       #block(width: 100%, breakable: true, inset: (x: 9pt, y: 6pt), [
+        #set par(justify: false)
         #if description != none { block(below: 6pt, sticky: true, description) }
         #body
       ])
@@ -223,6 +224,7 @@
     block(width: 100%, inset: (left: 2pt, y: 2.5pt),
       grid(columns: (58pt, 1fr), column-gutter: 7pt, align: (right + top, left),
         chip(provenance, tone: c), [
+          #set par(justify: false)
           #if name != none or type != none {
             block(below: 2pt, sticky: true, [
               #if name != none { text(weight: "bold", name) }
@@ -279,5 +281,8 @@
           text(size: 6.5pt, weight: "bold", font: "DejaVu Sans Mono",
                fill: TINT-COLOR.at("blue").darken(25%),
                if cardinality != none { cardinality } else { "—" })),
-      body))
+      [
+        #set par(justify: false)
+        #body
+      ]))
 }

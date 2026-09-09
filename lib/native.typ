@@ -250,7 +250,10 @@
             "or misspelled context fails here rather than rendering a dead " +
             "identifier into the prose.")
     }
-    chip(name, tone: if accent == none { none } else { TINT-COLOR.at(accent) })
+    let tone = if accent == none { _context-tint(name) } else {
+      TINT-COLOR.at(accent)
+    }
+    chip(name, tone: tone)
   }
 }
 
@@ -283,7 +286,13 @@
     if titles.len() == 0 {
       chip(slug, tone: luma(110))
     } else if slug in titles {
-      chip(titles.at(slug), tone: luma(110))
+      let owner = TERM-OWNERS.final().at(slug, default: none)
+      chip(titles.at(slug), tone: if owner == none {
+        luma(110)
+      } else {
+        let tint = _context-tint(owner)
+        if tint == none { luma(110) } else { tint }
+      })
     } else {
       panic("term(" + repr(slug) + ") cites a term no CONTEXT.typ declares. " +
             "A term citation renders the declared TITLE, so an undeclared " +
@@ -302,9 +311,33 @@
 // resolve rather than resolving it wrongly: `assert-references-resolvable`
 // below runs at the end of the document and fails if any citation was made
 // against an empty registry.
-#let declare-vocabulary(terms: (:), contexts: ()) = {
+#let declare-vocabulary(
+  terms: (:), contexts: (), term-owners: (:), context-accents: (:),
+) = {
   TERM-TITLES.update(terms)
-  CONTEXT-NAMES.update(contexts)
+  TERM-OWNERS.update(term-owners)
+  let names = ()
+  let accents = (:)
+  for ctx_entry in contexts {
+    if type(ctx_entry) == str {
+      names.push(ctx_entry)
+    } else {
+      names.push(ctx_entry.name)
+      let accent = ctx_entry.at("accent", default: none)
+      _enum("context", "accent", accent, TINTS)
+      if accent != none { accents.insert(ctx_entry.name, accent) }
+    }
+  }
+  for pair in context-accents.pairs() {
+    let name = pair.at(0)
+    let accent = pair.at(1)
+    if accent != none {
+      _req-enum("context " + repr(name) + " accent", accent, TINTS)
+      accents.insert(name, accent)
+    }
+  }
+  CONTEXT-NAMES.update(names)
+  CONTEXT-ACCENTS.update(accents)
 }
 
 // The empty-registry fallback is a real hole, so it is closed by an assertion
@@ -337,55 +370,67 @@
 
 #let _DIAGRAM-NODE-SHAPES = (
   actor: "ellipse",
-  system: "box3d",
+  bounded-context: "box",
+  system: "box",
   aggregate: "doubleoctagon",
   entity: "box",
   value-object: "note",
   event: "hexagon",
   frontend: "component",
-  backend: "box3d",
+  backend: "box",
   service: "box",
   component: "component",
   queue: "parallelogram",
   topic: "hexagon",
-  database: "cylinder",
-  external-system: "box3d",
+  database: "folder",
+  external-system: "box",
 )
 
 // Graphviz owns geometry, not architecture meaning. These labels state the
 // authoring role attached to each shape, so the generated legend explains the
 // project convention instead of presenting a silhouette as a universal rule.
 #let _DIAGRAM-NODE-ROLES = (
-  actor: "actor · person or role",
-  system: "system · endpoint",
-  aggregate: "aggregate",
-  entity: "entity",
-  value-object: "value object",
-  event: "event · domain fact",
-  frontend: "frontend · user-facing component",
-  backend: "backend · system endpoint",
-  service: "service · internal service",
-  component: "component · owned runtime part",
-  queue: "queue · work channel",
-  topic: "topic · event stream",
-  database: "database · persistent store",
-  external-system: "external system · trust boundary",
+  actor: (name: "actor", description: "person or role"),
+  bounded-context: (name: "bounded context", description: "domain owner"),
+  system: (name: "system", description: "endpoint"),
+  aggregate: (name: "aggregate", description: "invariant-owning cluster"),
+  entity: (name: "entity", description: "identity-bearing record"),
+  value-object: (name: "value object", description: "attribute-defined value"),
+  event: (name: "event", description: "domain fact"),
+  frontend: (name: "frontend", description: "user-facing component"),
+  backend: (name: "backend", description: "system endpoint"),
+  service: (name: "service", description: "internal service"),
+  component: (name: "component", description: "owned runtime part"),
+  queue: (name: "queue", description: "work channel"),
+  topic: (name: "topic", description: "event stream"),
+  database: (name: "database", description: "persistent store"),
+  external-system: (name: "external system", description: "trust boundary"),
 )
 
 #let _DIAGRAM-GROUP-PRESENTATION = (
-  domain: (style: "rounded,solid", penwidth: "2.2"),
-  subdomain: (style: "rounded,solid", penwidth: "1.1"),
-  bounded-context: (style: "rounded,bold", penwidth: "1.8"),
-  runtime: (style: "rounded,dashed", penwidth: "1.1"),
-  deployment: (style: "rounded,dotted", penwidth: "1.1"),
-  subsystem: (style: "rounded,solid", penwidth: "1.1"),
+  domain: (name: "domain", description: "ownership boundary",
+    style: "rounded,solid", penwidth: "2.2"),
+  subdomain: (name: "subdomain", description: "ownership boundary",
+    style: "rounded,solid", penwidth: "1.1"),
+  bounded-context: (name: "bounded context", description: "ownership boundary",
+    style: "rounded,bold", penwidth: "1.8"),
+  runtime: (name: "runtime", description: "execution boundary",
+    style: "rounded,dashed", penwidth: "1.1"),
+  deployment: (name: "deployment", description: "placement boundary",
+    style: "rounded,dotted", penwidth: "1.1"),
+  subsystem: (name: "subsystem", description: "structural boundary",
+    style: "rounded,solid", penwidth: "1.1"),
 )
 
 #let _DIAGRAM-RELATION-PRESENTATION = (
-  dependency: (style: "dashed", arrowhead: "vee", penwidth: "1.0"),
-  call: (style: "solid", arrowhead: "normal", penwidth: "1.0"),
-  pubsub: (style: "dotted", arrowhead: "vee", penwidth: "1.4"),
-  dataflow: (style: "bold", arrowhead: "vee", penwidth: "1.8"),
+  dependency: (name: "dependency", description: "dashed directed link",
+    style: "dashed", arrowhead: "vee", penwidth: "1.0"),
+  call: (name: "call", description: "solid directed link",
+    style: "solid", arrowhead: "normal", penwidth: "1.0"),
+  pubsub: (name: "pubsub", description: "dotted publish or consume link",
+    style: "dotted", arrowhead: "vee", penwidth: "1.4"),
+  dataflow: (name: "dataflow", description: "weighted directed link",
+    style: "bold", arrowhead: "vee", penwidth: "1.8"),
 )
 
 #let _diagram-check-implementation() = {
@@ -413,13 +458,18 @@
   }
 }
 
-#let _diagram-dot-quote(value) = {
+#let _diagram-dot-quote(value, linebreaks: false) = {
   let quote = str.from-unicode(34)
-  quote + str(value).replace("\\", "\\\\").replace(quote, "\\" + quote) + quote
+  let newline = str.from-unicode(10)
+  let escaped = str(value).replace("\\", "\\\\").replace(quote, "\\" + quote)
+  if linebreaks { escaped = escaped.replace(newline, "\\n") }
+  quote + escaped + quote
 }
 
 #let _diagram-dot-label(node) = {
-  if "sub" in node { node.label + " · " + node.sub } else { node.label }
+  if "sub" in node {
+    node.label + str.from-unicode(10) + node.sub
+  } else { node.label }
 }
 
 #let _diagram-rankdir(flow) = if flow == "top-to-bottom" { "TB" } else { "LR" }
@@ -487,34 +537,211 @@
   }
 }
 
-#let _diagram-legend(group-kinds, node-kinds, relations, has-external) = {
-  let rows = (
-    ("BOUNDARIES", group-kinds),
-    ("NODES", node-kinds.map(kind => _DIAGRAM-NODE-ROLES.at(kind))),
-    ("RELATIONS", relations),
-  ).filter(row => row.at(1).len() > 0)
-  if rows.len() > 0 or has-external {
+#let _diagram-node-style(kind, external, color) = {
+  let trust-boundary = kind == "external-system"
+  (
+    style: if trust-boundary {
+      "dashed,bold"
+    } else if external {
+      "rounded,dashed"
+    } else { "rounded,filled" },
+    fill: if trust-boundary or external { "#ffffff" }
+           else { color.lighten(88%).to-hex() },
+    stroke: if trust-boundary or external { "#969696" }
+            else { color.to-hex() },
+    penwidth: if trust-boundary { "2.0" } else { "1.0" },
+  )
+}
+
+#let _diagram-node-declaration(
+  node, label: none, accent: "teal", extra: none,
+) = {
+  let external = node.at("external", default: false)
+  let kind = node.at("kind", default: none)
+  let node-color = TINT-COLOR.at(node.at("tint", default: accent))
+  let style = _diagram-node-style(kind, external, node-color)
+  let node-label = if label == none { _diagram-dot-label(node) } else { label }
+  (
+    "  " + _diagram-dot-quote(node.id) + " [label="
+    + _diagram-dot-quote(
+      node-label,
+      linebreaks: label != none or (label == none and (
+        "sub" in node or str.from-unicode(10) in node-label
+      )),
+    )
+    + ", style=" + _diagram-dot-quote(style.style)
+    + ", color=" + _diagram-dot-quote(style.stroke)
+    + ", fillcolor=" + _diagram-dot-quote(style.fill)
+    + ", shape=" + _diagram-dot-quote(_diagram-node-shape(kind))
+    + ", penwidth=" + style.penwidth
+    + if extra == none { "" } else { ", " + extra }
+    + "];\n"
+  )
+}
+
+#let DIAGRAM-LEGEND-PER-ROW = 8
+#let DIAGRAM-LEGEND-SYMBOL-WIDTH = 30pt
+#let DIAGRAM-LEGEND-SYMBOL-HEIGHT = 18pt
+
+// Each symbol remains a real Graphviz carrier. The empty label and fixed
+// dimensions keep the mark small and stable while Typst owns its arrangement.
+#let _diagram-legend-node-source(node, accent) = {
+  let id = "legend_node_mark_" + node.kind
+  (
+    "digraph {\n"
+    + "  graph [margin=0, bgcolor=\"transparent\"];\n"
+    + "  node [fontname=\"Libertinus Serif\", fontsize=8];\n"
+    + _diagram-node-declaration(
+      (id: id, kind: node.kind,
+       tint: node.at("tint", default: accent),
+       external: node.at("external", default: false)),
+      label: "",
+      accent: accent,
+      extra: "width=0.62, height=0.34, fixedsize=true, margin=\"0,0\"",
+    )
+    + "}\n"
+  )
+}
+
+// A group symbol is the carrier's cluster outline around an invisible sizing
+// anchor. The sizing anchor has no visible mark, so no second inner box
+// competes with the actual ownership or deployment boundary.
+#let _diagram-legend-group-source(group, accent) = {
+  let kind = group.kind
+  let id = "legend_group_anchor_" + kind
+  let color = TINT-COLOR.at(group.at("tint", default: accent))
+  let presentation = _DIAGRAM-GROUP-PRESENTATION.at(kind)
+  (
+    "digraph {\n"
+    + "  graph [margin=0, bgcolor=\"transparent\"];\n"
+    + "  subgraph " + _diagram-dot-quote("cluster_legend_group_" + kind)
+    + " {\n"
+    + "    style=" + _diagram-dot-quote(presentation.style) + "; color="
+    + _diagram-dot-quote(color.to-hex()) + "; penwidth="
+    + presentation.penwidth + "; margin=0; bgcolor=\"transparent\";\n"
+    + "    " + _diagram-dot-quote(id)
+    + " [label=\"\", shape=box, style=invis, width=0.70, height=0.34, fixedsize=true];\n"
+    + "  }\n}\n"
+  )
+}
+
+#let _diagram-legend-relation-source(relation) = {
+  let attrs = _diagram-relation-attrs(relation, none)
+  let from = "legend_relation_from_" + relation
+  let to = "legend_relation_to_" + relation
+  (
+    "digraph {\n"
+    + "  graph [rankdir=LR, margin=0, nodesep=0.2, bgcolor=\"transparent\"];\n"
+    + "  node [shape=point, style=invis, label=\"\", width=0.01, height=0.01];\n"
+    + "  " + _diagram-dot-quote(from) + "; "
+    + _diagram-dot-quote(to) + ";\n"
+    + "  " + _diagram-dot-quote(from) + " -> "
+    + _diagram-dot-quote(to) + " [label=\"\", style="
+    + _diagram-dot-quote(attrs.style) + ", arrowhead="
+    + _diagram-dot-quote(attrs.arrowhead) + ", penwidth="
+    + attrs.penwidth + "];\n}\n"
+  )
+}
+
+#let _diagram-legend-symbol(source) = box(
+  width: 100%, height: DIAGRAM-LEGEND-SYMBOL-HEIGHT,
+  align(center + horizon, layout(size => {
+    let natural = measure(dot-render(source, math-mode: "text"))
+    let max-width = DIAGRAM-LEGEND-SYMBOL-WIDTH
+    let max-height = DIAGRAM-LEGEND-SYMBOL-HEIGHT
+    let width = if natural.width <= 0pt or natural.height <= 0pt {
+      max-width
+    } else {
+      calc.min(max-width, (natural.width / natural.height) * max-height)
+    }
+    dot-render(source, width: width, math-mode: "text")
+  })),
+)
+
+#let _diagram-legend-cell(source, name, description) = block(width: 100%)[
+  #set par(leading: 0pt, justify: false)
+  #grid(
+    columns: 1,
+    row-gutter: 2pt,
+    align: center,
+    _diagram-legend-symbol(source),
+    text(size: 6.1pt, weight: "bold")[#name],
+    text(size: 5.3pt, fill: luma(105))[#description],
+  )
+]
+
+#let _diagram-legend-table(cells, columns: none) = {
+  let count = cells.len()
+  if count == 0 { none } else {
+    let column-count = if columns == none {
+      calc.min(count, DIAGRAM-LEGEND-PER-ROW)
+    } else {
+      columns
+    }
+    table(
+      columns: (1fr,) * column-count,
+      gutter: 4pt,
+      row-gutter: 4pt,
+      inset: 0pt,
+      stroke: none,
+      align: center + top,
+      ..cells,
+    )
+  }
+}
+
+#let _diagram-legend(groups, nodes, relations, accent) = {
+  let group-kinds = _diagram-unique(groups.map(group => group.kind))
+  let node-kinds = _diagram-unique(nodes.filter(
+    node => node.at("kind", default: none) != none,
+  ).map(node => node.kind))
+  if group-kinds.len() == 0 and node-kinds.len() == 0 and relations.len() == 0 {
+    none
+  } else {
+    let group-cells = group-kinds.map(kind => {
+      let group = groups.filter(group => group.kind == kind).first()
+      let presentation = _DIAGRAM-GROUP-PRESENTATION.at(kind)
+      (
+        source: _diagram-legend-group-source(group, accent),
+        name: presentation.name,
+        description: presentation.description,
+      )
+    })
+    let node-cells = node-kinds.map(kind => {
+      let matching = nodes.filter(
+        node => node.at("kind", default: none) == kind,
+      )
+      let sample = matching.first()
+      let styled = (
+        id: sample.id,
+        kind: sample.kind,
+        tint: sample.at("tint", default: accent),
+        external: sample.at("external", default: false),
+      )
+      let role = _DIAGRAM-NODE-ROLES.at(kind)
+      (
+        source: _diagram-legend-node-source(styled, accent),
+        name: role.name,
+        description: role.description,
+      )
+    })
+    let relation-cells = relations.map(relation => {
+      let presentation = _DIAGRAM-RELATION-PRESENTATION.at(relation)
+      (
+        source: _diagram-legend-relation-source(relation),
+        name: presentation.name,
+        description: presentation.description,
+      )
+    })
+    let legend-cells = (group-cells + node-cells + relation-cells).map(cell => _diagram-legend-cell(
+        cell.source, cell.name, cell.description,
+      ))
+    let legend-table = _diagram-legend-table(legend-cells)
     v(0.35em)
-    block(width: 100%, inset: (x: 5pt, y: 4pt), fill: luma(250),
-          stroke: 0.45pt + luma(215), radius: 2pt)[
+    block(width: 100%, inset: (x: 2pt, y: 2pt), fill: none, stroke: none)[
       #text(size: 5.8pt, weight: "bold", tracking: 0.55pt, fill: luma(100))[LEGEND]
-      #for row in rows [
-        #h(0.7em)
-        #text(size: 5.4pt, weight: "bold", fill: luma(115))[#row.at(0)]
-        #h(0.35em)
-        #for value in row.at(1) [
-          #box(inset: (x: 2.5pt, y: 1pt), fill: luma(244),
-               stroke: 0.35pt + luma(205), radius: 1pt,
-               text(size: 5.6pt)[#value])
-          #h(0.3em)
-        ]
-      ]
-      #if has-external [
-        #h(0.7em)
-        #box(inset: (x: 2.5pt, y: 1pt), fill: white,
-             stroke: (dash: "dashed", thickness: 0.55pt, paint: luma(120)),
-             text(size: 5.6pt)[external trust boundary])
-      ]
+      #v(1pt)
+      #legend-table
     ]
   }
 }
@@ -677,25 +904,7 @@
   } else { none }
   let solved = if layout == "solved" {
     let node-declaration(n) = {
-      let external = n.at("external", default: false)
-      let node-color = TINT-COLOR.at(n.at("tint", default: accent))
-      let kind = n.at("kind", default: none)
-      let trust-boundary = kind == "external-system"
-      let style = if trust-boundary {
-        "dashed,bold"
-      } else if external {
-        "rounded,dashed"
-      } else { "rounded,filled" }
-      let node-fill = if trust-boundary or external { "#ffffff" } else { node-color.lighten(88%).to-hex() }
-      let node-stroke = if trust-boundary or external { "#969696" } else { node-color.to-hex() }
-      (
-        "  " + _diagram-dot-quote(n.id) + " [label="
-        + _diagram-dot-quote(_diagram-dot-label(n)) + ", style="
-        + _diagram-dot-quote(style) + ", color=" + _diagram-dot-quote(node-stroke)
-        + ", fillcolor=" + _diagram-dot-quote(node-fill)
-        + ", shape=" + _diagram-dot-quote(_diagram-node-shape(kind))
-        + if trust-boundary { ", penwidth=2.0];\n" } else { "];\n" }
-      )
+      _diagram-node-declaration(n, accent: accent)
     }
     let group-by-id = (:)
     for group in groups { group-by-id.insert(group.id, group) }
@@ -760,22 +969,10 @@
       } else { width }
       align(center, dot-render(source, width: scaled, math-mode: "text"))
     })
-    let used-group-kinds = _diagram-unique(groups.map(group => group.kind))
-    let used-node-kinds = _diagram-unique(nodes.filter(
-      node => "kind" in node,
-    ).map(node => node.kind))
     let used-relations = _diagram-unique(solved-edges.filter(
       edge => edge.relation != none,
     ).map(edge => edge.relation))
-    let has-external = nodes.any(
-      node => node.at("kind", default: none) == "external-system",
-    )
-    [#graph #_diagram-legend(
-      used-group-kinds,
-      used-node-kinds,
-      used-relations,
-      has-external,
-    )]
+    [#graph #_diagram-legend(groups, nodes, used-relations, accent)]
   } else { none }
   _drawing-frame(
     tint: ac,
@@ -842,13 +1039,23 @@
   pairs.filter(r => r.at(1) != none)
 }
 
-#let _answers-compact(data, size: 7.6pt) = {
+#let _answer-row(r, size: 7.6pt, label-size: none, color: luma(115)) = {
+  let label-size = if label-size == none { size - 0.8pt } else { label-size }
+  block(width: 100%)[
+    #set par(justify: false)
+    #text(size: label-size, weight: "bold", fill: color)[
+      #lower(r.at(0))
+    ]
+    #v(0.5pt)
+    #text(size: size)[#r.at(1)]
+  ]
+}
+
+#let _answers-compact(data, size: 7.6pt, color: luma(115)) = {
   let rows = _answer-rows(data)
   for (i, r) in rows.enumerate() {
     if i > 0 { v(2pt) }
-    grid(columns: (4.6em, 1fr), gutter: 4pt,
-      text(size: size - 0.8pt, weight: "bold", fill: luma(115))[#lower(r.at(0))],
-      text(size: size)[#r.at(1)])
+    _answer-row(r, size: size, color: color)
   }
 }
 
@@ -869,15 +1076,18 @@
 }
 
 #let _card-content(body, title: none, furniture: none, color: black) = [
+  #set par(justify: false)
   #if title != none [
     #grid(
       columns: (1fr, auto),
       text(size: RENDERER-TITLE, weight: "bold", fill: color)[#title],
       if furniture != none { furniture },
     )
-    #v(2pt)
+    #v(0.75pt)
+    #text(size: RENDERER-BODY)[#body]
+  ] else [
+    #text(size: RENDERER-BODY)[#body]
   ]
-  #text(size: RENDERER-BODY)[#body]
 ]
 
 #let _card(accent: "teal", title: none, furniture: none, body) = {
@@ -915,11 +1125,10 @@
   }
   let c = TINT-COLOR.at(accent)
   _card(accent: accent, title: title)[
+    #set par(justify: false)
     #for (i, r) in rows.enumerate() [
       #if i > 0 [ #v(2.5pt) ]
-      #grid(columns: (5.6em, 1fr), gutter: 5pt,
-        text(size: RENDERER-META, weight: "bold", fill: c)[#lower(r.at(0))],
-        r.at(1))
+      #_answer-row(r, size: RENDERER-BODY, label-size: RENDERER-META, color: c)
     ]
   ]
   v(0.45em)
@@ -928,7 +1137,8 @@
 // COMPONENT CARDS — the fixed shape, so an author cannot invent a variant.
 // A card returns DATA to `components`, so its guidance is deferred into the
 // dictionary and replayed there — see `_guides`.
-#let component(name: none, lens: none, mission: none, answers: none, body: none) = {
+#let component(name: none, lens: none, mission: none, answers: none, body: none,
+              tint: none) = {
   let gs = ()
   for (f, v) in (("name", name), ("mission", mission)) {
     if v == none or v == "" {
@@ -938,7 +1148,9 @@
     }
   }
   if lens != none { _req-enum("lens", lens, LENSES) }
+  _enum("component", "tint", tint, TINTS)
   (name: name, lens: lens, mission: mission, answers: answers, body: body,
+   tint: tint,
    _guides: gs)
 }
 
@@ -959,37 +1171,57 @@
     #table(
       columns: (1fr,) * n,
       gutter: 6pt,
-      inset: anatomy.inset,
+      inset: _card-anatomy(accent).inset,
       fill: (x, y) => if x + y * n >= items.len() {
         none
-      } else { anatomy.fill },
+      } else {
+        let tint = items.at(x + y * n).at("tint", default: none)
+        let color = if tint == none { TINT-COLOR.at(accent) } else {
+          TINT-COLOR.at(tint)
+        }
+        color.lighten(97%)
+      },
       stroke: (x, y) => if x + y * n >= items.len() {
         none
-      } else { anatomy.stroke },
+      } else {
+        let tint = items.at(x + y * n).at("tint", default: none)
+        let color = if tint == none { TINT-COLOR.at(accent) } else {
+          TINT-COLOR.at(tint)
+        }
+        0.5pt + color.lighten(55%)
+      },
       align: left + top,
-      ..items.map(x => _card-content(
-        title: x.name,
-        furniture: if x.lens != none {
-          box(
-            fill: anatomy.color.lighten(85%),
-            inset: (x: 3pt, y: 1pt),
-            radius: 1.5pt,
-            text(
-              size: RENDERER-META,
-              weight: "bold",
-              fill: anatomy.color.darken(20%),
-            )[#x.lens],
-          )
-        } else { none },
-        color: anatomy.color,
-      )[
-        #text(weight: "bold")[#x.mission]
-        #if x.body != none [ #v(1.5pt) #x.body ]
-        #if x.answers != none [
-          #v(3pt) #line(length: 100%, stroke: 0.4pt + luma(220)) #v(3pt)
-          #_answers-compact(x.answers)
+      ..items.map(x => {
+        let item-tint = x.at("tint", default: none)
+        let item-color = if item-tint == none {
+          anatomy.color
+        } else { TINT-COLOR.at(item-tint) }
+        _card-content(
+          title: x.name,
+          furniture: if x.lens != none {
+            let lens-color = LENS-COLOR.at(x.lens)
+            box(
+              fill: lens-color.lighten(85%),
+              inset: (x: 3pt, y: 1pt),
+              radius: 1.5pt,
+              text(
+                size: RENDERER-META,
+                weight: "bold",
+                fill: lens-color.darken(20%),
+              )[#x.lens],
+            )
+          } else { none },
+          color: item-color,
+        )[
+          #set par(justify: false)
+          #text(weight: "bold")[#x.mission]
+          #if x.body != none [ #v(1.5pt) #x.body ]
+          #if x.answers != none [
+            #v(3pt) #line(length: 100%, stroke: 0.4pt + luma(220)) #v(3pt)
+            #_answers-compact(x.answers, color: item-color)
+          ]
         ]
-      ]),
+      }),
     )
   ]
   v(0.55em)

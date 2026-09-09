@@ -98,7 +98,7 @@ echo "diagram-viewpoints: solved diagram viewpoints and boundaries"
 # One fixture uses every declared group kind, node kind, and relation. The
 # labels are intentionally unique so PDF extraction proves the diagram and its
 # generated legend reached the page rather than merely compiling.
-fixture enriched '#set page(width: 900pt, height: 900pt, margin: 24pt)
+fixture enriched '#set page(width: 900pt, height: 1200pt, margin: 24pt)
 #diagram(
   altitude: "L2",
   viewpoint: "context-ownership",
@@ -113,13 +113,14 @@ fixture enriched '#set page(width: 900pt, height: 900pt, margin: 24pt)
   ),
   nodes: (
     (id: "actor", label: "Zactor", kind: "actor", group: "enterprise", external: true),
-    (id: "system", label: "Zsystem", kind: "system", group: "enterprise"),
+    (id: "system", label: "Zsystem", sub: "secondary", kind: "system", group: "enterprise"),
     (id: "aggregate", label: "Zaggregate", kind: "aggregate", group: "booking"),
+    (id: "context", label: "Zcontext", sub: "domain owner", kind: "bounded-context", group: "booking"),
     (id: "entity", label: "Zentity", kind: "entity", group: "booking"),
     (id: "value", label: "Zvalue", kind: "value-object", group: "booking"),
     (id: "event", label: "Zevent", kind: "event", group: "booking"),
     (id: "frontend", label: "Zfrontend", kind: "frontend", group: "workload"),
-    (id: "backend", label: "Zbackend", kind: "backend", group: "workload"),
+    (id: "backend", label: "Zbackend", sub: "secondary", kind: "backend", group: "workload"),
     (id: "service", label: "Zservice", kind: "service", group: "workload"),
     (id: "component", label: "Zcomponent", kind: "component", group: "workload"),
     (id: "queue", label: "Zqueue", kind: "queue", group: "platform"),
@@ -143,7 +144,7 @@ else
   missing=""
   for mark in \
     Zviewpoint Zenterprise Zsales Zbooking Zplatform Zworkload Zcluster \
-    Zactor Zsystem Zaggregate Zentity Zvalue Zevent Zfrontend Zbackend \
+    Zactor Zsystem secondary Zaggregate Zcontext "domain owner" Zentity Zvalue Zevent Zfrontend Zbackend \
     Zservice Zcomponent Zqueue Ztopic Zdatabase Zexternal \
     Zcalls Zdepends Zpublishes Zflows; do
     case "$text" in
@@ -179,19 +180,19 @@ else
     fail_line "boundary-kind labels are absent:$boundary_missing"
   fi
 
-  # Preserve layout while reading the legend. The legend spans two rows, and
-  # the default extractor may interleave columns before a role phrase is
-  # complete even though the phrase is visibly contiguous on the page.
-  legend_text="$(pdftotext -layout "$WORK/enriched.pdf" - 2>/dev/null |
-    tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]\n')"
+  # Read only the legend chapter of the rendered output. The graph deliberately
+  # puts role labels on separate lines beside marks, so assert each role word
+  # and its distinguishing phrase independently instead of relying on column
+  # order from a PDF text extractor.
+  legend_text="$(pdftotext "$WORK/enriched.pdf" - 2>/dev/null |
+    sed -n '/LEGEND/,$p' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
   legend_missing=""
   for label in \
-    "actor · person or role" "system · endpoint" aggregate entity "value object" \
-    "event · domain fact" "frontend · user-facing component" \
-    "backend · system endpoint" "service · internal service" \
-    "component · owned runtime part" "queue · work channel" \
-    "topic · event stream" "database · persistent store" \
-    "external system · trust boundary" dependency call pubsub dataflow; do
+    actor "person or role" "bounded context" system endpoint aggregate entity \
+    "value object" event "domain fact" frontend "user-facing component" \
+    backend "system endpoint" service "internal service" component \
+    "owned runtime part" queue "work channel" topic "event stream" database \
+    "persistent store" "external system" "trust boundary" dependency call pubsub dataflow; do
     normalized="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
     case "$legend_text" in
     *"$normalized"*) ;;
@@ -224,7 +225,10 @@ svg = open(sys.argv[1], encoding="utf-8").read()
 payloads = re.findall(r'data:image/svg\+xml;base64,([^" ]+)', svg)
 if not payloads:
     raise SystemExit("Typst SVG contains no embedded Graphviz SVG")
-graph = base64.b64decode(max(payloads, key=len)).decode("utf-8")
+graphs = [base64.b64decode(payload).decode("utf-8") for payload in payloads]
+graph = next((item for item in graphs if "<title>cluster_enterprise</title>" in item), None)
+if graph is None:
+    raise SystemExit("main Graphviz graph is not present")
 
 def block(kind, title):
     match = re.search(
@@ -233,6 +237,41 @@ def block(kind, title):
     if not match:
         raise SystemExit("missing Graphviz %s %s" % (kind, title))
     return match.group(1)
+
+legend_payloads = [item for item in graphs if "legend_" in item]
+if len(legend_payloads) != 25:
+    raise SystemExit("legend payload count does not match 6 groups + 15 nodes + 4 relations: %d" % len(legend_payloads))
+for payload in legend_payloads:
+    if "<text" in payload:
+        raise SystemExit("legend carrier payload contains text inside a symbol")
+images = list(re.finditer(
+    r'<image[^>]*xlink:href="data:image/svg\+xml;base64,([^" ]+)" '
+    r'width="([0-9.eE+-]+)" height="([0-9.eE+-]+)"', svg,
+))
+if len(images) != 26:
+    raise SystemExit("expected one main graph plus 25 bounded legend symbols")
+for image in images[1:]:
+    scales = re.findall(
+        r'transform="matrix\(([0-9.eE+-]+) 0 0 ([0-9.eE+-]+) [^"]+\)"',
+        svg[:image.start()],
+    )
+    if not scales:
+        raise SystemExit("legend symbol has no scale transform")
+    scale_x, scale_y = map(float, scales[-1])
+    width, height = map(float, image.groups()[1:])
+    if width * scale_x > 30.1 or height * scale_y > 18.1:
+        raise SystemExit(
+            "legend symbol exceeds its fixed area: %.2fpt x %.2fpt"
+            % (width * scale_x, height * scale_y)
+        )
+
+def legend_mark(title):
+    encoded = title.replace("-", "&#45;").replace(">", "&gt;")
+    needle = "<title>" + encoded + "</title>"
+    match = next((item for item in legend_payloads if needle in item), None)
+    if match is None:
+        raise SystemExit("missing legend Graphviz mark %s" % title)
+    return match
 
 # These are Graphviz cluster marks, not decorative Typst frames. The nested
 # ownership chain and nested runtime chain each remain separate solver-owned
@@ -261,16 +300,17 @@ if "<ellipse" not in block("node", "actor"):
     raise SystemExit("actor is not shaped as an actor")
 if "<polygon" not in block("node", "value"):
     raise SystemExit("value object is not shaped as a value object")
-if block("node", "database").count("<path") < 2:
-    raise SystemExit("database has no database silhouette")
+if "<polygon" not in block("node", "database"):
+    raise SystemExit("database has no flat datastore silhouette")
 if block("node", "frontend").count("<polyline") < 2:
     raise SystemExit("frontend has no component silhouette")
-if block("node", "system").count("<polyline") < 2:
-    raise SystemExit("system endpoint has no box3d silhouette")
-if block("node", "backend").count("<polyline") < 2:
-    raise SystemExit("backend endpoint has no box3d silhouette")
-if "<polyline" in block("node", "service"):
-    raise SystemExit("internal service incorrectly uses an endpoint silhouette")
+for kind, title in (("system", "system"), ("backend", "backend"),
+                    ("service", "service"), ("bounded-context", "context")):
+    if "<polyline" in block("node", title):
+        raise SystemExit("%s uses a depth-cue silhouette" % kind)
+if "<polygon" not in block("node", "context") and \
+   "<path" not in block("node", "context"):
+    raise SystemExit("bounded-context has no direct context mark")
 queue = block("node", "queue")
 queue_path = re.search(r'<path[^>]* d="([^"]+)"', queue)
 if not queue_path:
@@ -313,11 +353,292 @@ if 'stroke-dasharray="5,2"' not in external:
     raise SystemExit("external system has no trust-boundary treatment")
 if not re.search(r'stroke-width="2(?:\.0)?"', external):
     raise SystemExit("external trust boundary is not visually explicit")
+
+# The legend uses the same emitted marks as the main graph. It carries only
+# kinds and relations present in this diagram, with direct shape evidence.
+for kind, expected in (
+    ("actor", "<ellipse"),
+    ("system", "<path"),
+    ("bounded-context", "<path"),
+    ("database", "<polygon"),
+    ("frontend", "<polygon"),
+    ("external-system", "<polygon"),
+):
+    if expected not in legend_mark("legend_node_mark_" + kind):
+        raise SystemExit("legend mark for %s is not the graph shape" % kind)
+for kind in ("domain", "subdomain", "bounded-context", "runtime", "subsystem", "deployment"):
+    boundary = legend_mark("cluster_legend_group_" + kind)
+    if "<path" not in boundary:
+        raise SystemExit("legend boundary %s has no carrier stroke" % kind)
+    if '<g id="' in boundary and 'class="node"' in boundary:
+        raise SystemExit("legend boundary %s contains a fake inner node" % kind)
+for kind in (
+    "actor", "bounded-context", "system", "aggregate", "entity", "value-object",
+    "event", "frontend", "backend", "service", "component", "queue", "topic",
+    "database", "external-system",
+):
+    legend_mark("legend_node_mark_" + kind)
+for relation in ("call", "dependency", "pubsub", "dataflow"):
+    relation_mark = legend_mark(
+        "legend_relation_from_" + relation + "->legend_relation_to_" + relation,
+    )
+    if '<g id="' not in relation_mark or 'class="edge"' not in relation_mark:
+        raise SystemExit("legend relation mark %s is missing its carrier edge" % relation)
+if 'stroke-dasharray="5,2"' not in legend_mark("legend_relation_from_dependency->legend_relation_to_dependency"):
+    raise SystemExit("legend dependency lost its dashed treatment")
+if 'stroke-dasharray="1,5"' not in legend_mark("legend_relation_from_pubsub->legend_relation_to_pubsub"):
+    raise SystemExit("legend pubsub lost its dotted treatment")
+if 'stroke-width="1.8"' not in legend_mark("legend_relation_from_dataflow->legend_relation_to_dataflow"):
+    raise SystemExit("legend dataflow lost its weighted treatment")
 PYTEST
     pass_line "SVG retains distinct cluster, shape, relation, and trust treatments"
   else
     fail_line "SVG does not retain distinct cluster, shape, relation, and trust treatments"
   fi
+fi
+
+# The grid keeps column centers stable across wrapped rows. The symbol area is
+# bounded independently of the carrier's natural aspect ratio, so a tall
+# boundary or wide queue cannot change its cell geometry. Names are followed
+# by their descriptions in the extracted text, proving labels sit outside the
+# text-free Graphviz payloads.
+pdftotext -bbox "$WORK/enriched.pdf" "$WORK/enriched-bbox.xml" 2>/dev/null
+if python3 - "$WORK/enriched-bbox.xml" <<'PYTEST'; then
+import re, sys
+
+xml = open(sys.argv[1], encoding="utf-8").read()
+legend_end = xml.find(">LEGEND</word>")
+legend_start = xml.rfind("<word", 0, legend_end)
+if legend_start < 0:
+    raise SystemExit("missing legend heading")
+legend_xml = xml[legend_start:]
+def boxes(word):
+    return [
+        tuple(map(float, match.groups()))
+        for match in re.finditer(
+            r'<word xMin="([0-9.]+)" yMin="([0-9.]+)" '
+            r'xMax="([0-9.]+)" yMax="([0-9.]+)">%s</word>' % re.escape(word),
+            legend_xml,
+        )
+    ]
+
+def legend_box(word):
+    values = boxes(word)
+    if not values:
+        raise SystemExit("missing legend word %s" % word)
+    return min(values, key=lambda value: value[1])
+
+def center(word):
+    box = legend_box(word)
+    return (box[0] + box[2]) / 2
+
+for words in (
+    ("aggregate", "dataflow"),
+    ("subdomain", "queue"),
+    ("entity", "topic"),
+    ("runtime", "database"),
+    ("subsystem", "event"),
+    ("deployment", "frontend", "call"),
+    ("actor", "backend", "dependency"),
+    ("service", "pubsub"),
+):
+    columns = [center(word) for word in words]
+    if max(columns) - min(columns) > 5:
+        raise SystemExit("equal-width grid column drift: %r" % columns)
+
+name = legend_box("actor")
+description = min(boxes("person"), key=lambda value: value[1])
+if description[1] <= name[1]:
+    raise SystemExit("legend description does not follow its symbol name")
+PYTEST
+  pass_line "legend uses aligned equal-width columns with labels below symbols"
+else
+  fail_line "legend columns or external label order is not stable"
+fi
+
+# Relation cells flow through the same eight-column grid as mark cells. Six
+# marks and three relations therefore occupy two compact rows.
+fixture aligned-relations '#set page(width: 500pt, height: 800pt, margin: 24pt)
+#diagram(
+  altitude: "L2",
+  title: "Zaligned",
+  nodes: (
+    (id: "actor", label: "Zactor", kind: "actor"),
+    (id: "system", label: "Zsystem", kind: "system"),
+    (id: "queue", label: "Zqueue", kind: "queue"),
+    (id: "topic", label: "Ztopic", kind: "topic"),
+    (id: "database", label: "Zdatabase", kind: "database"),
+    (id: "event", label: "Zevent", kind: "event"),
+  ),
+  edges: (
+    (from: "actor", to: "system", relation: "call", label: "Zcall"),
+    (from: "system", to: "queue", relation: "dependency", label: "Zdependency"),
+    (from: "queue", to: "topic", relation: "pubsub", label: "Zpubsub"),
+  ),
+)'
+out="$(compile_pdf aligned-relations)"
+if [ -f "$WORK/aligned-relations.pdf" ]; then
+  pdftotext -bbox "$WORK/aligned-relations.pdf" "$WORK/aligned-relations.xml" 2>/dev/null
+  if python3 - "$WORK/aligned-relations.xml" <<'PYTEST'; then
+import re, sys
+
+xml = open(sys.argv[1], encoding="utf-8").read()
+legend_end = xml.find(">LEGEND</word>")
+legend_start = xml.rfind("<word", 0, legend_end)
+if legend_start < 0:
+    raise SystemExit("missing legend heading")
+legend_xml = xml[legend_start:]
+def boxes(word):
+    return [
+        tuple(map(float, match.groups()))
+        for match in re.finditer(
+            r'<word xMin="([0-9.]+)" yMin="([0-9.]+)" '
+            r'xMax="([0-9.]+)" yMax="([0-9.]+)">%s</word>' % re.escape(word),
+            legend_xml,
+        )
+    ]
+
+def center(word):
+    values = boxes(word)
+    if not values:
+        raise SystemExit("missing legend word %s" % word)
+    box = min(values, key=lambda value: value[1])
+    return (box[0] + box[2]) / 2
+
+columns = [center(word) for word in (
+    "actor", "system", "queue", "topic", "database", "event",
+    "call", "dependency",
+)]
+steps = [right - left for left, right in zip(columns, columns[1:])]
+if max(steps) - min(steps) > 5:
+    raise SystemExit("merged grid column drift: %r" % columns)
+if abs(center("pubsub") - columns[0]) > 5:
+    raise SystemExit("merged grid did not wrap its ninth cell to column one")
+def y(word):
+    values = boxes(word)
+    if not values:
+        raise SystemExit("missing legend word %s" % word)
+    return min(values, key=lambda value: value[1])[1]
+
+if "RELATIONS" in legend_xml:
+    raise SystemExit("legend still emits a separate relations section")
+if abs(y("call") - y("event")) > 5:
+    raise SystemExit("relation cells do not flow through the merged grid")
+if y("pubsub") - y("actor") > 45:
+    raise SystemExit("legend rows retain excessive vertical spacing")
+if y("dotted") - y("LEGEND") > 125:
+    raise SystemExit("merged legend retains excessive total vertical spacing")
+PYTEST
+    pass_line "merged legend keeps relation columns aligned and rows compact"
+  else
+    fail_line "merged eight-column legend geometry is not stable"
+  fi
+else
+  fail_line "aligned-relations diagram did not render"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# A normal A4 page keeps eight equal columns even when all carriers are used.
+# The longest relation description wraps inside its cell while the following
+# relation remains on the same row without overlapping its text.
+fixture legend-a4-wrap '#set page(paper: "a4", margin: (x: 18mm, y: 18mm))
+#diagram(
+  altitude: "L2",
+  title: "Za4",
+  nodes: (
+    (id: "actor", label: "Zactor", kind: "actor"),
+    (id: "system", label: "Zsystem", kind: "system"),
+    (id: "queue", label: "Zqueue", kind: "queue"),
+    (id: "topic", label: "Ztopic", kind: "topic"),
+    (id: "database", label: "Zdatabase", kind: "database"),
+    (id: "event", label: "Zevent", kind: "event"),
+  ),
+  edges: (
+    (from: "actor", to: "system", relation: "call", label: "Zcalls"),
+    (from: "system", to: "queue", relation: "dependency", label: "Zdepends"),
+    (from: "queue", to: "topic", relation: "pubsub", label: "Zpublishes"),
+  ),
+)'
+out="$(compile_pdf legend-a4-wrap)"
+if [ -f "$WORK/legend-a4-wrap.pdf" ]; then
+  pdftotext -bbox "$WORK/legend-a4-wrap.pdf" "$WORK/legend-a4-wrap.xml" 2>/dev/null
+  if python3 - "$WORK/legend-a4-wrap.xml" <<'PYTEST'; then
+import re, sys
+
+xml = open(sys.argv[1], encoding="utf-8").read()
+def box(word):
+    match = re.search(
+        r'<word xMin="([0-9.]+)" yMin="([0-9.]+)" '
+        r'xMax="([0-9.]+)" yMax="([0-9.]+)">%s</word>' % re.escape(word),
+        xml,
+    )
+    if not match:
+        raise SystemExit("missing A4 legend word %s" % word)
+    return tuple(map(float, match.groups()))
+
+pubsub = box("pubsub")
+consume = box("consume")
+solid = box("solid")
+if consume[1] <= pubsub[1]:
+    raise SystemExit("long relation description did not wrap below its name")
+if pubsub[1] - solid[1] < 8:
+    raise SystemExit("wrapped relation cell overlaps the preceding row")
+page = re.search(r'<page width="([0-9.]+)" height="([0-9.]+)">', xml)
+if not page:
+    raise SystemExit("A4 page bounds are missing")
+page_width = float(page.group(1))
+for word in ("pubsub", "consume", "solid"):
+    if box(word)[2] > page_width:
+        raise SystemExit("A4 legend word exceeds the page width")
+PYTEST
+    pass_line "eight-column A4 legend wraps long captions without overlap"
+  else
+    fail_line "eight-column A4 legend captions overlap or escape their cells"
+  fi
+else
+  fail_line "legend-a4-wrap diagram did not render"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# Labels may contain quotes, backslashes, and an authored newline without a
+# `sub` field. The public PDF proves the value renders and the line boxes prove
+# the newline becomes a separate visual line rather than malformed DOT.
+fixture safe-label '#diagram(
+  altitude: "L2",
+  nodes: (
+    (id: "quoted", label: "Zquote " + str.from-unicode(34) + "quoted" + str.from-unicode(34) + " " + str.from-unicode(92) + "n" + str.from-unicode(10) + "Zsecond", kind: "system"),
+    (id: "peer", label: "Zpeer", kind: "service"),
+  ),
+  edges: (("quoted", "peer", "Zlabel"),),
+)'
+out="$(compile_pdf safe-label)"
+if [ -f "$WORK/safe-label.pdf" ]; then
+  pdftotext -bbox "$WORK/safe-label.pdf" "$WORK/safe-label.xml" 2>/dev/null
+  if python3 - "$WORK/safe-label.xml" <<'PYTEST'; then
+import re, sys
+xml = open(sys.argv[1], encoding="utf-8").read()
+def box(word):
+    match = re.search(
+        r'<word xMin="([0-9.]+)" yMin="([0-9.]+)"[^>]*>%s</word>' % re.escape(word),
+        xml,
+    )
+    if not match:
+        raise SystemExit("missing %s" % word)
+    return tuple(map(float, match.groups()))
+first = box("Zquote")
+second = box("Zsecond")
+if second[1] <= first[1]:
+    raise SystemExit("authored label newline did not produce a second line")
+if "quoted" not in xml:
+    raise SystemExit("quoted label text was lost")
+PYTEST
+    pass_line "diagram labels preserve quotes, backslashes, and authored line breaks"
+  else
+    fail_line "diagram label escaping or line separation changed the output"
+  fi
+else
+  fail_line "safe-label diagram did not render"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
 # Existing solved tuple edges remain valid, including their legacy dashed

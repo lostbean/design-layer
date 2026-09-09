@@ -90,6 +90,7 @@ EOF
 cat >"$LAYER/alpha/design.typ" <<'EOF'
 #import "../.render/designlib.typ": *
 #let title = [Zalpha context]
+#let accent = "rose"
 #let body = [
   #section(title: "00 Foundation", body: [
     #goal(title: "Zalphagoal")[Alpha goal.]

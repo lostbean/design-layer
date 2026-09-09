@@ -1059,11 +1059,11 @@
   }
 }
 
-// ANSWERS PANELS and COMPONENT CARDS carry different facts, but a reader
-// should learn their visual grammar once. This constructor owns that grammar:
-// callers supply semantic content, while heading/body typography and every
-// frame token stay here. The component table owns equal row heights; a
-// standalone answers panel keeps its natural height.
+// ANSWERS PANELS, COMPONENT CARDS, and CONTRACT CARDS carry different facts,
+// but a reader should learn their visual grammar once. These constructors own
+// that grammar: callers supply semantic content, while heading/body typography
+// and every frame token stay here. The component table owns equal row heights;
+// standalone panels keep their natural height.
 #let _card-anatomy(accent) = {
   let c = TINT-COLOR.at(accent)
   (
@@ -1107,6 +1107,61 @@
   )
 }
 
+#let _unit-data(kind, name: none, lens: none, mission: none, answers: none,
+               body: none, tint: none) = {
+  let gs = ()
+  for (f, v) in (("name", name), ("mission", mission)) {
+    if v == none or v == "" {
+      gs.push((rule: kind + ".missing-field",
+               message: kind + " is missing " + f + " — a card without it "
+                        + "renders as a card that does not name that fact."))
+    }
+  }
+  if lens != none { _req-enum("lens", lens, LENSES) }
+  _enum(kind, "tint", tint, TINTS)
+  (name: name, lens: lens, mission: mission, answers: answers, body: body,
+   tint: tint,
+   _guides: gs)
+}
+
+#let _pill(label, color, fill: none) = {
+  let fill = if fill == none { color.lighten(85%) } else { fill }
+  box(
+    fill: fill,
+    inset: (x: 3pt, y: 1pt),
+    radius: 1.5pt,
+    text(size: RENDERER-META, weight: "bold", fill: color.darken(20%))[#label],
+  )
+}
+
+#let _unit-furniture(lens: none, role: none, color: black) = {
+  let pills = ()
+  if role != none {
+    pills.push(_pill(role, color, fill: color.lighten(90%)))
+  }
+  if lens != none {
+    let lens-color = LENS-COLOR.at(lens)
+    pills.push(_pill(lens, lens-color))
+  }
+  if pills.len() == 0 {
+    none
+  } else if pills.len() == 1 {
+    pills.at(0)
+  } else {
+    grid(columns: (auto,) * pills.len(), gutter: 3pt, ..pills)
+  }
+}
+
+#let _unit-body(item, color) = [
+  #set par(justify: false)
+  #text(weight: "bold")[#item.mission]
+  #if item.body != none [ #v(1.5pt) #item.body ]
+  #if item.answers != none [
+    #v(3pt) #line(length: 100%, stroke: 0.4pt + luma(220)) #v(3pt)
+    #_answers-compact(item.answers, color: color)
+  ]
+]
+
 #let answers(
   title: none, accent: "teal", responsibility: none, interface: none,
   interactions: none, invariants: none, failure: none,
@@ -1139,19 +1194,36 @@
 // dictionary and replayed there — see `_guides`.
 #let component(name: none, lens: none, mission: none, answers: none, body: none,
               tint: none) = {
-  let gs = ()
-  for (f, v) in (("name", name), ("mission", mission)) {
-    if v == none or v == "" {
-      gs.push((rule: "component.missing-field",
-               message: "component is missing " + f + " — a card without it "
-                        + "renders as a card that does not name that fact."))
-    }
-  }
-  if lens != none { _req-enum("lens", lens, LENSES) }
-  _enum("component", "tint", tint, TINTS)
-  (name: name, lens: lens, mission: mission, answers: answers, body: body,
-   tint: tint,
-   _guides: gs)
+  _unit-data("component", name: name, lens: lens, mission: mission,
+             answers: answers, body: body, tint: tint)
+}
+
+// CONTRACT CARDS — the named agreement between independently owned units.
+// This constructor shares the component data and card anatomy, but renders a
+// single full-width card and makes the contract role explicit in the header.
+#let contract(
+  name: none, lens: none, mission: none, answers: none, body: none,
+  accent: "teal", tint: none,
+) = {
+  _req-enum("accent", accent, TINTS)
+  let item = _unit-data(
+    "contract", name: name, lens: lens, mission: mission,
+    answers: answers, body: body, tint: tint,
+  )
+  _guides(item.at("_guides", default: ()))
+  let item-tint = item.at("tint", default: none)
+  let resolved-tint = if item-tint == none { accent } else { item-tint }
+  let color = TINT-COLOR.at(resolved-tint)
+  _card(
+    accent: resolved-tint,
+    title: item.name,
+    furniture: _unit-furniture(
+      lens: item.lens, role: "contract", color: color,
+    ),
+  )[
+    #_unit-body(item, color)
+  ]
+  v(0.45em)
 }
 
 #let components(..cs, accent: "teal", cols: "2") = {
@@ -1198,28 +1270,12 @@
         } else { TINT-COLOR.at(item-tint) }
         _card-content(
           title: x.name,
-          furniture: if x.lens != none {
-            let lens-color = LENS-COLOR.at(x.lens)
-            box(
-              fill: lens-color.lighten(85%),
-              inset: (x: 3pt, y: 1pt),
-              radius: 1.5pt,
-              text(
-                size: RENDERER-META,
-                weight: "bold",
-                fill: lens-color.darken(20%),
-              )[#x.lens],
-            )
-          } else { none },
+          furniture: _unit-furniture(
+            lens: x.lens, color: item-color,
+          ),
           color: item-color,
         )[
-          #set par(justify: false)
-          #text(weight: "bold")[#x.mission]
-          #if x.body != none [ #v(1.5pt) #x.body ]
-          #if x.answers != none [
-            #v(3pt) #line(length: 100%, stroke: 0.4pt + luma(220)) #v(3pt)
-            #_answers-compact(x.answers, color: item-color)
-          ]
+          #_unit-body(x, item-color)
         ]
       }),
     )

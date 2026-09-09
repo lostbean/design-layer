@@ -410,6 +410,70 @@ else
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
+# A contract is the same card anatomy with a distinct role mark, and its
+# standalone constructor occupies one full-width row rather than a component
+# grid cell. Its domain tint remains the tint of the enclosing design view.
+fixture contract-card '#set page(width: 420pt, height: 520pt, margin: 24pt)
+#contract(
+  name: "Zcontract-title",
+  accent: "blue",
+  mission: "Zcontract-mission",
+  answers: answers-data(responsibility: [Zcontract-responsibility]),
+)
+#components(
+  accent: "rose",
+  component(name: "Zcontract-component-a", mission: "Mission"),
+  component(name: "Zcontract-component-b", mission: "Mission"),
+)
+'
+out="$(compile contract-card plain)"
+if [ -f "$WORK/contract-card.pdf" ]; then
+  pdftotext "$WORK/contract-card.pdf" "$WORK/contract-card.txt" 2>/dev/null
+  compile_svg contract-card >/dev/null
+  if [ -f "$WORK/contract-card.svg" ] && python3 - "$WORK/contract-card.svg" "$WORK/contract-card.txt" <<'PYTEST'; then
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+svg = open(sys.argv[1], encoding="utf-8").read()
+text = open(sys.argv[2], encoding="utf-8").read()
+for mark in ("Zcontract-title", "Zcontract-mission", "Zcontract-responsibility"):
+    if mark not in text:
+        raise SystemExit("contract card is missing rendered mark %s" % mark)
+if not re.search(r"(?m)^\s*contract\s*$", text):
+    raise SystemExit("contract card is missing its exact role mark")
+if not re.search(r'#0ea5e9', svg):
+    raise SystemExit("contract card did not retain its declared blue accent")
+
+shapes = [
+    element.attrib
+    for element in ET.fromstring(svg).iter()
+    if element.attrib.get("class") == "typst-shape"
+]
+fills = [
+    attrs for attrs in shapes
+    if attrs.get("fill") not in (None, "none", "#ffffff")
+]
+spans = []
+for attrs in fills:
+    values = [
+        abs(float(value))
+        for value in re.findall(r'[hH]\s*(-?[0-9.]+)', attrs.get("d", ""))
+    ]
+    if values and max(values) > 100:
+        spans.append(max(values))
+if len(spans) < 3 or max(spans) < 1.8 * min(spans):
+    raise SystemExit("contract card is not wider than component cells: %r" % spans)
+PYTEST
+    pass_line "contract cards share anatomy, expose their role, and occupy a full-width row"
+  else
+    fail_line "contract card role or full-width geometry failed"
+  fi
+else
+  fail_line "contract-card fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
 # Ownership tint is explicit: a known tint colors the frame and ownership
 # chips, while an omitted tint retains the neutral treatment.
 fixture entity-known-tint '#set page(width: 360pt, height: 400pt, margin: 24pt)
@@ -530,6 +594,8 @@ assert_invariant "cards-invalid-cols" "cards block: invalid cols" \
   '#cards(cols: "1", items: ((title: "One", body: [Body]),))'
 assert_invariant "components-invalid-cols" "cols=" \
   '#components(cols: "4", component(name: "One", mission: "Mission"))'
+assert_invariant "contract-invalid-tint" "contract block: invalid tint" \
+  '#contract(name: "One", mission: "Mission", tint: "chartreuse")'
 assert_invariant "ctx-invalid-accent" "ctx block: invalid accent" \
   '#ctx("sample", accent: "chartreuse")'
 
@@ -1013,6 +1079,9 @@ assert_guideline section-untitled "section is missing title" \
 
 assert_guideline component-missionless "component is missing mission" \
   '#components(component(name: "C1"))'
+
+assert_guideline contract-missionless "contract is missing mission" \
+  '#contract(name: "C1")'
 
 # A stat tile hands a DICTIONARY to its grid, so it cannot emit its own
 # guidance and defers it to the block that renders it. The fixture therefore

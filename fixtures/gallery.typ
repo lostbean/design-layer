@@ -184,6 +184,18 @@
       invariants: [A stale rendered document fails the check.],
       failure: [Exit 1 on a violation, exit 2 on a missing tool.],
     )
+
+    #contract(
+      name: "The projection contract",
+      accent: "rose",
+      mission: "Keep the declared schema and projected library aligned.",
+      lens: "composition",
+      answers: answers-data(
+        responsibility: [Project the schema into the callable library.],
+        interface: [The schema and library compile as one contract.],
+        failure: [A projection mismatch stops the render.],
+      ),
+    )
   ],
 )
 

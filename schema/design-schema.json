@@ -377,7 +377,7 @@
     },
     "provenance": {
       "values": ["authored", "derived", "observed"],
-      "note": "how an entity attribute ARISES — the load-bearing field of the entity census. authored: a human stated it, so it can be wrong and it drifts. derived: computed from other facts, so it cannot desynchronize. observed: recorded from outside the system, so it describes reality but never authorizes it. PREFER DERIVED OVER AUTHORED wherever a human would otherwise author a claim about something observable — an authored claim about an observable fact is the attribute most likely to go stale. Never let an observed value auto-publish into authoritative state: description is not authority"
+      "note": "how an entity attribute ARISES — the load-bearing field of the entity census. authored: a human stated it, so it can be wrong and it drifts. derived: computed from other facts and not independently authored; synchronization follows the declared derive-at-read or derive-at-write policy. observed: recorded from outside the system, so it describes reality but never authorizes it. PREFER DERIVED OVER AUTHORED wherever a human would otherwise author a claim about something observable — an authored claim about an observable fact is the attribute most likely to go stale. Never let an observed value auto-publish into authoritative state: description is not authority"
     },
     "lens": {
       "values": [

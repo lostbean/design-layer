@@ -123,12 +123,46 @@
       ]))))
   v(0.45em)
 }
-#let md-table(ncol, cells) = block(width: 100%)[
-  #set par(justify: false)
-  #table(
-    columns: ncol, stroke: 0.4pt + luma(215), inset: 5pt,
-    fill: (_, y) => if y == 0 { luma(243) }, ..cells)
-]
+#let md-table(ncol, cells) = {
+  if type(ncol) != int or ncol < 1 {
+    panic("md-table: column count must be a positive integer")
+  }
+  if type(cells) != array {
+    panic("md-table: cells must be an array")
+  }
+  if cells.len() < ncol {
+    panic("md-table: cells must include a header row")
+  }
+  if calc.rem(cells.len(), ncol) != 0 {
+    panic("md-table: cells must form whole rows")
+  }
+  let last-row = calc.ceil(cells.len() / ncol) - 1
+  let header = cells.slice(0, ncol).map(cell => [
+    #set text(weight: "semibold")
+    #show strong: it => it.body
+    #cell
+  ])
+  let body = cells.slice(ncol)
+  block(width: 100%)[
+    #set par(justify: false)
+    #table(
+      columns: (auto,) * (ncol - 1) + (1fr,),
+      stroke: (_, y) => (
+        top: none,
+        right: none,
+        bottom: if y == last-row { none } else if y == 0 {
+          0.7pt + luma(150)
+        } else {
+          0.3pt + luma(220)
+        },
+        left: none,
+      ),
+      inset: (x: 5pt, y: 4pt),
+      table.header(..header),
+      ..body,
+    )
+  ]
+}
 #let code-block(lang, src) = raw(src, block: true, lang: lang)
 #let embedded-svg(caption: none, file: none, ..a, body) = block(
   width: 100%, inset: 6pt, stroke: 0.5pt + luma(200), radius: 3pt,

@@ -343,6 +343,42 @@
       ),
     )
 
+    #text(size: 6.5pt, weight: "bold", tracking: 0.4pt, fill: luma(95))[
+      PROSE WITH A COMPACT STATUS
+    ]
+    #md-table(
+      2,
+      (
+        [*Explanation*], [*Status*],
+        [A compact final column leaves the remaining measure to the explanation.], [ready],
+        [A second row proves the divider without closing the outside edge.], [held],
+      ),
+    )
+
+    #text(size: 6.5pt, weight: "bold", tracking: 0.4pt, fill: luma(95))[
+      FIVE-COLUMN DECISION MATRIX
+    ]
+    #md-table(
+      5,
+      (
+        [*Concern*], [*Owner*], [*State*], [*Consequence*], [*Record*],
+        [Rendering], [library], [active], [The table fills the measure while compact columns retain content width.], [ADR-0123],
+        [Validation], [gate], [required], [Malformed rows fail before the renderer can imply missing cells.], [ADR-0124],
+      ),
+    )
+
+    #text(size: 6.5pt, weight: "bold", tracking: 0.4pt, fill: luma(95))[
+      SINGLE-COLUMN REGISTER
+    ]
+    #md-table(
+      1,
+      (
+        [*Declared behavior*],
+        [The single track consumes the complete measure.],
+        [The first row remains a semantic table header.],
+      ),
+    )
+
     #code-block("bash", "nix run .#check -- docs/design .")
   ],
 )

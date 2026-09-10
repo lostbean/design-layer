@@ -188,6 +188,206 @@ else
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
+# A compact prose table uses the complete text measure. Content-sized columns
+# alone leave unused space to the right, which weakens alignment with the
+# surrounding document and changes the table width as short values change.
+fixture table-full-width '#set page(width: 420pt, height: 260pt, margin: 24pt)
+#md-table(3, (
+  [Phase], [Reads], [Decides],
+  [assert], [source], [contracts],
+  [render], [document], [current],
+))'
+out="$(compile_svg table-full-width)"
+if [ -f "$WORK/table-full-width.svg" ] && python3 - "$WORK/table-full-width.svg" <<'PYTEST'; then
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.parse(sys.argv[1]).getroot()
+widest = max(
+    (
+        abs(float(distance))
+        for element in root.iter()
+        if element.tag.endswith("path") and element.attrib.get("stroke") not in (None, "none")
+        for distance in re.findall(r"h\s*(-?[0-9.]+)", element.attrib.get("d", ""))
+    ),
+    default=0.0,
+)
+
+# The page's 420pt width minus two 24pt margins leaves a 372pt text measure.
+if widest < 371.5:
+    raise SystemExit("widest table rule is %.2fpt, expected 372pt" % widest)
+PYTEST
+  pass_line "a compact prose table uses the complete text measure"
+else
+  fail_line "compact prose table did not consume the complete text measure"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# A prose table uses editorial row separators rather than a spreadsheet frame.
+# The header rule is stronger than each body rule, while the outside edge and
+# every vertical edge remain open so the table follows the document's rhythm.
+if [ -f "$WORK/table-full-width.svg" ] && python3 - "$WORK/table-full-width.svg" <<'PYTEST'; then
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.parse(sys.argv[1]).getroot()
+strokes = [
+    element
+    for element in root.iter()
+    if element.tag.endswith("path") and element.attrib.get("stroke") not in (None, "none")
+]
+vertical = [
+    element for element in strokes
+    if re.search(r"v\s*-?[0-9.]", element.attrib.get("d", ""))
+]
+horizontal = [
+    element for element in strokes
+    if re.search(r"h\s*-?[0-9.]", element.attrib.get("d", ""))
+]
+if vertical:
+    raise SystemExit("found %d vertical table rule(s)" % len(vertical))
+if len(horizontal) != 2:
+    raise SystemExit("found %d horizontal rules, expected two internal rules" % len(horizontal))
+widths = sorted({round(float(element.attrib["stroke-width"]), 2) for element in horizontal})
+if len(widths) != 2 or widths[0] >= widths[1]:
+    raise SystemExit("header and body rules lack distinct weights: %r" % widths)
+PYTEST
+  pass_line "a prose table uses open edges and weighted internal row rules"
+else
+  fail_line "prose table did not use open edges and weighted internal row rules"
+fi
+
+# The first row is the declared header in md-table's public contract. Its PDF
+# structure must therefore expose TH cells while later rows remain TD cells;
+# visual emphasis alone does not give assistive technology that distinction.
+out="$(compile table-full-width plain)"
+if [ -f "$WORK/table-full-width.pdf" ]; then
+  structure="$(pdfinfo -struct-text "$WORK/table-full-width.pdf" 2>/dev/null)"
+  case "$structure" in
+  *"THead"*"TH"*"Phase"*"TBody"*"TD"*"assert"*)
+    pass_line "the first table row is tagged as header cells"
+    ;;
+  *)
+    fail_line "the first table row is not tagged as header cells"
+    printf '%s\n' "$structure" | head -18 | sed 's/^/       /'
+    ;;
+  esac
+else
+  fail_line "table header semantics fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# Header emphasis belongs to the renderer because the first row is already a
+# declared header. A caller should not need to add strong markup to distinguish
+# it visually from the data rows.
+fixture table-header-emphasis '#set page(width: 220pt, height: 140pt, margin: 20pt)
+#md-table(1, ([Zheader], [Zbody]))'
+out="$(compile table-header-emphasis plain)"
+if [ -f "$WORK/table-header-emphasis.pdf" ]; then
+  font_count="$(pdffonts "$WORK/table-header-emphasis.pdf" 2>/dev/null | awk 'NR > 2 { print $1 }' | sort -u | wc -l | tr -d ' ')"
+  if [ "$font_count" -ge 2 ]; then
+    pass_line "the renderer gives table headers distinct text emphasis"
+  else
+    fail_line "table headers use the same text weight as body cells"
+  fi
+else
+  fail_line "table header emphasis fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# A short trailing status column stays compact while the prose column receives
+# the free width. This guards the opposite column shape from the gallery table,
+# whose descriptive content lives in the final column.
+fixture table-prose-first '#set page(width: 420pt, height: 260pt, margin: 24pt)
+#md-table(2, (
+  [Description], [Zstatus],
+  [A moderate explanation that benefits from the remaining line width.], [ok],
+  [A second explanation keeps the column role representative.], [done],
+))'
+out="$(compile table-prose-first plain)"
+if [ -f "$WORK/table-prose-first.pdf" ]; then
+  pdftotext -bbox "$WORK/table-prose-first.pdf" "$WORK/table-prose-first.xml" 2>/dev/null
+  if python3 - "$WORK/table-prose-first.xml" <<'PYTEST'; then
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r'<word xMin="([0-9.]+)"[^>]*>Zstatus</word>', xml)
+if not match:
+    raise SystemExit("status header was not extracted")
+status_x = float(match.group(1))
+if status_x < 340:
+    raise SystemExit("short trailing column starts at %.2fpt, expected at least 340pt" % status_x)
+PYTEST
+    pass_line "a short trailing column stays compact beside prose"
+  else
+    fail_line "short trailing column consumed prose width"
+  fi
+else
+  fail_line "prose-first table fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+assert_invariant table-zero-columns "md-table: column count" \
+  '#md-table(0, ())'
+assert_invariant table-partial-row "md-table: cells must form whole rows" \
+  '#md-table(2, ([A], [B], [one]))'
+assert_invariant table-missing-header "md-table: cells must include a header row" \
+  '#md-table(2, ())'
+assert_invariant table-cells-type "md-table: cells must be an array" \
+  '#md-table(2, [not an array])'
+
+# A long table repeats its declared header after every page break. This checks
+# the rendered pages rather than only the logical PDF structure, because one
+# semantic header could exist while later pages omit its visible repetition.
+fixture table-multipage '#set page(width: 420pt, height: 180pt, margin: 20pt)
+#let rows = range(18).map(i => ([row #i], [A value with enough words to keep the row readable.])).flatten()
+#md-table(2, ([Zheader], [Value]) + rows)'
+out="$(compile table-multipage plain)"
+if [ -f "$WORK/table-multipage.pdf" ]; then
+  pdftotext -bbox "$WORK/table-multipage.pdf" "$WORK/table-multipage.xml" 2>/dev/null
+  if python3 - "$WORK/table-multipage.xml" <<'PYTEST'; then
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8").read()
+pages = len(re.findall(r"<page ", xml))
+headers = len(re.findall(r">Zheader</word>", xml))
+if pages < 2:
+    raise SystemExit("fixture did not paginate")
+if headers != pages:
+    raise SystemExit("header rendered %d time(s) across %d pages" % (headers, pages))
+PYTEST
+    pass_line "a multi-page table repeats its visible header on every page"
+  else
+    fail_line "multi-page table did not repeat its visible header"
+  fi
+else
+  fail_line "multi-page table fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
+# One unusually tall cell may split across pages instead of disappearing,
+# clipping, or forcing an impossible unbroken row. The sentinel at the end
+# proves that the complete cell content survives the page boundary.
+fixture table-long-cell '#set page(width: 420pt, height: 180pt, margin: 20pt)
+#md-table(1, ([Zheader], [#lorem(220) Ztail]))'
+out="$(compile table-long-cell plain)"
+if [ -f "$WORK/table-long-cell.pdf" ]; then
+  text="$(pdftotext "$WORK/table-long-cell.pdf" - 2>/dev/null)"
+  pages="$(pdfinfo "$WORK/table-long-cell.pdf" 2>/dev/null | awk '/^Pages:/ { print $2 }')"
+  if [ "${pages:-0}" -ge 2 ] && printf '%s\n' "$text" | rg -q 'Ztail'; then
+    pass_line "a single long cell flows across pages without losing content"
+  else
+    fail_line "single long cell did not flow across pages intact"
+  fi
+else
+  fail_line "long-cell table fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
 # Component grids default to two columns and honor an explicit three-column
 # request. The same rendered fixture proves table cells share row height and
 # place their headings at a common top coordinate.

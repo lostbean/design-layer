@@ -330,6 +330,39 @@ else
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
+# Two prose-heavy columns must share the available measure. A leading prose
+# column must not leave the final prose column narrow enough to wrap every word
+# onto its own line.
+fixture table-multiple-prose '#set page(width: 420pt, height: 260pt, margin: 24pt)
+#md-table(3, (
+  [Perspective], [Application], [Required distinction],
+  [Design], [Capture value shapes, lifecycle edges, invariants, and ownership.], [Zrequired Zdistinction remains readable beside another prose column.],
+  [Implementation], [Carry accepted shapes and enforcement boundaries into evidence.], [Ordinary rejection stays distinct from unexpected failure.],
+))'
+out="$(compile table-multiple-prose plain)"
+if [ -f "$WORK/table-multiple-prose.pdf" ]; then
+  pdftotext -bbox "$WORK/table-multiple-prose.pdf" "$WORK/table-multiple-prose.xml" 2>/dev/null
+  if python3 - "$WORK/table-multiple-prose.xml" <<'PYTEST'; then
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8").read()
+required = re.search(r'<word [^>]*yMin="([0-9.]+)"[^>]*>Zrequired</word>', xml)
+distinction = re.search(r'<word [^>]*yMin="([0-9.]+)"[^>]*>Zdistinction</word>', xml)
+if not required or not distinction:
+    raise SystemExit("prose markers were not extracted")
+if abs(float(required.group(1)) - float(distinction.group(1))) > 0.2:
+    raise SystemExit("the final prose column wraps one word per line")
+PYTEST
+    pass_line "multiple prose columns share the available measure"
+  else
+    fail_line "a leading prose column starved the final prose column"
+  fi
+else
+  fail_line "multiple-prose table fixture did not compile"
+  printf '%s\n' "$out" | head -5 | sed 's/^/       /'
+fi
+
 assert_invariant table-zero-columns "md-table: column count" \
   '#md-table(0, ())'
 assert_invariant table-partial-row "md-table: cells must form whole rows" \

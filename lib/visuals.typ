@@ -143,10 +143,15 @@
     #cell
   ])
   let body = cells.slice(ncol)
+  let columns = range(ncol).map(column => {
+    let lengths = range(column, cells.len(), step: ncol).map(index => repr(cells.at(index)).len())
+    let longest = lengths.fold(0, (current, length) => calc.max(current, length))
+    calc.min(48, calc.max(8, longest)) * 1fr
+  })
   block(width: 100%)[
     #set par(justify: false)
     #table(
-      columns: (auto,) * (ncol - 1) + (1fr,),
+      columns: columns,
       stroke: (_, y) => (
         top: none,
         right: none,

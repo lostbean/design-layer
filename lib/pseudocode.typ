@@ -5,6 +5,7 @@
 // without binding the design to one programming language. The constructors
 // keep control flow as data, so indentation and keywords are renderer-owned.
 #import "schema.typ": *
+#import "semantic.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *
 
@@ -124,6 +125,17 @@
   if steps.len() == 0 {
     _guide("pseudocode.empty", "pseudocode() holds at least one step")
   }
+  if context-projection {
+    let projected = semantic("pseudocode", fields: (
+      id: id, title: title, inputs: inputs, outputs: outputs,
+      steps: steps, caption: caption,
+    ))
+    return if id == none {
+      projected
+    } else {
+      [#_semantic-target("pseudocode-" + id)#projected]
+    }
+  }
 
   let c = TINT-COLOR.at(accent)
   let rendered = block(
@@ -161,7 +173,7 @@
   if id == none {
     rendered
   } else {
-    [#metadata(id)#label("pseudocode-" + id)#rendered]
+    [#metadata(id)#rendered#label("pseudocode-" + id)]
   }
   v(0.55em)
 }

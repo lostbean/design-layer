@@ -37,6 +37,7 @@
 #import "native.typ": _drawing-frame, _req-enum
 #import "furniture.typ": chip
 #import "census.typ": _note-state-type, _note-state-machine
+#import "semantic.typ": *
 
 // The reading direction. A machine that runs from an entry to a terminal reads
 // left to right like a sentence; one whose states cycle is often clearer top to
@@ -75,6 +76,11 @@
       variant
     }
   })
+  if context-projection {
+    return semantic("state-type", fields: (
+      id: id, title: title, variants: variants,
+    ))
+  }
   _note-state-type(id, title, normalized)
   [#metadata(id)#label("state-type-" + id)
    #block(width: 100%, breakable: true, radius: 3pt,
@@ -117,27 +123,22 @@
   if linked and link-values.any(v => v == none) {
     _fail("state-machine", "state link requires id, subject, state-field, and state-type together")
   }
-  if linked { _note-state-machine(id, subject, state-field, state-type, states) }
+  if linked and not context-projection {
+    _note-state-machine(id, subject, state-field, state-type, states)
+  }
   let with-target(body) = if linked {
     [#metadata(id)#label("state-machine-" + id)#body]
   } else { body }
   _req-enum("accent", accent, TINTS)
   _req-enum("machine flow", flow, MACHINE-FLOWS)
 
-  // AN EMPTY MACHINE NEVER REACHES THE CARRIER. The guidance is the whole
-  // response: a graph with no nodes renders an empty frame, and the block says
-  // what it expected rather than drawing nothing and looking broken.
   if states.len() == 0 {
     _guide("machine.states",
            "a state machine is expected to declare at least one state. An " +
            "empty machine renders a blank frame, which reads as a drawing " +
            "that failed rather than as the absence of one.")
-    return with-target(_drawing-frame(
-      tint: TINT-COLOR.at(accent), kind: [STATE MACHINE],
-      title: title, caption: caption, [],
-    ))
   }
-  if initial == none {
+  if states.len() > 0 and initial == none {
     _guide("machine.initial",
            "the machine does not say which state it starts in, so a reader " +
            "cannot tell where to begin following it. Name one of " +
@@ -162,7 +163,21 @@
     }
   }
 
+  if context-projection {
+    return semantic("state-machine", fields: (
+      id: id, subject: subject, state-field: state-field, state-type: state-type,
+      title: title, caption: caption, accent: accent, flow: flow,
+      states: states, transitions: transitions, initial: initial,
+      accepting: accepting,
+    ))
+  }
+
   let c = TINT-COLOR.at(accent)
+  if states.len() == 0 {
+    return with-target(_drawing-frame(
+      tint: c, kind: [STATE MACHINE], title: title, caption: caption, [],
+    ))
+  }
   let nl = "\n"
   let hx(x) = _q(x.to-hex())
   let f = "fontname=" + _q("Libertinus Serif")

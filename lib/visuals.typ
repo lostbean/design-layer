@@ -1,5 +1,6 @@
 // ---- admonitions, cards, stat tiles, tables, embedded figures -----------
 #import "schema.typ": *
+#import "semantic.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *
 #import "furniture.typ": *
@@ -7,15 +8,18 @@
 #let _clue(kind, title, tint, body) = {
   _enum(kind, "tint", tint, TINTS)
   let c = if tint == none { KIND-COLOR.at(kind) } else { TINT-COLOR.at(tint) }
-  block(width: 100%, inset: (x: 8pt, y: 7pt), fill: c.lighten(95%),
-    stroke: 0.5pt + c.lighten(50%), radius: 2pt,
-    [
-      #set par(justify: false)
-      #text(size: 6.5pt, fill: c, weight: "bold", tracking: 0.4pt,
-            upper(if title != none { title } else { kind }))
-      #linebreak() #body
-    ])
-  v(0.45em)
+  let visual = {
+    block(width: 100%, inset: (x: 8pt, y: 7pt), fill: c.lighten(95%),
+      stroke: 0.5pt + c.lighten(50%), radius: 2pt,
+      [
+        #set par(justify: false)
+        #text(size: 6.5pt, fill: c, weight: "bold", tracking: 0.4pt,
+              upper(if title != none { title } else { kind }))
+        #linebreak() #body
+      ])
+    v(0.45em)
+  }
+  semantic-result(kind, visual, fields: (title: title, tint: tint, body: body))
 }
 #let info(title: none, tint: none, ..a, body) = _clue("info", title, tint, body)
 #let warning(title: none, tint: none, ..a, body) = _clue("warning", title, tint, body)
@@ -57,6 +61,9 @@
   _enum("cards", "size", size, ("md", "sm"))
   for it in items {
     _enum("cards item", "tint", it.at("tint", default: none), TINTS)
+  }
+  if context-projection {
+    return semantic("cards", fields: (tint: tint, size: size, items: items))
   }
   let c = if tint == none { luma(180) } else { TINT-COLOR.at(tint) }
   let longest = calc.max(..items.map(it => _len(it.body)), 0)
@@ -103,6 +110,9 @@
            "stat-grid() holds at least one tile; an empty grid renders nothing")
     return
   }
+  if context-projection {
+    return semantic("stat-grid", fields: (cols: cols, tiles: ts))
+  }
   // Replay each tile's deferred guidance from here, a content position.
   for t in ts { _guides(t.at("_guides", default: ())) }
   block(width: 100%, grid(columns: (1fr,) * calc.min(ts.len(), int(cols)),
@@ -136,6 +146,9 @@
   }
   if calc.rem(cells.len(), ncol) != 0 {
     panic("md-table: cells must form whole rows")
+  }
+  if context-projection {
+    return semantic("md-table", fields: (ncol: ncol, cells: cells))
   }
   let last-row = calc.ceil(cells.len() / ncol) - 1
   let header = cells.slice(0, ncol).map(cell => [
@@ -174,6 +187,9 @@
   if type(lang) != str or lang.trim() == "" {
     panic("code-block language must be a non-empty string")
   }
+  if context-projection {
+    return semantic("code-block", fields: (lang: lang, src: src))
+  }
   let c = TINT-COLOR.at("slate")
   block(
     width: 100%, breakable: false,
@@ -193,6 +209,11 @@
   v(0.45em)
 }
 #let embedded-svg(caption: none, file: none, ..a, body) = {
+  if context-projection {
+    return semantic("embedded-svg", fields: (
+      caption: caption, file: file, body: body,
+    ))
+  }
   let c = TINT-COLOR.at("slate")
   block(
     width: 100%, breakable: false,

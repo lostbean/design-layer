@@ -1,20 +1,24 @@
 // ---- inline furniture: lens pills, chips, links, the inline layer -------
 #import "schema.typ": *
+#import "semantic.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *
 
 #let pill(..names) = {
   let ns = names.pos()
   for n in ns { _enum("lens pill", "lens", n, LENSES) }
-  box(baseline: 2pt)[
-    #for (i, n) in ns.enumerate() {
-      let c = LENS-COLOR.at(n)
-      box(inset: (x: 4pt, y: 1.35pt), radius: 6pt,
-          fill: c.lighten(84%), stroke: 0.45pt + c.lighten(38%),
-          text(size: 6.4pt, fill: c.darken(22%), weight: "bold", n))
-      if i < ns.len() - 1 { h(2pt) }
-    }
-  ]
+  let visual = {
+    box(baseline: 2pt)[
+      #for (i, n) in ns.enumerate() {
+        let c = LENS-COLOR.at(n)
+        box(inset: (x: 4pt, y: 1.35pt), radius: 6pt,
+            fill: c.lighten(84%), stroke: 0.45pt + c.lighten(38%),
+            text(size: 6.4pt, fill: c.darken(22%), weight: "bold", n))
+        if i < ns.len() - 1 { h(2pt) }
+      }
+    ]
+  }
+  semantic-result("pill", visual, fields: (names: ns))
 }
 
 #let chip(body, tone: none) = {

@@ -36,7 +36,9 @@
 #   3. the gallery RENDERS, and its marks reach the page — a function can be
 #      declared, projected, present in the gallery, and still fail to compile,
 #      and a page that draws nothing still exits 0
-#   4. the schema's vendored package set matches the flake's
+#   4. every public renderer function has exactly one agent-context projection
+#      classification, so a new function cannot disappear silently
+#   5. the schema's vendored package set matches the flake's
 #
 # Usage: widget-coverage.test.sh [repo-root]
 # Exit: 0 all pass, 1 a check failed, 2 the check could not run.
@@ -164,6 +166,42 @@ for _n in "${SURFACE_N:-}" "${KINDS_CHECKED:-}" "${GALLERY_CHECKED:-}"; do
 done
 pass_line "the compiled library answers what it provides ($SURFACE_N function(s))"
 
+# --- 0a. every public function has one projection classification -------------
+# The projection is fail-closed only if its public surface is closed. A new
+# callable must be declared projected, presentation-only, or unrepresentable;
+# overlap is also an error because one function cannot carry two policies.
+classification=$(
+  python3 - "$SCHEMA" "$SURFACE" <<'PY'
+import json, sys
+schema, surface = sys.argv[1], sys.argv[2]
+doc = json.load(open(schema))
+rows = json.load(open(surface))
+if rows and isinstance(rows[0], list):
+    rows = rows[0]
+public = {r["name"] for r in rows if r["kind"] == "function" and not r["name"].startswith("_")}
+groups = doc["design_doc"]["agent_context"]["projection"]["classification"]
+declared = {}
+for group in ("projected", "presentation_only", "unrepresentable"):
+    for name in groups[group]:
+        declared.setdefault(name, []).append(group)
+problems = []
+for name in sorted(public - set(declared)):
+    problems.append(f"unclassified public function: {name}")
+for name in sorted(set(declared) - public):
+    problems.append(f"classified name is not a public function: {name}")
+for name, memberships in sorted(declared.items()):
+    if len(memberships) != 1:
+        problems.append(f"function has multiple classifications: {name} ({', '.join(memberships)})")
+print("\n".join(problems))
+PY
+)
+if [ -z "$classification" ]; then
+  pass_line "every public renderer function has exactly one agent-context classification"
+else
+  fail_line "agent-context projection classification is incomplete or ambiguous:"
+  printf '%s\n' "$classification" | sed 's/^/       /'
+fi
+
 # --- 1. every declared block kind is projected --------------------------------
 # A fenced diagram language is routed to a carrier rather than projected as a
 # directive function, so those kinds are exempt by name.
@@ -263,6 +301,9 @@ public = {
 # looking at, so an exemption granted loosely is coverage silently withdrawn.
 AGGREGATE_EMITTED = {
     "aggregate-doc", "chapter-page", "context-owner", "declare-vocabulary",
+    # The semantic envelope is projection infrastructure. Authoring functions
+    # call it; an author never does.
+    "semantic-result",
     # The document-level assertions. The aggregate places each one around a
     # chapter's body — an author never writes one, and a gallery page calling
     # one would assert against the gallery rather than demonstrate anything.

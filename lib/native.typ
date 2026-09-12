@@ -4,6 +4,7 @@
 #import "rules.typ": *
 #import "furniture.typ": *
 #import "packages.typ": *
+#import "semantic.typ": *
 
 // A design.typ calls these directly. The markdown router never emits them.
 
@@ -175,7 +176,8 @@
            "points() holds at least one bullet; an empty list renders nothing")
   }
   for x in xs { _max-sentences("points bullet", x) }
-  list(..xs)
+  let visual = list(..xs)
+  semantic-result("points", visual, fields: (items: xs))
 }
 
 // SECTION — the rhythm offered, not imposed: a muted lead, one visual, then
@@ -190,40 +192,50 @@
 #let section(title: none, lead: none, visual: none, notes: none, body: none) = {
   _need("section", "title", title)
   _max-lead("section lead", lead)
-  if visual != none {
-    block(width: 100%, breakable: false)[
-      #heading(level: 2)[#title]
-      #if lead != none [
-        #block(width: 92%, text(size: 9.4pt, fill: MUTED)[#lead])
-        #v(0.45em)
+  let visual-content = {
+    if visual != none {
+      block(width: 100%, breakable: false)[
+        #heading(level: 2)[#title]
+        #if lead != none [
+          #block(width: 92%, text(size: 9.4pt, fill: MUTED)[#lead])
+          #v(0.45em)
+        ]
+        #visual
       ]
-      #visual
-    ]
-  } else {
-    heading(level: 2)[#title]
-    if lead != none {
-      block(width: 92%, text(size: 9.4pt, fill: MUTED)[#lead]); v(0.45em)
+    } else {
+      heading(level: 2)[#title]
+      if lead != none {
+        block(width: 92%, text(size: 9.4pt, fill: MUTED)[#lead]); v(0.45em)
+      }
     }
+    if notes != none { notes }
+    if body != none { body }
   }
-  if notes != none { notes }
-  if body != none { body }
+  semantic-result("section", visual-content,
+    fields: (title: title, lead: lead, visual: visual, notes: notes, body: body))
 }
 
 #let subsection(title: none, body) = {
   _need("subsection", "title", title)
-  heading(level: 3)[#title]
-  body
+  let visual = {
+    heading(level: 3)[#title]
+    body
+  }
+  semantic-result("subsection", visual, fields: (title: title, body: body))
 }
 
 #let notes(title: none, body) = {
   _need("notes", "title", title)
-  block(width: 100%, inset: (x: 8pt, y: 7pt), fill: SURFACE,
-        stroke: 0.5pt + HAIRLINE, radius: 2pt)[
-    #text(size: 6.2pt, weight: "bold", tracking: 0.6pt, fill: MUTED,
-          upper(title))
-    #linebreak() #body
-  ]
-  v(0.45em)
+  let visual = {
+    block(width: 100%, inset: (x: 8pt, y: 7pt), fill: SURFACE,
+          stroke: 0.5pt + HAIRLINE, radius: 2pt)[
+      #text(size: 6.2pt, weight: "bold", tracking: 0.6pt, fill: MUTED,
+            upper(title))
+      #linebreak() #body
+    ]
+    v(0.45em)
+  }
+  semantic-result("notes", visual, fields: (title: title, body: body))
 }
 
 // CROSS REFERENCES — a reference RESOLVES against declared data, so a rename
@@ -254,19 +266,23 @@
 
 #let ctx(name, accent: none) = {
   _enum("ctx", "accent", accent, TINTS)
-  context {
-    let declared = CONTEXT-NAMES.final()
-    if declared.len() > 0 and name not in declared {
-      panic("ctx(" + repr(name) + ") names no context this layer declares. " +
-            "Declared: " + declared.join(", ") + ". A context reference " +
-            "resolves against the directories the layer holds, so a renamed " +
-            "or misspelled context fails here rather than rendering a dead " +
-            "identifier into the prose.")
+  if context-projection {
+    semantic("context-reference", fields: (name: name, accent: accent))
+  } else {
+    context {
+      let declared = CONTEXT-NAMES.final()
+      if declared.len() > 0 and name not in declared {
+        panic("ctx(" + repr(name) + ") names no context this layer declares. " +
+              "Declared: " + declared.join(", ") + ". A context reference " +
+              "resolves against the directories the layer holds, so a renamed " +
+              "or misspelled context fails here rather than rendering a dead " +
+              "identifier into the prose.")
+      }
+      let tone = if accent == none { _context-tint(name) } else {
+        TINT-COLOR.at(accent)
+      }
+      chip(name, tone: tone)
     }
-    let tone = if accent == none { _context-tint(name) } else {
-      TINT-COLOR.at(accent)
-    }
-    chip(name, tone: tone)
   }
 }
 
@@ -289,29 +305,37 @@
   }
   let padded = str(n)
   while padded.len() < 4 { padded = "0" + padded }
-  chip("ADR-" + padded, tone: TINT-COLOR.at("slate"))
+  if context-projection {
+    semantic("adr", fields: (number: n))
+  } else {
+    chip("ADR-" + padded, tone: TINT-COLOR.at("slate"))
+  }
 }
 
 #let term(slug) = {
   CITED-TERMS.update(xs => xs + (slug,))
-  context {
-    let titles = TERM-TITLES.final()
-    if titles.len() == 0 {
-      chip(slug, tone: luma(110))
-    } else if slug in titles {
-      let owner = TERM-OWNERS.final().at(slug, default: none)
-      chip(titles.at(slug), tone: if owner == none {
-        luma(110)
+  if context-projection {
+    semantic("term-reference", fields: (slug: slug))
+  } else {
+    context {
+      let titles = TERM-TITLES.final()
+      if titles.len() == 0 {
+        chip(slug, tone: luma(110))
+      } else if slug in titles {
+        let owner = TERM-OWNERS.final().at(slug, default: none)
+        chip(titles.at(slug), tone: if owner == none {
+          luma(110)
+        } else {
+          let tint = _context-tint(owner)
+          if tint == none { luma(110) } else { tint }
+        })
       } else {
-        let tint = _context-tint(owner)
-        if tint == none { luma(110) } else { tint }
-      })
-    } else {
-      panic("term(" + repr(slug) + ") cites a term no CONTEXT.typ declares. " +
-            "A term citation renders the declared TITLE, so an undeclared " +
-            "slug has no text to render and would print the raw identifier " +
-            "into the prose. Declare the term in a CONTEXT.typ, or correct " +
-            "the slug.")
+        panic("term(" + repr(slug) + ") cites a term no CONTEXT.typ declares. " +
+              "A term citation renders the declared TITLE, so an undeclared " +
+              "slug has no text to render and would print the raw identifier " +
+              "into the prose. Declare the term in a CONTEXT.typ, or correct " +
+              "the slug.")
+      }
     }
   }
 }
@@ -369,7 +393,11 @@
 }
 #let lens-pill(name) = {
   _req-enum("lens", name, LENSES)
-  chip(name, tone: LENS-COLOR.at(name))
+  if context-projection {
+    semantic("lens-pill", fields: (name: name))
+  } else {
+    chip(name, tone: LENS-COLOR.at(name))
+  }
 }
 
 // THE DIAGRAMS — nodes and edges are DATA. `diagram` gives the graph to the
@@ -885,6 +913,15 @@
       }
     }
   }
+  if context-projection {
+    return semantic(
+      if layout == "manual" { "diagram-native" } else { "diagram" },
+      fields: (
+      altitude: altitude, title: title, caption: caption, accent: accent,
+      layout: layout, flow: flow, spacing: spacing, viewpoint: viewpoint,
+      groups: groups, nodes: nodes, edges: edges,
+    ))
+  }
   let manual = if layout == "manual" {
     let ns = nodes.map(n => {
       let ext = n.at("external", default: false)
@@ -1184,6 +1221,11 @@
   let data = answers-data(
     responsibility: responsibility, interface: interface,
     interactions: interactions, invariants: invariants, failure: failure)
+  if context-projection {
+    return semantic("answers", fields: (
+      title: title, accent: accent, answers: data,
+    ))
+  }
   let rows = _answer-rows(data)
   if rows.len() == 0 {
     _guide("answers.empty",
@@ -1223,6 +1265,12 @@
     "contract", name: name, lens: lens, mission: mission,
     answers: answers, body: body, tint: tint,
   )
+  if context-projection {
+    return semantic("contract", fields: (
+      name: item.name, lens: item.lens, mission: item.mission,
+      answers: item.answers, body: item.body, accent: accent, tint: item.tint,
+    ))
+  }
   _guides(item.at("_guides", default: ()))
   let item-tint = item.at("tint", default: none)
   let resolved-tint = if item-tint == none { accent } else { item-tint }
@@ -1249,6 +1297,9 @@
     return
   }
   // Replay each card's deferred guidance from here, a content position.
+  if context-projection {
+    return semantic("components", fields: (accent: accent, items: items))
+  }
   for x in items { _guides(x.at("_guides", default: ())) }
   let n = calc.min(items.len(), int(cols))
   let anatomy = _card-anatomy(accent)
@@ -1313,8 +1364,11 @@
              "coverage row " + repr(r.at(0)) + " is " + repr(r.at(1)) +
              " and states no reason. A part is marked " + repr(r.at(1)) +
              " by an explicit decision, and the row is expected to carry why — "
-             + "add a third column with the reason.")
+      + "add a third column with the reason.")
     }
+  }
+  if context-projection {
+    return semantic("coverage", fields: (rows: rs))
   }
   block(width: 100%)[
     #table(columns: (auto, auto, 1fr), stroke: none,
@@ -1389,6 +1443,9 @@
            "pending-ledger() holds at least one entry; an empty ledger is " +
            "omitted entirely rather than rendered empty.")
     return
+  }
+  if context-projection {
+    return semantic("pending-ledger", fields: (entries: es))
   }
   // Replay each entry's deferred guidance from here, a content position.
   for e in es { _guides(e.at("_guides", default: ())) }
@@ -1465,6 +1522,9 @@
 // does not use.
 #let how-to-read(accent: "teal") = {
   _req-enum("accent", accent, TINTS)
+  if context-projection {
+    return semantic("how-to-read", fields: (accent: accent))
+  }
   let c = TINT-COLOR.at(accent)
   block(width: 100%, inset: (x: 8pt, y: 7pt), fill: SURFACE,
         stroke: 0.5pt + HAIRLINE, radius: 2pt)[

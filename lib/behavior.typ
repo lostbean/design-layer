@@ -2,6 +2,7 @@
 #import "schema.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *
+#import "semantic.typ": *
 #import "furniture.typ": *
 #import "statements.typ": *
 
@@ -47,23 +48,27 @@
 // `when` in the next block does not follow this one's `then`.
 #let _clause-trail = state("clause-trail", ())
 
-#let _clause(word, body) = context {
-  let level = _behavior-level.get()
-  let flat = _flatten-text(body)
-  let hit = _fence-violation(flat, level)
-  if hit != none {
-    // The fence is about WORDING, which is the author's call to make: the
-    // clause renders exactly as written and the library says what it found.
-    _guide("behavior.fence",
-           lower(word) + " clause at level=" + level + " " + hit + " — " +
-           "the behavior fence discourages naming the mechanism " +
-           "(design_doc.behavior_contract.fence): restate the OBSERVABLE " +
-           "outcome instead")
+#let _clause(word, body) = if context-projection {
+  semantic(lower(word), fields: (body: body))
+} else {
+  context {
+    let level = _behavior-level.get()
+    let flat = _flatten-text(body)
+    let hit = _fence-violation(flat, level)
+    if hit != none {
+      // The fence is about WORDING, which is the author's call to make: the
+      // clause renders exactly as written and the library says what it found.
+      _guide("behavior.fence",
+             lower(word) + " clause at level=" + level + " " + hit + " — " +
+             "the behavior fence discourages naming the mechanism " +
+             "(design_doc.behavior_contract.fence): restate the OBSERVABLE " +
+             "outcome instead")
+    }
+    block(inset: (left: 10pt), [
+        #text(size: RENDERER-META, weight: "bold")[#word]
+        #text(size: RENDERER-BODY)[#body]
+      ])
   }
-  block(inset: (left: 10pt), [
-    #text(size: RENDERER-META, weight: "bold")[#word]
-    #text(size: RENDERER-BODY)[#body]
-  ])
 }
 // The trail update sits OUTSIDE the `context` block above, because a context
 // block is laid out lazily and an update inside it would not be visible to a

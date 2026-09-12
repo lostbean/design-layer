@@ -21,6 +21,7 @@
 #import "rules.typ": *
 #import "packages.typ": *
 #import "native.typ": _drawing-frame, _req-enum
+#import "semantic.typ": *
 
 // The participant shapes, from the carrier's own vocabulary. They are the
 // roles a design layer actually draws — a person, a boundary the system meets,
@@ -133,6 +134,13 @@
   _known(steps, ids, "message")
 
   let c = TINT-COLOR.at(accent)
+
+  if context-projection {
+    return semantic("sequence", fields: (
+      title: title, caption: caption, accent: accent,
+      participants: participants, steps: steps,
+    ))
+  }
 
   // An empty sequence never reaches the carrier: it reads the participant list
   // to place its lifelines, and the guidance above is the whole response.

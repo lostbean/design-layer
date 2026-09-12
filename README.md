@@ -278,6 +278,39 @@ Use `#pseudocode` instead when the procedure should survive a change of
 implementation language. A code block preserves syntax; pseudocode preserves
 intent and control flow.
 
+### Agent context Markdown
+
+Agents read an ephemeral semantic Markdown projection instead of loading the
+rendered PDF or parsing Typst source. The projection preserves authored order,
+design fields, relationships, transitions, formulas, pseudocode control flow,
+and references. It omits presentation-only furniture and fails when a public
+construct has no complete Markdown representation.
+
+Estimate the projection before loading it:
+
+```sh
+nix run .#context -- docs/design --estimate
+```
+
+Emit the same Markdown bytes to standard output, or write them to a new
+temporary path:
+
+```sh
+nix run .#context -- docs/design
+nix run .#context -- docs/design --output /tmp/design-context.md
+```
+
+The estimate reports UTF-8 bytes, characters, words, lines, and the named
+planning estimates `ceil(utf8_bytes/4)` and `ceil(utf8_bytes/3)`. These values
+are model-independent estimates rather than tokenizer counts. Re-estimate
+after a source change because an estimate and a later projection do not share
+a digest handshake.
+
+The Markdown is a temporary reading projection. Typst remains authoritative,
+the PDF remains the published rendered artifact, and the Markdown output is not
+committed. A semantic violation exits 1 without usable output; an invocation,
+runtime, or output-write error exits 2.
+
 ## Development
 
 `nix develop` provides the vendored Typst renderer (a version-exact package

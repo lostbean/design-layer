@@ -4,6 +4,7 @@
 #import "rules.typ": *
 #import "furniture.typ": *
 #import "packages.typ": *
+#import "semantic.typ": *
 
 // A mermaid fence is CONVERTED to its carrier by the router and arrives here
 // already in the carrier's own language. Colour comes from the projected token
@@ -90,6 +91,11 @@
       _fail("figure", "uses " + repr(u) + ", which the framework does not "
             + "vendor (allowed: " + VENDORED.join(", ") + ")")
     }
+  }
+  if context-projection {
+    return semantic("figure-block", fields: (
+      caption: caption, uses: uses, body: body,
+    ))
   }
   block(width: 100%, inset: 8pt, radius: 3pt,
         stroke: (paint: FAINT, thickness: 0.6pt, dash: "dashed"),

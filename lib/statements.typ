@@ -4,6 +4,7 @@
 #import "tokens.typ": *
 #import "rules.typ": *
 #import "furniture.typ": *
+#import "semantic.typ": *
 
 // ---- the foundation order, enforced ---------------------------------------
 // FOUNDATION-ORDER states the order the four foundation kinds must appear in.
@@ -160,17 +161,30 @@
   // nested in `body` sees the level this update makes visible, never a stale
   // one from a previous behavior block.
   if kind == "behavior" { _behavior-level.update(level) }
-  block(width: 100%, inset: (x: 9pt, top: 7pt, bottom: 8pt), fill: c.lighten(95%),
-        stroke: (top: 1.4pt + c, rest: 0.45pt + c.lighten(52%)),
-        radius: 2pt, breakable: false,
-    [
-      #text(size: RENDERER-META, fill: c, weight: "bold", tracking: 0.4pt, upper(kind))
-      #linebreak() #text(weight: "bold", size: RENDERER-TITLE, title)
-      #linebreak() #body
-      #if furniture.len() > 0 [ #v(4pt) #furniture.join(h(3pt)) ]
-    ])
-  if kind == "behavior" { _behavior-level.update(none) }
-  v(0.45em)
+  let visual = {
+    block(width: 100%, inset: (x: 9pt, top: 7pt, bottom: 8pt), fill: c.lighten(95%),
+          stroke: (top: 1.4pt + c, rest: 0.45pt + c.lighten(52%)),
+          radius: 2pt, breakable: false,
+      [
+        #text(size: RENDERER-META, fill: c, weight: "bold", tracking: 0.4pt, upper(kind))
+        #linebreak() #text(weight: "bold", size: RENDERER-TITLE, title)
+        #linebreak() #body
+        #if furniture.len() > 0 [ #v(4pt) #furniture.join(h(3pt)) ]
+      ])
+    if kind == "behavior" { _behavior-level.update(none) }
+    v(0.45em)
+  }
+  if kind in ("goal", "no-goal", "invariant", "principle", "behavior") {
+    let result = semantic-result(kind, visual, fields: (title: title, lens: lens,
+      enforcement: enforcement, level: level, area: area,
+      since: since, adr: adr, body: body))
+    if kind == "behavior" and context-projection {
+      _behavior-level.update(none)
+    }
+    result
+  } else {
+    visual
+  }
 }
 
 // ---- the per-kind wrappers, built by a closure factory --------------------

@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# A pre-commit runner may export the parent repository's Git directory, index,
+# and object paths. Fixture repositories must use their own metadata when they
+# create history.
+unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS
+unset GIT_CONFIG_COUNT GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE
+unset GIT_IMPLICIT_WORK_TREE GIT_GRAFT_FILE GIT_INDEX_FILE
+unset GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX
+unset GIT_SHALLOW_FILE GIT_COMMON_DIR
+
 # Self-test for scripts/layer-integrity.
 #
 # THE AUTHORING SURFACE IS TYPST. A design document is a `design.typ` calling

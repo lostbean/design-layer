@@ -18,6 +18,7 @@
 #import "rules.typ": *
 #import "packages.typ": *
 #import "native.typ": _drawing-frame, _req-enum
+#import "semantic.typ": *
 
 #let CHART-TYPES = ("bar", "column", "line", "pie")
 
@@ -50,6 +51,13 @@
       panic("chart point " + repr(p.at(0)) + " carries " + repr(v) +
             ", which is not a number. Every plotted value must be a number.")
     }
+  }
+
+  if context-projection {
+    return semantic("chart", fields: (
+      chart-kind: kind, title: title, caption: caption, accent: accent,
+      points: points, unit: unit,
+    ))
   }
 
   let c = TINT-COLOR.at(accent)

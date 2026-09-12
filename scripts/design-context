@@ -1,0 +1,1946 @@
+#!/usr/bin/env python3
+"""Project a Typst design layer into ephemeral agent-context Markdown."""
+
+from __future__ import annotations
+
+import json
+import importlib.util
+from importlib.machinery import SourceFileLoader
+import math
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from collections.abc import Mapping
+from pathlib import Path
+from typing import NoReturn
+
+from typst_policy import command as typst_command
+from typst_policy import environment as typst_environment
+
+
+USAGE = "usage: design-context <layer-root> [--estimate | --output PATH]"
+LABEL = "<design-semantic>"
+
+SEMANTIC_FIELDS = {
+    "document": {"name", "level", "title", "body"},
+    "term": {"owner", "slug", "title", "body"},
+    "section": {"title", "lead", "visual", "notes", "body"},
+    "answers": {"title", "accent", "answers"},
+    "components": {"accent", "items"},
+    "contract": {"name", "lens", "mission", "answers", "body", "accent", "tint"},
+    "entity": {"id", "title", "description", "entity-kind", "owner", "lifecycle", "domain", "lens", "tint", "body"},
+    "attribute": {"id", "provenance", "name", "type", "state-type", "state-machine", "body"},
+    "relates": {"cardinality", "body"},
+    "cards": {"tint", "size", "items"},
+    "coverage": {"rows"},
+    "md-table": {"ncol", "cells"},
+    "stat-grid": {"cols", "tiles"},
+    "how-to-read": {"accent"},
+    "diagram": {"altitude", "title", "caption", "accent", "layout", "flow", "spacing", "viewpoint", "groups", "nodes", "edges"},
+    "diagram-native": {"altitude", "title", "caption", "accent", "layout", "flow", "spacing", "viewpoint", "groups", "nodes", "edges"},
+    "chart": {"chart-kind", "title", "caption", "accent", "points", "unit"},
+    "code-block": {"lang", "src"},
+    "formula": {"id", "title", "caption", "numbered", "notation", "body"},
+    "state-type": {"id", "title", "variants"},
+    "state-machine": {"id", "subject", "state-field", "state-type", "title", "caption", "accent", "flow", "states", "transitions", "initial", "accepting"},
+    "sequence": {"title", "caption", "accent", "participants", "steps"},
+    "pending-ledger": {"entries"},
+    "pseudocode": {"id", "title", "inputs", "outputs", "steps", "caption"},
+    "embedded-svg": {"caption", "file", "body"},
+    "figure-block": {"caption", "uses", "body"},
+    "points": {"items"},
+    "subsection": {"title", "body"},
+    "notes": {"title", "body"},
+    "goal": {"title", "lens", "enforcement", "level", "area", "since", "adr", "body"},
+    "no-goal": {"title", "lens", "enforcement", "level", "area", "since", "adr", "body"},
+    "invariant": {"title", "lens", "enforcement", "level", "area", "since", "adr", "body"},
+    "principle": {"title", "lens", "enforcement", "level", "area", "since", "adr", "body"},
+    "given": {"body"},
+    "when": {"body"},
+    "then": {"body"},
+    "behavior": {"title", "lens", "enforcement", "level", "area", "since", "adr", "body"},
+    "info": {"title", "tint", "body"},
+    "warning": {"title", "tint", "body"},
+    "context-reference": {"name", "accent"},
+    "adr": {"number"},
+    "lens-pill": {"name"},
+    "pill": {"names"},
+    "term-reference": {"slug"},
+}
+
+
+class ProjectionError(Exception):
+    """The source compiled but its semantic tree cannot be represented."""
+
+
+class ProjectionOperationalError(Exception):
+    """The projection could not run because its execution inputs are invalid."""
+
+
+def fail(message: str, code: int = 2) -> NoReturn:
+    sys.stderr.write(f"design-context: error: {message}\n")
+    raise SystemExit(code)
+
+
+def parse_args(argv: list[str]) -> tuple[Path, str, Path | None]:
+    mode = "default"
+    output: Path | None = None
+    positionals: list[str] = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in ("--help", "-h"):
+            if argv != [arg]:
+                fail("--help must be the only argument")
+            sys.stderr.write(USAGE + "\n")
+            raise SystemExit(2)
+        if arg == "--estimate":
+            if mode != "default":
+                fail("--estimate and --output are mutually exclusive")
+            mode = "estimate"
+        elif arg == "--output":
+            if mode != "default":
+                fail("--estimate and --output are mutually exclusive")
+            index += 1
+            if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
+                fail("--output requires a path")
+            mode = "output"
+            output = Path(argv[index])
+        elif arg.startswith("-"):
+            fail(f"unknown option: {arg}")
+        else:
+            positionals.append(arg)
+        index += 1
+    if len(positionals) != 1:
+        fail(USAGE)
+    layer = Path(positionals[0])
+    if not layer.is_dir():
+        fail(f"layer root not found: {layer}")
+    if not (layer / "design.typ").is_file():
+        fail(f"root design.typ not found: {layer / 'design.typ'}")
+    return layer.resolve(), mode, output
+
+
+def typst_string(path: Path) -> str:
+    value = str(path).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{value}"'
+
+
+def aggregate_module() -> object:
+    """Load the aggregate's shared corpus and glossary implementation once."""
+    aggregate_path = Path(__file__).with_name("design-aggregate")
+    loader = SourceFileLoader("design_aggregate_for_context", str(aggregate_path))
+    spec = importlib.util.spec_from_loader("design_aggregate_for_context", loader)
+    if spec is None or spec.loader is None:
+        raise ProjectionOperationalError("cannot load aggregate corpus discovery")
+    aggregate = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(aggregate)
+    except Exception as error:
+        raise ProjectionOperationalError("cannot load aggregate corpus discovery") from error
+    return aggregate
+
+
+def corpus_documents(layer: Path) -> list[tuple[str, Path]]:
+    """Reuse the aggregate's deterministic design-document discovery."""
+    aggregate = aggregate_module()
+    try:
+        discovered = aggregate.contexts_of(str(layer))
+    except OSError as error:
+        raise ProjectionOperationalError(str(error)) from error
+    except Exception as error:
+        raise ProjectionError(str(error)) from error
+    return [("root" if name is None else name, Path(path)) for name, path in discovered]
+
+
+def corpus_terms(layer: Path, documents: list[tuple[str, Path]]) -> list[dict[str, object]]:
+    """Reuse the aggregate's balanced Typst glossary seam."""
+    aggregate = aggregate_module()
+    source_documents = [
+        (None if name == "root" else name, str(path)) for name, path in documents
+    ]
+    try:
+        return aggregate.typst_glossary_terms(str(layer), source_documents)
+    except OSError as error:
+        raise ProjectionOperationalError(str(error)) from error
+    except Exception as error:
+        raise ProjectionError(str(error)) from error
+
+
+def renderer_library(layer: Path) -> Path:
+    """Resolve and validate the renderer library used by the projection."""
+    configured = os.environ.get("DESIGN_LIB_DIR")
+    library_dir = Path(configured) if configured else layer / ".render"
+    library = library_dir / "designlib.typ"
+    if not library.is_file():
+        raise ProjectionOperationalError(f"projected library not found: {library}")
+    if configured:
+        aggregate = aggregate_module()
+        try:
+            result = aggregate._refuse_divergent_layer_lib(str(layer), str(library))
+        except Exception as error:
+            raise ProjectionOperationalError("cannot compare the projected libraries") from error
+        if result:
+            raise ProjectionOperationalError(
+                "the layer's projected library differs from the bundled library"
+            )
+    return library.resolve()
+
+
+def semantic_probe(layer: Path, scratch: Path, library: Path) -> Path:
+    probe = scratch / "probe.typ"
+    documents = corpus_documents(layer)
+    terms = corpus_terms(layer, documents)
+    lines = []
+    lines.append(f'#import {typst_string(Path(os.path.relpath(library, scratch)))}: *')
+    term_titles = ", ".join(
+        f'{typst_string(Path(term["slug"]))}: {typst_string(Path(term["title_text"]))}'
+        for term in sorted(terms, key=lambda item: str(item["slug"]))
+    )
+    term_owners = ", ".join(
+        f'{typst_string(Path(term["slug"]))}: {typst_string(Path(term["context"]))}'
+        for term in sorted(terms, key=lambda item: str(item["slug"]))
+    )
+    context_names = ", ".join(
+        typst_string(Path(name)) for name, _ in documents if name != "root"
+    )
+    lines.extend(
+        [
+            "#declare-vocabulary(",
+            f"  terms: ({term_titles + (',' if term_titles else '')}),",
+            f"  term-owners: ({term_owners + (',' if term_owners else '')}),",
+            f"  contexts: ({context_names + (',' if context_names else '')}),",
+            ")",
+        ]
+    )
+    for index, (name, source) in enumerate(documents):
+        relative = Path(os.path.relpath(source, scratch))
+        module = f"document_{index}"
+        lines.extend(
+            [
+                f"#import {typst_string(relative)} as {module}",
+                f"#let values_{index} = dictionary({module})",
+                f'#let title_{index} = if "title" in values_{index} {{ values_{index}.title }} else {{ [{name} context] }}',
+                f'#metadata((kind: "document", name: "{name}", level: {1 if index == 0 else 2}, title: title_{index}, body: {module}.body)) <design-semantic>',
+            ]
+        )
+    lines.append("")
+    for term in sorted(terms, key=lambda item: (str(item["context"]), str(item["slug"]))):
+        lines.append(
+            f'#metadata((kind: "term", owner: {typst_string(Path(str(term["context"])))}, '
+            f'slug: {typst_string(Path(str(term["slug"])))}, '
+            f'title: {term["title_src"]}, body: {term["body_src"]})) <design-semantic>'
+        )
+    lines.append("")
+    probe.write_text("\n".join(lines), encoding="utf-8")
+    return probe
+
+
+def query_semantics(layer: Path) -> list[object]:
+    library = renderer_library(layer)
+    # Keep the probe one directory below the layer root, matching the
+    # aggregate's `.render/_aggregate.typ` location. Glossary bodies are
+    # intentionally spliced source and may import `../refs.typ`; moving the
+    # probe beside `docs/` changes that relative base and breaks valid layers.
+    with tempfile.TemporaryDirectory(prefix="design-context.", dir=layer) as name:
+        scratch = Path(name)
+        probe = semantic_probe(layer, scratch, library)
+        env = typst_environment()
+        root = os.path.commonpath((str(layer.parent), str(scratch), str(library)))
+        process = subprocess.run(
+            [
+                typst_command(),
+                "query",
+                str(probe),
+                LABEL,
+                "--field",
+                "value",
+                "--input",
+                "context=1",
+                "--root",
+                root,
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if process.returncode != 0:
+            raise ProjectionError(process.stderr.strip() or "Typst semantic query failed")
+        try:
+            result = json.loads(process.stdout)
+        except json.JSONDecodeError as error:
+            raise ProjectionError("Typst returned invalid semantic JSON") from error
+        if not isinstance(result, list):
+            raise ProjectionError("Typst semantic query did not return an array")
+        return result
+
+
+def content_text(
+    value: object,
+    path: str = "content",
+    term_titles: Mapping[str, str] | None = None,
+    context_names: frozenset[str] | None = None,
+    heading_level: int | None = None,
+    allow_clauses: bool = False,
+) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return ", ".join(
+            content_text(
+                item,
+                f"{path}.items",
+                term_titles,
+                context_names,
+                heading_level,
+                allow_clauses,
+            )
+            for item in value
+        )
+    if not isinstance(value, dict):
+        raise ProjectionError(f"unrepresentable semantic content at {path}")
+    function = value.get("func")
+    if function == "sequence":
+        children = value.get("children")
+        if not isinstance(children, list):
+            raise ProjectionError(f"sequence without children at {path}")
+        return "".join(
+            content_text(
+                child, f"{path}.children", term_titles, context_names, heading_level
+                , allow_clauses
+            )
+            for child in children
+        )
+    if function == "text":
+        text = value.get("text")
+        if not isinstance(text, str):
+            raise ProjectionError(f"text without string value at {path}")
+        return text
+    if function == "symbol":
+        text = value.get("text")
+        if not isinstance(text, str):
+            raise ProjectionError(f"symbol without string value at {path}")
+        return text
+    if function == "space":
+        return " "
+    if function == "parbreak":
+        return "\n\n"
+    if function == "linebreak":
+        return "\n"
+    if function == "smartquote":
+        # Typst's semantic tree records whether the authored quote is single
+        # or double, but its opening/closing curl is presentation resolved at
+        # layout time. Straight Markdown quotes preserve the punctuation's
+        # meaning without depending on that visual state.
+        return '"' if value.get("double") is True else "'"
+    if function == "equation":
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            heading_level,
+            allow_clauses,
+        ).strip()
+        if not body:
+            return ""
+        return f"\n\n$$\n{body}\n$$\n" if value.get("block") is True else f"${body}$"
+    if function == "frac":
+        numerator = content_text(
+            value.get("num"), f"{path}.num", term_titles, context_names
+        ).strip()
+        denominator = content_text(
+            value.get("denom"), f"{path}.denom", term_titles, context_names
+        ).strip()
+        if not numerator or not denominator:
+            raise ProjectionError(f"fraction is incomplete at {path}")
+        return f"({numerator}) / ({denominator})"
+    if function == "attach":
+        allowed = {"func", "base", "t", "b", "tl", "tr", "bl", "br"}
+        expect_keys(value, allowed, path)
+        base = content_text(
+            value.get("base"), f"{path}.base", term_titles, context_names
+        ).strip()
+        if not base:
+            raise ProjectionError(f"math attachment has no base at {path}")
+        prefixes = []
+        suffixes = []
+        for field, marker, destination in (
+            ("tl", "^", prefixes),
+            ("bl", "_", prefixes),
+            ("t", "^", suffixes),
+            ("tr", "^", suffixes),
+            ("b", "_", suffixes),
+            ("br", "_", suffixes),
+        ):
+            if value.get(field) is None:
+                continue
+            attachment = content_text(
+                value[field], f"{path}.{field}", term_titles, context_names
+            ).strip()
+            destination.append(f"{marker}{{{attachment}}}")
+        return "".join(prefixes) + base + "".join(suffixes)
+    if function == "root":
+        expect_keys(value, {"func", "radicand", "index"}, path)
+        radicand = content_text(
+            value.get("radicand"), f"{path}.radicand", term_titles, context_names
+        ).strip()
+        if not radicand:
+            raise ProjectionError(f"root has no radicand at {path}")
+        if value.get("index") is None:
+            return f"sqrt({radicand})"
+        index = content_text(
+            value["index"], f"{path}.index", term_titles, context_names
+        ).strip()
+        return f"root({index}, {radicand})"
+    if function == "vec":
+        expect_keys(value, {"func", "children", "delim"}, path)
+        children = value.get("children")
+        if not isinstance(children, list):
+            raise ProjectionError(f"math vector has no children at {path}")
+        items = [
+            content_text(item, f"{path}.children[{index}]", term_titles, context_names).strip()
+            for index, item in enumerate(children)
+        ]
+        return "vec(" + ", ".join(items) + ")"
+    if function in ("strong", "emph"):
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            heading_level,
+            allow_clauses,
+        )
+        marker = "**" if function == "strong" else "*"
+        return f"{marker}{body}{marker}"
+    if function == "raw":
+        text = value.get("text")
+        if not isinstance(text, str):
+            raise ProjectionError(f"raw without string value at {path}")
+        if value.get("block") is True:
+            language = value.get("lang", "")
+            if not isinstance(language, str):
+                raise ProjectionError(f"raw block language is not text at {path}")
+            return f"\n\n```{language}\n{text}\n```\n"
+        return f"`{text}`"
+    if function == "link":
+        destination = value.get("dest")
+        if not isinstance(destination, str):
+            raise ProjectionError(f"link destination is not text at {path}")
+        return f"[{content_text(value.get('body'), f'{path}.body', term_titles, context_names, heading_level, allow_clauses)}]({destination})"
+    if function == "ref":
+        target = value.get("target")
+        if not isinstance(target, str) or not target.startswith("<") or not target.endswith(">"):
+            raise ProjectionError(f"reference target is invalid at {path}")
+        label = target[1:-1]
+        return f"[{label}](#{label})"
+    if function == "metadata" and value.get("label") == LABEL:
+        return semantic_markdown(
+            value.get("value"),
+            path,
+            term_titles,
+            context_names,
+            heading_level,
+            allow_clauses,
+        )
+    if function == "styled":
+        # Styling is presentation-only, but the styled body's prose remains
+        # semantic content.
+        child = value.get("body", value.get("child"))
+        return content_text(
+            child, f"{path}.child", term_titles, context_names, heading_level, allow_clauses
+        )
+    # These are layout carriers. Their semantic data is carried by a nearby
+    # metadata node; recurse through their content so nested semantic markers
+    # remain visible without interpreting presentation arguments.
+    if function == "cell":
+        child = value.get("body", value.get("children"))
+        return (
+            content_text(
+                child,
+                f"{path}.body",
+                term_titles,
+                context_names,
+                heading_level,
+                allow_clauses,
+            )
+            if child is not None
+            else ""
+        )
+    if function in {"block", "list", "grid", "table", "align", "box"}:
+        child = value.get("body", value.get("children"))
+        return (
+            content_text(
+                child,
+                f"{path}.body",
+                term_titles,
+                context_names,
+                heading_level,
+                allow_clauses,
+            )
+            if child is not None
+            else ""
+        )
+    if function in {"heading", "show", "set", "v", "h", "line", "pagebreak", "state-update", "context"}:
+        return ""
+    raise ProjectionError(
+        f"unsupported Typst content function {function!r} at {path}; "
+        f"fields: {', '.join(sorted(str(key) for key in value))}"
+    )
+
+
+def field_text(
+    value: object,
+    path: str,
+    term_titles: Mapping[str, str] | None = None,
+    context_names: frozenset[str] | None = None,
+) -> str:
+    return content_text(value, path, term_titles, context_names).strip()
+
+
+def _normalize_fragment(value: str) -> str:
+    """Normalize prose while protecting authored raw Markdown fragments."""
+    protected: list[str] = []
+
+    def protect(match: re.Match[str]) -> str:
+        protected.append(match.group(0))
+        return f"\x00raw-{len(protected) - 1}\x00"
+
+    value = re.sub(r"```[^\n]*\n.*?\n```", protect, value, flags=re.DOTALL)
+    value = re.sub(r"`[^`\n]*`", protect, value)
+    value = re.sub(
+        r"(?m)^[ \t]{2,}(?:(?:[-*+] |\d+[.)] )|[A-Z][A-Za-z _-]*: ).*$",
+        protect,
+        value,
+    )
+    value = re.sub(r"[ \t]+\n", "\n", value)
+    value = re.sub(r"\n[ \t]+", "\n", value)
+    value = re.sub(r"[ \t]{2,}", " ", value)
+    value = re.sub(r"[ \t]+([.,!?;:])", r"\1", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    for index, raw in reversed(list(enumerate(protected))):
+        value = value.replace(f"\x00raw-{index}\x00", raw)
+    return value
+
+
+def normalize_markdown(value: str) -> str:
+    return _normalize_fragment(value).strip() + "\n"
+
+
+ANSWER_FIELDS: tuple[tuple[str, str], ...] = (
+    ("responsibility", "Responsibility"),
+    ("interface", "Interface"),
+    ("interactions", "Interactions"),
+    ("invariants", "Invariants"),
+    ("failure", "Failure"),
+)
+
+
+def answer_lines(
+    value: object,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> list[str]:
+    if not isinstance(value, dict):
+        raise ProjectionError(f"answers data is not an object at {path}")
+    expect_keys(value, {field for field, _ in ANSWER_FIELDS}, path)
+    lines: list[str] = []
+    for field, label in ANSWER_FIELDS:
+        if field not in value or value[field] is None:
+            continue
+        body = content_text(
+            value[field], f"{path}.{field}", term_titles, context_names
+        ).strip()
+        lines.append(f"{label}: {body}")
+    return lines
+
+
+def markdown_table(rows: list[list[str]]) -> str:
+    def escape(cell: str) -> str:
+        return cell.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
+
+    if not rows:
+        raise ProjectionError("Markdown table has no rows")
+    width = len(rows[0])
+    if width < 1 or any(len(row) != width for row in rows):
+        raise ProjectionError("Markdown table rows have inconsistent columns")
+    rendered = ["| " + " | ".join(escape(cell) for cell in rows[0]) + " |"]
+    rendered.append("| " + " | ".join("---" for _ in range(width)) + " |")
+    rendered.extend("| " + " | ".join(escape(cell) for cell in row) + " |" for row in rows[1:])
+    return "\n".join(rendered)
+
+
+def markdown_code_block(language: object, source: object, path: str) -> str:
+    if not isinstance(language, str) or not language or "`" in language or "\n" in language:
+        raise ProjectionError(f"code block language is invalid at {path}.lang")
+    if isinstance(source, str):
+        text = source
+    elif isinstance(source, dict) and source.get("func") == "raw":
+        text = source.get("text")
+        if not isinstance(text, str):
+            raise ProjectionError(f"raw code block has no text at {path}.src")
+    else:
+        raise ProjectionError(f"code block source is not literal text at {path}.src")
+    runs = [len(match.group(0)) for match in re.finditer(r"`+", text)]
+    fence = "`" * max(3, (max(runs) + 1) if runs else 3)
+    return f"\n\n{fence}{language}\n{text}\n{fence}\n"
+
+
+def semantic_field(
+    value: object,
+    label: str,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    if value is None:
+        return ""
+    text = content_text(value, path, term_titles, context_names).strip()
+    return f"{label}: {text}" if text else ""
+
+
+def expect_keys(value: dict[str, object], allowed: set[str], path: str) -> None:
+    surplus = set(value) - allowed
+    if surplus:
+        raise ProjectionError(
+            f"unrepresentable field(s) at {path}: {', '.join(sorted(surplus))}"
+        )
+
+
+def unit_markdown(
+    value: object,
+    kind: str,
+    level: int,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    if not isinstance(value, dict):
+        raise ProjectionError(f"{kind} record is not an object at {path}")
+    if kind == "component":
+        expect_keys(
+            value,
+            {"name", "lens", "mission", "answers", "body", "tint", "_guides"},
+            path,
+        )
+    name = field_text(value.get("name"), f"{path}.name", term_titles, context_names)
+    fields = [
+        semantic_field(value.get("id"), "ID", f"{path}.id", term_titles, context_names),
+        semantic_field(
+            value.get("mission"), "Mission", f"{path}.mission", term_titles, context_names
+        ),
+        semantic_field(value.get("lens"), "Lens", f"{path}.lens", term_titles, context_names),
+    ]
+    answers = value.get("answers")
+    if answers is not None:
+        fields.extend(
+            answer_lines(answers, f"{path}.answers", term_titles, context_names)
+        )
+    body = content_text(
+        value.get("body"), f"{path}.body", term_titles, context_names
+    ).strip()
+    sections = [field for field in fields if field]
+    if body:
+        sections.append(body)
+    heading = f"{'#' * level} {kind}: {name}" if name else f"{'#' * level} {kind}"
+    return "\n\n" + heading + "\n\n" + "\n\n".join(sections) + "\n"
+
+
+def projection_visual(
+    value: object,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+    heading_level: int,
+) -> str:
+    """Project semantic visuals without flattening presentation carriers."""
+    if value is None:
+        return ""
+    if not isinstance(value, dict):
+        raise ProjectionError(f"section visual is not representable at {path}")
+    function = value.get("func")
+    if function == "metadata" and value.get("label") == LABEL:
+        semantic_value = value.get("value")
+        if not isinstance(semantic_value, dict):
+            raise ProjectionError(f"section visual metadata is invalid at {path}")
+        if semantic_value.get("kind") == "how-to-read":
+            return ""
+        return semantic_markdown(
+            semantic_value,
+            path,
+            term_titles,
+            context_names,
+            heading_level,
+        )
+    if function == "sequence":
+        children = value.get("children")
+        if not isinstance(children, list):
+            raise ProjectionError(f"section visual sequence is invalid at {path}")
+        return "".join(
+            projection_visual(
+                child, f"{path}.children[{index}]", term_titles, context_names, heading_level
+            )
+            for index, child in enumerate(children)
+            if not (
+                isinstance(child, dict)
+                and child.get("func") in {"space", "state-update"}
+            )
+        )
+    if function in {"block", "cell", "align", "box", "grid", "styled"}:
+        child = value.get("body", value.get("children", value.get("child")))
+        if child is None:
+            raise ProjectionError(
+                f"section visual carrier {function!r} has no content at {path}"
+            )
+        return projection_visual(
+            child, f"{path}.body", term_titles, context_names, heading_level
+        )
+    raise ProjectionError(
+        f"unsupported section visual carrier {function!r} at {path}; "
+        f"fields: {', '.join(sorted(str(key) for key in value))}"
+    )
+
+
+def projection_notes(
+    value: object,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+    heading_level: int,
+) -> str:
+    """Project only notes semantic nodes from the section notes slot."""
+    if value is None:
+        return ""
+    if not isinstance(value, dict):
+        raise ProjectionError(f"section notes are not representable at {path}")
+    function = value.get("func")
+    if function == "metadata" and value.get("label") == LABEL:
+        semantic_value = value.get("value")
+        if not isinstance(semantic_value, dict) or semantic_value.get("kind") != "notes":
+            raise ProjectionError(f"unsupported section notes semantic node at {path}")
+        return semantic_markdown(
+            semantic_value,
+            path,
+            term_titles,
+            context_names,
+            heading_level,
+        )
+    if function == "sequence":
+        children = value.get("children")
+        if not isinstance(children, list):
+            raise ProjectionError(f"section notes sequence is invalid at {path}")
+        return "".join(
+            projection_notes(
+                child,
+                f"{path}.children[{index}]",
+                term_titles,
+                context_names,
+                heading_level,
+            )
+            for index, child in enumerate(children)
+            if not (
+                isinstance(child, dict)
+                and child.get("func") in {"space", "state-update"}
+            )
+        )
+    if function in {"block", "cell", "align", "box", "grid", "styled"}:
+        child = value.get("body", value.get("children", value.get("child")))
+        if child is None:
+            raise ProjectionError(
+                f"section notes carrier {function!r} has no content at {path}"
+            )
+        return projection_notes(
+            child, f"{path}.body", term_titles, context_names, heading_level
+        )
+    raise ProjectionError(
+        f"unsupported section notes carrier {function!r} at {path}; "
+        f"fields: {', '.join(sorted(str(key) for key in value))}"
+    )
+
+
+def _diagram_field(
+    value: object,
+    label: str,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    return semantic_field(value, label, path, term_titles, context_names)
+
+
+def _diagram_edge(
+    value: object,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> list[str]:
+    if isinstance(value, dict):
+        expect_keys(value, {"from", "to", "relation", "label", "style"}, path)
+        source, target = value.get("from"), value.get("to")
+        relation = value.get("relation")
+        label = value.get("label")
+    elif isinstance(value, list):
+        if len(value) < 2 or len(value) > 4:
+            raise ProjectionError(f"diagram edge has unsupported fields at {path}")
+        source = value[0]
+        target = value[1]
+        relation = value[2] if len(value) > 2 else None
+        label = value[2] if len(value) == 3 else (value[2] if len(value) > 2 else None)
+        if len(value) > 2:
+            relation = None
+    else:
+        raise ProjectionError(f"diagram edge is not an object or array at {path}")
+    source_text = field_text(source, f"{path}.from", term_titles, context_names)
+    target_text = field_text(target, f"{path}.to", term_titles, context_names)
+    if not source_text or not target_text:
+        raise ProjectionError(f"diagram edge endpoints are invalid at {path}")
+    relation_text = field_text(relation, f"{path}.relation", term_titles, context_names) if relation is not None else ""
+    label_text = field_text(label, f"{path}.label", term_titles, context_names) if label is not None else ""
+    suffix = []
+    if relation_text:
+        suffix.append(f"Relation: {relation_text}")
+    if label_text:
+        suffix.append(f"Label: {label_text}")
+    return [f"- {source_text} -> {target_text}", *[f"  {item}" for item in suffix]]
+
+
+def _diagram_markdown(
+    value: dict[str, object],
+    path: str,
+    level: int,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    kind = value.get("kind")
+    if kind not in {"diagram", "diagram-native"}:
+        raise ProjectionError(f"diagram semantic kind is invalid at {path}")
+    heading = f"{'#' * level} {kind}" + (f": {title}" if title else "")
+    fields = [
+        _diagram_field(value.get("altitude"), "Altitude", f"{path}.altitude", term_titles, context_names),
+        _diagram_field(value.get("viewpoint"), "Viewpoint", f"{path}.viewpoint", term_titles, context_names),
+        _diagram_field(value.get("caption"), "Caption", f"{path}.caption", term_titles, context_names),
+    ]
+    layout = value.get("layout")
+    spacing = value.get("spacing")
+    if layout == "manual":
+        if not isinstance(spacing, list) or len(spacing) != 2:
+            raise ProjectionError(f"positioned diagram spacing is invalid at {path}")
+    sections = [field for field in fields if field]
+    groups = value.get("groups", [])
+    nodes = value.get("nodes", [])
+    edges = value.get("edges", [])
+    if not isinstance(groups, list) or not isinstance(nodes, list) or not isinstance(edges, list):
+        raise ProjectionError(f"diagram graph collections are invalid at {path}")
+    for index, group in enumerate(groups):
+        if not isinstance(group, dict):
+            raise ProjectionError(f"diagram group is invalid at {path}.groups[{index}]")
+        expect_keys(group, {"id", "label", "kind", "parent", "tint"}, f"{path}.groups[{index}]")
+        group_id = field_text(group.get("id"), f"{path}.groups[{index}].id", term_titles, context_names)
+        group_label = field_text(group.get("label"), f"{path}.groups[{index}].label", term_titles, context_names)
+        group_fields = [
+            semantic_field(group.get("id"), "ID", f"{path}.groups[{index}].id", term_titles, context_names),
+            semantic_field(group.get("kind"), "Kind", f"{path}.groups[{index}].kind", term_titles, context_names),
+            semantic_field(group.get("parent"), "Parent", f"{path}.groups[{index}].parent", term_titles, context_names),
+        ]
+        sections.append(
+            f"{'#' * (level + 1)} group: {group_label or group_id}\n\n"
+            + "\n\n".join(field for field in group_fields if field)
+        )
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            raise ProjectionError(f"diagram node is invalid at {path}.nodes[{index}]")
+        expect_keys(node, {"id", "label", "sub", "kind", "group", "tint", "external", "pos"}, f"{path}.nodes[{index}]")
+        node_id = field_text(node.get("id"), f"{path}.nodes[{index}].id", term_titles, context_names)
+        node_label = field_text(node.get("label"), f"{path}.nodes[{index}].label", term_titles, context_names)
+        node_fields = [
+            semantic_field(node.get("id"), "ID", f"{path}.nodes[{index}].id", term_titles, context_names),
+            semantic_field(node.get("sub"), "Sub", f"{path}.nodes[{index}].sub", term_titles, context_names),
+            semantic_field(node.get("kind"), "Kind", f"{path}.nodes[{index}].kind", term_titles, context_names),
+            semantic_field(node.get("group"), "Group", f"{path}.nodes[{index}].group", term_titles, context_names),
+            semantic_field(node.get("external"), "External", f"{path}.nodes[{index}].external", term_titles, context_names),
+        ]
+        if layout == "manual":
+            position = node.get("pos")
+            if not isinstance(position, list) or len(position) != 2:
+                raise ProjectionError(f"positioned diagram node position is invalid at {path}.nodes[{index}]")
+        sections.append(
+            f"{'#' * (level + 1)} node: {node_label or node_id}\n\n"
+            + "\n\n".join(field for field in node_fields if field)
+        )
+    edge_lines: list[str] = []
+    for index, edge in enumerate(edges):
+        edge_lines.extend(_diagram_edge(edge, f"{path}.edges[{index}]", term_titles, context_names))
+    if edge_lines:
+        sections.append(f"{'#' * (level + 1)} edges\n\n" + "\n".join(edge_lines))
+    return "\n\n" + heading + "\n\n" + "\n\n".join(sections) + "\n"
+
+
+def _chart_markdown(
+    value: dict[str, object],
+    path: str,
+    level: int,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    fields = [
+        semantic_field(value.get("chart-kind"), "Kind", f"{path}.chart-kind", term_titles, context_names),
+        semantic_field(value.get("caption"), "Caption", f"{path}.caption", term_titles, context_names),
+        semantic_field(value.get("unit"), "Unit", f"{path}.unit", term_titles, context_names),
+    ]
+    points = value.get("points")
+    if not isinstance(points, list):
+        raise ProjectionError(f"chart points are not an array at {path}")
+    rows: list[list[str]] = []
+    for index, point in enumerate(points):
+        if not isinstance(point, list) or len(point) != 2:
+            raise ProjectionError(f"chart point is invalid at {path}.points[{index}]")
+        rows.append([
+            field_text(point[0], f"{path}.points[{index}][0]", term_titles, context_names),
+            field_text(point[1], f"{path}.points[{index}][1]", term_titles, context_names),
+        ])
+    sections = [field for field in fields if field]
+    sections.append(markdown_table([["Label", "Value"], *rows]))
+    heading = f"{'#' * level} chart" + (f": {title}" if title else "")
+    return "\n\n" + heading + "\n\n" + "\n\n".join(sections) + "\n"
+
+
+def _state_type_markdown(
+    value: dict[str, object],
+    path: str,
+    level: int,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    variants = value.get("variants")
+    if not isinstance(variants, list):
+        raise ProjectionError(f"state type variants are not an array at {path}")
+    lines = []
+    for index, variant in enumerate(variants):
+        if isinstance(variant, dict):
+            expect_keys(variant, {"id", "description"}, f"{path}.variants[{index}]")
+            identifier = field_text(variant.get("id"), f"{path}.variants[{index}].id", term_titles, context_names)
+            description = field_text(variant.get("description"), f"{path}.variants[{index}].description", term_titles, context_names)
+            lines.append(f"- {identifier}" + (f": {description}" if description else ""))
+        else:
+            lines.append(f"- {field_text(variant, f'{path}.variants[{index}]', term_titles, context_names)}")
+    fields = [
+        semantic_field(value.get("id"), "ID", f"{path}.id", term_titles, context_names),
+        "Variants:\n" + "\n".join(lines),
+    ]
+    heading = f"{'#' * level} state-type" + (f": {title}" if title else "")
+    return "\n\n" + heading + "\n\n" + "\n\n".join(field for field in fields if field) + "\n"
+
+
+def _state_machine_markdown(
+    value: dict[str, object],
+    path: str,
+    level: int,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    fields = [
+        semantic_field(value.get("id"), "ID", f"{path}.id", term_titles, context_names),
+        semantic_field(value.get("subject"), "Subject", f"{path}.subject", term_titles, context_names),
+        semantic_field(value.get("state-field"), "State field", f"{path}.state-field", term_titles, context_names),
+        semantic_field(value.get("state-type"), "State type", f"{path}.state-type", term_titles, context_names),
+        semantic_field(value.get("caption"), "Caption", f"{path}.caption", term_titles, context_names),
+        semantic_field(value.get("initial"), "Initial", f"{path}.initial", term_titles, context_names),
+    ]
+    accepting = value.get("accepting")
+    if not isinstance(accepting, list):
+        raise ProjectionError(f"state machine accepting set is not an array at {path}")
+    if accepting:
+        fields.append("Accepting: " + ", ".join(field_text(item, f"{path}.accepting[{index}]", term_titles, context_names) for index, item in enumerate(accepting)))
+    states = value.get("states")
+    transitions = value.get("transitions")
+    if not isinstance(states, list) or not isinstance(transitions, list):
+        raise ProjectionError(f"state machine graph is invalid at {path}")
+    fields.append("States:\n" + "\n".join(f"- {field_text(state, f'{path}.states[{index}]', term_titles, context_names)}" for index, state in enumerate(states)))
+    transition_lines = []
+    for index, transition in enumerate(transitions):
+        if not isinstance(transition, list) or len(transition) < 2 or len(transition) > 3:
+            raise ProjectionError(f"state transition is invalid at {path}.transitions[{index}]")
+        source = field_text(transition[0], f"{path}.transitions[{index}][0]", term_titles, context_names)
+        target = field_text(transition[1], f"{path}.transitions[{index}][1]", term_titles, context_names)
+        event = field_text(transition[2], f"{path}.transitions[{index}][2]", term_titles, context_names) if len(transition) > 2 else ""
+        transition_lines.append(f"- {source} -> {target}" + (f": {event}" if event else ""))
+    fields.append("Transitions:\n" + "\n".join(transition_lines))
+    heading = f"{'#' * level} state-machine" + (f": {title}" if title else "")
+    return "\n\n" + heading + "\n\n" + "\n\n".join(field for field in fields if field) + "\n"
+
+
+def _sequence_step_lines(
+    step: object,
+    path: str,
+    indent: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> list[str]:
+    if not isinstance(step, dict):
+        raise ProjectionError(f"sequence step is not an object at {path}")
+    kind = step.get("kind")
+    if kind == "msg":
+        expect_keys(step, {"kind", "from", "to", "label", "dashed", "activate", "deactivate"}, path)
+        source = field_text(step.get("from"), f"{path}.from", term_titles, context_names)
+        target = field_text(step.get("to"), f"{path}.to", term_titles, context_names)
+        label = field_text(step.get("label"), f"{path}.label", term_titles, context_names)
+        flags = [name for name in ("activate", "deactivate") if step.get(name) is True]
+        suffix = f" [{', '.join(flags)}]" if flags else ""
+        return [f"{indent}- message: {source} -> {target}: {label}{suffix}"]
+    if kind == "note":
+        expect_keys(step, {"kind", "on", "body", "side"}, path)
+        attached = field_text(step.get("on"), f"{path}.on", term_titles, context_names)
+        body = content_text(step.get("body"), f"{path}.body", term_titles, context_names).strip()
+        return [f"{indent}- note on {attached}: {body}"]
+    if kind not in {"alt", "loop", "opt"}:
+        raise ProjectionError(f"unsupported sequence step kind {kind!r} at {path}")
+    expect_keys(
+        step,
+        {"kind", "condition", "steps", "otherwise"}
+        if kind == "alt"
+        else {"kind", "condition", "steps"},
+        path,
+    )
+    condition = field_text(step.get("condition"), f"{path}.condition", term_titles, context_names)
+    lines = [f"{indent}- {kind}: {condition}"]
+    nested = step.get("steps")
+    if not isinstance(nested, list):
+        raise ProjectionError(f"sequence {kind} steps are not an array at {path}")
+    for index, child in enumerate(nested):
+        lines.extend(_sequence_step_lines(child, f"{path}.steps[{index}]", indent + "  ", term_titles, context_names))
+    if kind == "alt" and step.get("otherwise") is not None:
+        otherwise = step.get("otherwise")
+        if not isinstance(otherwise, list):
+            raise ProjectionError(f"sequence otherwise steps are not an array at {path}")
+        lines.append(f"{indent}  - otherwise:")
+        for index, child in enumerate(otherwise):
+            lines.extend(_sequence_step_lines(child, f"{path}.otherwise[{index}]", indent + "    ", term_titles, context_names))
+    return lines
+
+
+def _sequence_markdown(
+    value: dict[str, object],
+    path: str,
+    level: int,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    fields = [semantic_field(value.get("caption"), "Caption", f"{path}.caption", term_titles, context_names)]
+    participants = value.get("participants")
+    steps = value.get("steps")
+    if not isinstance(participants, list) or not isinstance(steps, list):
+        raise ProjectionError(f"sequence collections are invalid at {path}")
+    participant_lines = []
+    for index, participant in enumerate(participants):
+        if not isinstance(participant, dict):
+            raise ProjectionError(f"sequence participant is invalid at {path}.participants[{index}]")
+        expect_keys(participant, {"id", "label", "shape"}, f"{path}.participants[{index}]")
+        identifier = field_text(participant.get("id"), f"{path}.participants[{index}].id", term_titles, context_names)
+        label = field_text(participant.get("label"), f"{path}.participants[{index}].label", term_titles, context_names)
+        participant_lines.append(f"- {identifier}: {label}")
+    fields.append("Participants:\n" + "\n".join(participant_lines))
+    step_lines: list[str] = []
+    for index, step in enumerate(steps):
+        step_lines.extend(_sequence_step_lines(step, f"{path}.steps[{index}]", "", term_titles, context_names))
+    fields.append("Steps:\n" + "\n".join(step_lines))
+    heading = f"{'#' * level} sequence" + (f": {title}" if title else "")
+    return "\n\n" + heading + "\n\n" + "\n\n".join(field for field in fields if field) + "\n"
+
+
+def _pending_markdown(
+    value: dict[str, object],
+    path: str,
+    level: int,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    entries = value.get("entries")
+    if not isinstance(entries, list):
+        raise ProjectionError(f"pending entries are not an array at {path}")
+    sections = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ProjectionError(f"pending entry is invalid at {path}.entries[{index}]")
+        expect_keys(entry, {"title", "kind", "since", "adr", "body", "_guides"}, f"{path}.entries[{index}]")
+        title = field_text(entry.get("title"), f"{path}.entries[{index}].title", term_titles, context_names)
+        fields = [
+            semantic_field(entry.get("kind"), "Kind", f"{path}.entries[{index}].kind", term_titles, context_names),
+            semantic_field(entry.get("since"), "Since", f"{path}.entries[{index}].since", term_titles, context_names),
+            semantic_field(entry.get("adr"), "ADR", f"{path}.entries[{index}].adr", term_titles, context_names),
+            content_text(entry.get("body"), f"{path}.entries[{index}].body", term_titles, context_names).strip(),
+        ]
+        sections.append(f"{'#' * (level + 1)} pending: {title}\n\n" + "\n\n".join(field for field in fields if field))
+    return "\n\n" + f"{'#' * level} pending-ledger" + "\n\n" + "\n\n".join(sections) + "\n"
+
+
+def _formula_markdown(
+    value: dict[str, object],
+    path: str,
+    level: int,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    fields = [
+        semantic_field(value.get("id"), "ID", f"{path}.id", term_titles, context_names),
+    ]
+    numbered = value.get("numbered")
+    if not isinstance(numbered, bool):
+        raise ProjectionError(f"formula numbered flag is invalid at {path}")
+    fields.append(f"Numbered: {'true' if numbered else 'false'}")
+    expression = content_text(
+        value.get("body"), f"{path}.body", term_titles, context_names
+    ).strip()
+    if not expression:
+        raise ProjectionError(f"formula expression is empty at {path}")
+    fields.append("Expression:\n" + expression)
+    notation = value.get("notation")
+    if not isinstance(notation, list):
+        raise ProjectionError(f"formula notation is not an array at {path}")
+    if notation:
+        rows: list[list[str]] = []
+        for index, item in enumerate(notation):
+            if not isinstance(item, list) or len(item) != 2:
+                raise ProjectionError(f"formula notation entry is invalid at {path}.notation[{index}]")
+            rows.append(
+                [
+                    field_text(item[0], f"{path}.notation[{index}][0]", term_titles, context_names),
+                    field_text(item[1], f"{path}.notation[{index}][1]", term_titles, context_names),
+                ]
+            )
+        fields.append("Notation:\n" + markdown_table([["Symbol", "Meaning"], *rows]))
+    caption = semantic_field(
+        value.get("caption"), "Caption", f"{path}.caption", term_titles, context_names
+    )
+    if caption:
+        fields.append(caption)
+    heading = f"{'#' * level} formula" + (f": {title}" if title else "")
+    return "\n\n" + heading + "\n\n" + "\n\n".join(field for field in fields if field) + "\n"
+
+
+def _pseudocode_lines(
+    steps: object,
+    path: str,
+    indent: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> list[str]:
+    if not isinstance(steps, list):
+        raise ProjectionError(f"pseudocode steps are not an array at {path}")
+    lines: list[str] = []
+    for index, step in enumerate(steps):
+        step_path = f"{path}[{index}]"
+        if not isinstance(step, dict):
+            raise ProjectionError(f"pseudocode step is not an object at {step_path}")
+        kind = step.get("kind")
+        allowed = {
+            "step": {"kind", "body"},
+            "return": {"kind", "body"},
+            "if": {"kind", "condition", "steps", "otherwise"},
+            "for": {"kind", "each", "over", "steps"},
+            "repeat": {"kind", "condition", "steps"},
+        }
+        if kind not in allowed:
+            raise ProjectionError(f"pseudocode step kind {kind!r} is unsupported at {step_path}")
+        expect_keys(step, allowed[str(kind)], step_path)
+
+        def text(field: str) -> str:
+            rendered = field_text(
+                step.get(field), f"{step_path}.{field}", term_titles, context_names
+            )
+            if not rendered:
+                raise ProjectionError(f"pseudocode {kind} has no {field} at {step_path}")
+            return rendered
+
+        if kind == "step":
+            lines.append(f"{indent}- DO {text('body')}")
+        elif kind == "return":
+            lines.append(f"{indent}- RETURN {text('body')}")
+        elif kind == "if":
+            lines.append(f"{indent}- IF {text('condition')}")
+            lines.extend(
+                _pseudocode_lines(
+                    step.get("steps"), f"{step_path}.steps", indent + "  ", term_titles, context_names
+                )
+            )
+            otherwise = step.get("otherwise")
+            if otherwise is not None:
+                lines.append(f"{indent}- OTHERWISE")
+                lines.extend(
+                    _pseudocode_lines(
+                        otherwise,
+                        f"{step_path}.otherwise",
+                        indent + "  ",
+                        term_titles,
+                        context_names,
+                    )
+                )
+            lines.append(f"{indent}- END IF")
+        elif kind == "for":
+            lines.append(f"{indent}- FOR EACH {text('each')} IN {text('over')}")
+            lines.extend(
+                _pseudocode_lines(
+                    step.get("steps"), f"{step_path}.steps", indent + "  ", term_titles, context_names
+                )
+            )
+            lines.append(f"{indent}- END FOR")
+        else:
+            lines.append(f"{indent}- REPEAT")
+            lines.extend(
+                _pseudocode_lines(
+                    step.get("steps"), f"{step_path}.steps", indent + "  ", term_titles, context_names
+                )
+            )
+            lines.append(f"{indent}- UNTIL {text('condition')}")
+    return lines
+
+
+def _pseudocode_markdown(
+    value: dict[str, object],
+    path: str,
+    level: int,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> str:
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    if not title:
+        raise ProjectionError(f"pseudocode title is empty at {path}")
+    fields = [
+        semantic_field(value.get("id"), "ID", f"{path}.id", term_titles, context_names),
+    ]
+    for name, label in (("inputs", "Inputs"), ("outputs", "Outputs")):
+        items = value.get(name)
+        if not isinstance(items, list):
+            raise ProjectionError(f"pseudocode {name} is not an array at {path}")
+        if items:
+            rendered = [
+                field_text(item, f"{path}.{name}[{index}]", term_titles, context_names)
+                for index, item in enumerate(items)
+            ]
+            fields.append(label + ":\n" + "\n".join(f"- {item}" for item in rendered))
+    lines = _pseudocode_lines(
+        value.get("steps"), f"{path}.steps", "", term_titles, context_names
+    )
+    if not lines:
+        raise ProjectionError(f"pseudocode procedure is empty at {path}")
+    fields.append("Procedure:\n" + "\n".join(lines))
+    caption = semantic_field(
+        value.get("caption"), "Caption", f"{path}.caption", term_titles, context_names
+    )
+    if caption:
+        fields.append(caption)
+    return f"\n\n{'#' * level} pseudocode: {title}\n\n" + "\n\n".join(
+        field for field in fields if field
+    ) + "\n"
+
+
+def semantic_markdown(
+    value: object,
+    path: str = "semantic",
+    term_titles: Mapping[str, str] | None = None,
+    context_names: frozenset[str] | None = None,
+    heading_level: int | None = None,
+    allow_clauses: bool = False,
+) -> str:
+    if not isinstance(value, dict):
+        raise ProjectionError(f"semantic node is not an object at {path}")
+    kind = value.get("kind")
+    if not isinstance(kind, str) or kind not in SEMANTIC_FIELDS:
+        raise ProjectionError(f"unsupported semantic block kind {kind!r} at {path}")
+    expect_keys(value, {"kind"} | SEMANTIC_FIELDS[kind], path)
+    if not isinstance(kind, str) or kind not in SEMANTIC_FIELDS:
+        raise ProjectionError(f"unsupported semantic block kind {kind!r} at {path}")
+    expect_keys(value, {"kind"} | SEMANTIC_FIELDS[kind], path)
+    if kind == "document":
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        level = value.get("level", 1)
+        if not isinstance(level, int) or level < 1:
+            raise ProjectionError(f"document heading level is invalid at {path}")
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            level + 1,
+            allow_clauses,
+        )
+        return normalize_markdown(f"{'#' * level} {title}\n\n{body}")
+    if kind == "section":
+        level = heading_level if heading_level is not None else 2
+        if level < 1:
+            raise ProjectionError(f"section heading level is invalid at {path}")
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        lead = content_text(
+            value.get("lead"), f"{path}.lead", term_titles, context_names, None, allow_clauses
+        ).strip()
+        visual = projection_visual(
+            value.get("visual"),
+            f"{path}.visual",
+            term_titles,
+            context_names,
+            level + 1,
+        )
+        notes = projection_notes(
+            value.get("notes"),
+            f"{path}.notes",
+            term_titles,
+            context_names,
+            level + 1,
+        )
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            level + 1,
+            allow_clauses,
+        )
+        return f"\n\n{'#' * level} {title}\n\n{lead}\n\n{visual}\n\n{notes}\n\n{body}"
+    if kind == "answers":
+        level = heading_level if heading_level is not None else 3
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        rows = answer_lines(value.get("answers"), f"{path}.answers", term_titles, context_names)
+        heading = f"{'#' * level} answers" + (f": {title}" if title else "")
+        rows_text = "\n\n".join(rows)
+        return f"\n\n{heading}\n\n{rows_text}\n"
+    if kind == "components":
+        level = heading_level if heading_level is not None else 3
+        items = value.get("items")
+        if not isinstance(items, list):
+            raise ProjectionError(f"components items are not an array at {path}")
+        heading = f"{'#' * level} components"
+        sections = []
+        sections.extend(
+            unit_markdown(
+                item,
+                "component",
+                level + 1,
+                f"{path}.items[{index}]",
+                term_titles,
+                context_names,
+            ).strip()
+            for index, item in enumerate(items)
+        )
+        return "\n\n" + heading + "\n\n" + "\n\n".join(sections) + "\n"
+    if kind == "contract":
+        level = heading_level if heading_level is not None else 3
+        return unit_markdown(
+            value, "contract", level, path, term_titles, context_names
+        )
+    if kind == "entity":
+        level = heading_level if heading_level is not None else 3
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        fields = [
+            semantic_field(value.get("id"), "ID", f"{path}.id", term_titles, context_names),
+            semantic_field(
+                value.get("entity-kind"), "Kind", f"{path}.entity-kind", term_titles, context_names
+            ),
+            semantic_field(value.get("owner"), "Owner", f"{path}.owner", term_titles, context_names),
+            semantic_field(
+                value.get("lifecycle"), "Lifecycle", f"{path}.lifecycle", term_titles, context_names
+            ),
+            semantic_field(
+                value.get("domain"), "Domain", f"{path}.domain", term_titles, context_names
+            ),
+            semantic_field(value.get("lens"), "Lens", f"{path}.lens", term_titles, context_names),
+            semantic_field(
+                value.get("description"),
+                "Description",
+                f"{path}.description",
+                term_titles,
+                context_names,
+            ),
+        ]
+        body = content_text(
+            value.get("body"), f"{path}.body", term_titles, context_names, level + 1
+        ).strip()
+        sections = [field for field in fields if field]
+        if body:
+            sections.append(body)
+        return (
+            f"\n\n{'#' * level} entity: {title}\n\n"
+            + "\n\n".join(sections)
+            + "\n"
+        )
+    if kind == "attribute":
+        level = heading_level if heading_level is not None else 4
+        name = field_text(value.get("name"), f"{path}.name", term_titles, context_names)
+        fields = [
+            semantic_field(value.get("id"), "ID", f"{path}.id", term_titles, context_names),
+            semantic_field(value.get("type"), "Type", f"{path}.type", term_titles, context_names),
+            semantic_field(
+                value.get("provenance"), "Provenance", f"{path}.provenance", term_titles, context_names
+            ),
+            semantic_field(
+                value.get("state-type"), "State type", f"{path}.state-type", term_titles, context_names
+            ),
+            semantic_field(
+                value.get("state-machine"),
+                "State machine",
+                f"{path}.state-machine",
+                term_titles,
+                context_names,
+            ),
+        ]
+        body = content_text(
+            value.get("body"), f"{path}.body", term_titles, context_names
+        ).strip()
+        sections = [field for field in fields if field]
+        if body:
+            sections.append(body)
+        heading = f"{'#' * level} attribute: {name}" if name else f"{'#' * level} attribute"
+        return "\n\n" + heading + "\n\n" + "\n\n".join(sections) + "\n"
+    if kind == "relates":
+        level = heading_level if heading_level is not None else 4
+        cardinality = field_text(
+            value.get("cardinality"), f"{path}.cardinality", term_titles, context_names
+        )
+        body = content_text(
+            value.get("body"), f"{path}.body", term_titles, context_names
+        ).strip()
+        heading = f"{'#' * level} relates: {cardinality}" if cardinality else f"{'#' * level} relates"
+        return f"\n\n{heading}\n\n{body}\n"
+    if kind == "cards":
+        level = heading_level if heading_level is not None else 3
+        items = value.get("items")
+        if not isinstance(items, list):
+            raise ProjectionError(f"cards items are not an array at {path}")
+        heading = f"{'#' * level} cards"
+        sections = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise ProjectionError(f"card item is not an object at {path}.items[{index}]")
+            expect_keys(item, {"title", "tint", "body"}, f"{path}.items[{index}]")
+            title = field_text(
+                item.get("title"), f"{path}.items[{index}].title", term_titles, context_names
+            )
+            body = content_text(
+                item.get("body"), f"{path}.items[{index}].body", term_titles, context_names
+            ).strip()
+            fields = [body]
+            sections.append(
+                f"{'#' * (level + 1)} card"
+                + (f": {title}" if title else "")
+                + "\n\n"
+                + "\n\n".join(field for field in fields if field)
+            )
+        return "\n\n" + heading + "\n\n" + "\n\n".join(sections) + "\n"
+    if kind == "coverage":
+        rows = value.get("rows")
+        if not isinstance(rows, list):
+            raise ProjectionError(f"coverage rows are not an array at {path}")
+        rendered_rows: list[list[str]] = []
+        for index, row in enumerate(rows):
+            if not isinstance(row, list) or len(row) not in (2, 3):
+                raise ProjectionError(f"coverage row is invalid at {path}.rows[{index}]")
+            rendered_rows.append(
+                [
+                    content_text(cell, f"{path}.rows[{index}][{column}]", term_titles, context_names).strip()
+                    for column, cell in enumerate(row)
+                ]
+                + ([""] if len(row) == 2 else [])
+            )
+        return f"\n\n{'#' * (heading_level or 3)} coverage\n\n" + markdown_table(
+            [["Part", "Status", "Reason"], *rendered_rows]
+        ) + "\n"
+    if kind == "md-table":
+        ncol = value.get("ncol")
+        cells = value.get("cells")
+        if isinstance(ncol, bool) or not isinstance(ncol, int) or ncol < 1:
+            raise ProjectionError(f"md-table column count is invalid at {path}")
+        if not isinstance(cells, list) or len(cells) < ncol or len(cells) % ncol:
+            raise ProjectionError(f"md-table cells are invalid at {path}")
+        rows = [
+            [
+                content_text(
+                    cells[index], f"{path}.cells[{index}]", term_titles, context_names
+                ).strip()
+                for index in range(start, start + ncol)
+            ]
+            for start in range(0, len(cells), ncol)
+        ]
+        return f"\n\n{'#' * (heading_level or 3)} md-table\n\n" + markdown_table(rows) + "\n"
+    if kind == "stat-grid":
+        tiles = value.get("tiles")
+        if not isinstance(tiles, list):
+            raise ProjectionError(f"stat-grid tiles are not an array at {path}")
+        rows: list[list[str]] = []
+        for index, tile in enumerate(tiles):
+            if not isinstance(tile, dict):
+                raise ProjectionError(f"stat-tile is not an object at {path}.tiles[{index}]")
+            expect_keys(tile, {"value", "label", "delta", "dir", "_guides"}, f"{path}.tiles[{index}]")
+            rows.append(
+                [
+                    field_text(
+                        tile.get("value"),
+                        f"{path}.tiles[{index}].value",
+                        term_titles,
+                        context_names,
+                    ),
+                    field_text(
+                        tile.get("label"),
+                        f"{path}.tiles[{index}].label",
+                        term_titles,
+                        context_names,
+                    ),
+                    field_text(
+                        tile.get("delta"),
+                        f"{path}.tiles[{index}].delta",
+                        term_titles,
+                        context_names,
+                    ),
+                    field_text(
+                        tile.get("dir"),
+                        f"{path}.tiles[{index}].dir",
+                        term_titles,
+                        context_names,
+                    ),
+                ]
+            )
+        return f"\n\n{'#' * (heading_level or 3)} stat-grid\n\n" + markdown_table(
+            [["Value", "Label", "Delta", "Direction"], *rows]
+        ) + "\n"
+    if kind == "how-to-read":
+        return ""
+    if kind in ("diagram", "diagram-native"):
+        level = heading_level if heading_level is not None else 3
+        return _diagram_markdown(value, path, level, term_titles, context_names)
+    if kind == "chart":
+        level = heading_level if heading_level is not None else 3
+        return _chart_markdown(value, path, level, term_titles, context_names)
+    if kind == "code-block":
+        return markdown_code_block(value.get("lang"), value.get("src"), path)
+    if kind == "formula":
+        level = heading_level if heading_level is not None else 3
+        return _formula_markdown(value, path, level, term_titles, context_names)
+    if kind == "pseudocode":
+        level = heading_level if heading_level is not None else 3
+        return _pseudocode_markdown(value, path, level, term_titles, context_names)
+    if kind == "state-type":
+        level = heading_level if heading_level is not None else 3
+        return _state_type_markdown(value, path, level, term_titles, context_names)
+    if kind == "state-machine":
+        level = heading_level if heading_level is not None else 3
+        return _state_machine_markdown(value, path, level, term_titles, context_names)
+    if kind == "sequence":
+        level = heading_level if heading_level is not None else 3
+        return _sequence_markdown(value, path, level, term_titles, context_names)
+    if kind == "pending-ledger":
+        level = heading_level if heading_level is not None else 3
+        return _pending_markdown(value, path, level, term_titles, context_names)
+    if kind in ("embedded-svg", "figure-block"):
+        raise ProjectionError(f"semantic block kind {kind!r} is not representable")
+    if kind == "points":
+        items = value.get("items")
+        if not isinstance(items, list):
+            raise ProjectionError(f"points items are not an array at {path}")
+        rendered = [
+            content_text(
+                item,
+                f"{path}.items[{index}]",
+                term_titles,
+                context_names,
+                None,
+                allow_clauses,
+            ).strip()
+            for index, item in enumerate(items)
+        ]
+        return "\n\n" + "\n".join(f"- {item}" for item in rendered) + "\n"
+    if kind == "subsection":
+        level = heading_level if heading_level is not None else 3
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            level + 1,
+            allow_clauses,
+        )
+        return f"\n\n{'#' * level} {title}\n\n{body.strip()}\n"
+    if kind == "notes":
+        level = heading_level if heading_level is not None else 3
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            level + 1,
+            allow_clauses,
+        )
+        return f"\n\n{'#' * level} Notes: {title}\n\n{body.strip()}\n\n"
+    if kind in ("goal", "no-goal", "invariant", "principle"):
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        lens = field_text(value.get("lens"), f"{path}.lens", term_titles, context_names)
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            None,
+            allow_clauses,
+        )
+        enforcement = field_text(
+            value.get("enforcement"), f"{path}.enforcement", term_titles, context_names
+        )
+        area = field_text(value.get("area"), f"{path}.area", term_titles, context_names)
+        statement_level = field_text(value.get("level"), f"{path}.level", term_titles, context_names)
+        since = field_text(value.get("since"), f"{path}.since", term_titles, context_names)
+        adr_value = field_text(value.get("adr"), f"{path}.adr", term_titles, context_names)
+        attributes = ""
+        if lens:
+            attributes += f"Lens: {lens}\n\n"
+        if enforcement:
+            attributes += f"Enforcement: {enforcement}\n\n"
+        if area:
+            attributes += f"Area: {area}\n\n"
+        if statement_level:
+            attributes += f"Level: {statement_level}\n\n"
+        if since:
+            attributes += f"Since: {since}\n\n"
+        if adr_value:
+            attributes += f"ADR: {adr_value}\n\n"
+        level = heading_level if heading_level is not None else 3
+        return f"\n\n{'#' * level} {kind}: {title}\n\n{attributes}{body.strip()}\n\n"
+    if kind in ("given", "when", "then"):
+        if not allow_clauses:
+            raise ProjectionError(f"clause {kind!r} appears outside behavior at {path}")
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            None,
+            allow_clauses,
+        ).strip()
+        return f"- {kind.capitalize()}: {body}\n"
+    if kind == "behavior":
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        area = field_text(value.get("area"), f"{path}.area", term_titles, context_names)
+        level = field_text(value.get("level"), f"{path}.level", term_titles, context_names)
+        lens = field_text(value.get("lens"), f"{path}.lens", term_titles, context_names)
+        enforcement = field_text(value.get("enforcement"), f"{path}.enforcement", term_titles, context_names)
+        since = field_text(value.get("since"), f"{path}.since", term_titles, context_names)
+        adr_value = field_text(value.get("adr"), f"{path}.adr", term_titles, context_names)
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            None,
+            True,
+        )
+        body = re.sub(r"(?m)^[ \t]+(- (?:Given|When|Then):)", r"\1", body)
+        attributes = f"Area: {area}\n\nLevel: {level}\n\n"
+        if lens:
+            attributes += f"Lens: {lens}\n\n"
+        if enforcement:
+            attributes += f"Enforcement: {enforcement}\n\n"
+        if since:
+            attributes += f"Since: {since}\n\n"
+        if adr_value:
+            attributes += f"ADR: {adr_value}\n\n"
+        level_number = heading_level if heading_level is not None else 3
+        return f"\n\n{'#' * level_number} behavior: {title}\n\n{attributes}{body.strip()}\n\n"
+    if kind in ("info", "warning"):
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        body = content_text(
+            value.get("body"),
+            f"{path}.body",
+            term_titles,
+            context_names,
+            None,
+            allow_clauses,
+        )
+        level = heading_level if heading_level is not None else 3
+        heading = f"{'#' * level} {kind}" + (f": {title}" if title else "")
+        return f"\n\n{heading}\n\n{body.strip()}\n\n"
+    if kind == "context-reference":
+        name = value.get("name")
+        if not isinstance(name, str) or not name:
+            raise ProjectionError(f"context reference name is invalid at {path}")
+        if context_names is None or name not in context_names:
+            raise ProjectionError(f"unknown context reference {name!r} at {path}")
+        return name
+    if kind == "adr":
+        number = value.get("number")
+        if isinstance(number, bool) or not isinstance(number, int) or number < 0:
+            raise ProjectionError(f"ADR number is invalid at {path}")
+        return f"ADR-{number:04d}"
+    if kind == "lens-pill":
+        name = value.get("name")
+        if not isinstance(name, str) or not name:
+            raise ProjectionError(f"lens pill name is invalid at {path}")
+        return name
+    if kind == "pill":
+        names = value.get("names")
+        if not isinstance(names, list):
+            raise ProjectionError(f"pill names are not an array at {path}")
+        rendered = [
+            field_text(name, f"{path}.names[{index}]", term_titles, context_names)
+            for index, name in enumerate(names)
+        ]
+        return ", ".join(rendered)
+    if kind == "term":
+        slug = value.get("slug")
+        owner = value.get("owner")
+        if not isinstance(slug, str) or not isinstance(owner, str):
+            raise ProjectionError(f"term slug or owner is invalid at {path}")
+        title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+        body = _normalize_fragment(
+            content_text(value.get("body"), f"{path}.body", term_titles, context_names)
+        ).strip()
+        return f"### {slug} — {title}\n\nOwner: {owner}\n\n{body}\n"
+    if kind == "term-reference":
+        slug = value.get("slug")
+        if not isinstance(slug, str):
+            raise ProjectionError(f"term reference slug is invalid at {path}")
+        if term_titles is None or slug not in term_titles:
+            raise ProjectionError(f"unknown term reference {slug!r} at {path}")
+        return term_titles[slug]
+    raise ProjectionError(f"unsupported semantic block kind {kind!r} at {path}")
+
+
+def _semantic_nodes(value: object, owner: str | None = None) -> list[tuple[dict[str, object], str | None]]:
+    found: list[tuple[dict[str, object], str | None]] = []
+
+    def walk(current: object, current_owner: str | None) -> None:
+        if isinstance(current, list):
+            for item in current:
+                walk(item, current_owner)
+            return
+        if not isinstance(current, dict):
+            return
+        if current.get("func") == "metadata" and current.get("label") == LABEL:
+            node = current.get("value")
+            if not isinstance(node, dict):
+                raise ProjectionError("semantic metadata value is not an object")
+            collect(node, current_owner)
+            return
+        for child in current.values():
+            walk(child, current_owner)
+
+    def collect(node: dict[str, object], current_owner: str | None) -> None:
+        found.append((node, current_owner))
+        node_owner = current_owner
+        if node.get("kind") == "entity" and isinstance(node.get("id"), str):
+            node_owner = node["id"]
+        for key, child in node.items():
+            if key != "kind":
+                walk(child, node_owner)
+
+    if isinstance(value, dict) and isinstance(value.get("kind"), str):
+        collect(value, owner)
+    else:
+        walk(value, owner)
+    return found
+
+
+def validate_state_links(records: list[object]) -> None:
+    nodes: list[tuple[dict[str, object], str | None]] = []
+    for record in records:
+        nodes.extend(_semantic_nodes(record))
+
+    entities = [node for node, _ in nodes if node.get("kind") == "entity" and node.get("id") is not None]
+    types = [node for node, _ in nodes if node.get("kind") == "state-type"]
+    machines = [node for node, _ in nodes if node.get("kind") == "state-machine" and node.get("id") is not None]
+    fields = [
+        (node, owner)
+        for node, owner in nodes
+        if node.get("kind") == "attribute" and node.get("id") is not None
+    ]
+
+    def unique(items: list[object], key, noun: str) -> None:
+        seen: set[object] = set()
+        for item in items:
+            identity = key(item)
+            if identity in seen:
+                raise ProjectionError(f"state links: duplicate {noun} id {identity!r}")
+            seen.add(identity)
+
+    unique(entities, lambda node: node.get("id"), "entity")
+    unique(types, lambda node: node.get("id"), "state type")
+    unique(machines, lambda node: node.get("id"), "state machine")
+    unique(fields, lambda item: (item[1], item[0].get("id")), "attribute")
+
+    entity_by_id = {node.get("id"): node for node in entities}
+    type_by_id = {node.get("id"): node for node in types}
+    machine_by_id = {node.get("id"): node for node in machines}
+    field_by_owner_id = {(owner, node.get("id")): node for node, owner in fields}
+
+    for field, owner in fields:
+        link_values = (field.get("state-type"), field.get("state-machine"))
+        if not any(value is not None for value in link_values):
+            continue
+        if owner is None:
+            raise ProjectionError(f"state links: linked attribute {field.get('id')!r} is outside an identified entity")
+        state_type, state_machine = link_values
+        if state_type not in type_by_id:
+            raise ProjectionError(f"state links: attribute {field.get('id')!r} on entity {owner!r} names unknown state type {state_type!r}")
+        if state_machine not in machine_by_id:
+            raise ProjectionError(f"state links: attribute {field.get('id')!r} on entity {owner!r} names unknown state machine {state_machine!r}")
+        machine = machine_by_id[state_machine]
+        if machine.get("subject") != owner or machine.get("state-field") != field.get("id") or machine.get("state-type") != state_type:
+            raise ProjectionError(f"state links: attribute {field.get('id')!r} on entity {owner!r} does not match state machine {state_machine!r}")
+
+    for machine in machines:
+        subject = machine.get("subject")
+        field_id = machine.get("state-field")
+        state_type = machine.get("state-type")
+        machine_id = machine.get("id")
+        if subject not in entity_by_id:
+            raise ProjectionError(f"state links: state machine {machine_id!r} names unknown subject entity {subject!r}")
+        field = field_by_owner_id.get((subject, field_id))
+        if field is None:
+            raise ProjectionError(f"state links: state machine {machine_id!r} state-field {field_id!r} does not exist on subject {subject!r}")
+        if field.get("state-machine") != machine_id:
+            raise ProjectionError(f"state links: subject {subject!r} state-field {field_id!r} links another state machine")
+        state_type_node = type_by_id.get(state_type)
+        if state_type_node is None:
+            raise ProjectionError(f"state links: state machine {machine_id!r} names unknown state type {state_type!r}")
+        variants = state_type_node.get("variants")
+        states = machine.get("states")
+        if not isinstance(variants, list) or not isinstance(states, list):
+            raise ProjectionError(f"state links: state machine {machine_id!r} has invalid state data")
+        normalized = [variant.get("id") if isinstance(variant, dict) else variant for variant in variants]
+        if set(normalized) != set(states) or len(set(normalized)) != len(set(states)):
+            raise ProjectionError(f"state links: state type {state_type!r} variants do not equal state machine {machine_id!r} states")
+
+
+def project(layer: Path) -> bytes:
+    documents_expected = corpus_documents(layer)
+    records = query_semantics(layer)
+    validate_state_links(records)
+    documents = [record for record in records if isinstance(record, dict) and record.get("kind") == "document"]
+    if len(documents) != len(documents_expected):
+        raise ProjectionError("semantic query did not return every design document")
+    by_name = {record.get("name"): record for record in documents}
+    expected_names = [name for name, _ in documents_expected]
+    if sorted(by_name) != sorted(expected_names) or len(by_name) != len(expected_names):
+        raise ProjectionError("semantic query returned an unexpected document corpus")
+    terms = [record for record in records if isinstance(record, dict) and record.get("kind") == "term"]
+    context_names = frozenset(name for name in expected_names if name != "root")
+    term_titles = {
+        record["slug"]: field_text(
+            record.get("title"), "term.title", None, context_names
+        )
+        for record in terms
+        if isinstance(record.get("slug"), str)
+    }
+    parts = [
+        semantic_markdown(
+            by_name[name], term_titles=term_titles, context_names=context_names
+        )
+        for name in expected_names
+    ]
+    owners = sorted({record.get("owner") for record in terms})
+    for owner in owners:
+        if not isinstance(owner, str):
+            raise ProjectionError("term owner is not text")
+        owner_terms = sorted(
+            (record for record in terms if record.get("owner") == owner),
+            key=lambda record: str(record.get("slug", "")),
+        )
+        parts.append(
+            f"## Vocabulary: {owner}\n\n"
+            + "\n".join(
+                semantic_markdown(
+                    term, term_titles=term_titles, context_names=context_names
+                )
+                for term in owner_terms
+            )
+        )
+
+    map_names = (["CONTEXT-MAP.md"] if context_names else []) + ["COVERAGE.md"]
+    for filename in map_names:
+        path = layer.parent / filename
+        if not path.is_file():
+            raise ProjectionError(f"required corpus map not found: {path}")
+        try:
+            raw = path.read_bytes().decode("utf-8")
+        except OSError as error:
+            raise ProjectionOperationalError(f"cannot read semantic map {path}: {error}") from error
+        except UnicodeDecodeError as error:
+            raise ProjectionError(f"cannot read semantic map {path}: {error}") from error
+        parts.append(f"<!-- source: docs/{filename} -->\n\n{raw}")
+
+    return ("\n\n".join(part.rstrip("\n") for part in parts) + "\n").encode("utf-8")
+
+
+def estimate(markdown: bytes) -> dict[str, int | str]:
+    text = markdown.decode("utf-8")
+    return {
+        "utf8_bytes": len(markdown),
+        "characters": len(text),
+        "words": len(text.split()),
+        "lines": text.count("\n"),
+        "likely_tokens": math.ceil(len(markdown) / 4),
+        "conservative_tokens": math.ceil(len(markdown) / 3),
+        "likely_tokens_method": "ceil(utf8_bytes/4)",
+        "conservative_tokens_method": "ceil(utf8_bytes/3)",
+    }
+
+
+def write_new_output(output: Path, markdown: bytes) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{output.name}.", dir=output.parent, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(markdown)
+        os.link(temporary, output)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def main(argv: list[str]) -> int:
+    layer, mode, output = parse_args(argv)
+    try:
+        markdown = project(layer)
+    except ProjectionOperationalError as error:
+        sys.stderr.write(f"design-context: error: {error}\n")
+        return 2
+    except OSError as error:
+        sys.stderr.write(f"design-context: error: {error}\n")
+        return 2
+    except ProjectionError as error:
+        sys.stderr.write(f"design-context: error: {error}\n")
+        return 1
+    if mode == "estimate":
+        sys.stdout.write(json.dumps(estimate(markdown), sort_keys=True) + "\n")
+        return 0
+    if mode == "output":
+        assert output is not None
+        try:
+            write_new_output(output, markdown)
+        except OSError as error:
+            sys.stderr.write(f"design-context: error: cannot write output: {error}\n")
+            return 2
+        return 0
+    sys.stdout.buffer.write(markdown)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

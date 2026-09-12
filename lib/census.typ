@@ -3,6 +3,7 @@
 #import "tokens.typ": *
 #import "rules.typ": *
 #import "furniture.typ": *
+#import "semantic.typ": *
 
 // The two groups inside a card label THEMSELVES, from the run of clauses rather
 // than from a wrapper block the author would have to write. The schema fixes the
@@ -140,7 +141,7 @@
 // Rendering both as identical indented rows — which is what a generic statement
 // body does — loses the distinction that makes a census a model.
 #let entity(id: none, title: none, kind: none, owner: none, lifecycle: none,
-            domain: none, tint: none, description: none, ..a, body) = {
+            domain: none, lens: none, tint: none, description: none, ..a, body) = {
   // The census's four classifying facts are REQUIRED by the block's own
   // declaration: what the thing is, who owns it, how it changes, and which
   // domain it belongs to. A card missing one renders as a card that simply
@@ -155,10 +156,18 @@
   _enum("entity", "kind", kind, ENTITY-KINDS)
   _enum("entity", "lifecycle", lifecycle, ENTITY-LIFECYCLES)
   _enum("entity", "tint", tint, TINTS)
+  let ls = _lenses("entity", lens)
   let kc = if kind != none { ENTITY-KIND-COLOR.at(kind) } else { MUTED }
   let lc = if lifecycle != none { ENTITY-LIFECYCLE-COLOR.at(lifecycle) } else { none }
   let tc = if tint == none { none } else { TINT-COLOR.at(tint) }
   let frame = if tc == none { HAIRLINE } else { tc }
+  if context-projection {
+    return semantic("entity", fields: (
+      id: id, title: title, description: description, entity-kind: kind,
+      owner: owner, lifecycle: lifecycle, domain: domain, lens: lens, tint: tint,
+      body: body,
+    ))
+  }
   if id != none { _note-state-link((kind: "entity", id: id)) }
   block(width: 100%, breakable: true, radius: 3pt, inset: 0pt,
         stroke: 0.6pt + frame.lighten(55%),
@@ -172,6 +181,7 @@
           #if lc != none { [#h(3pt) #chip(lifecycle, tone: lc)] }
           #if domain != none { [#h(3pt) #chip(domain, tone: tc)] }
           #if owner != none { [#h(3pt) #chip("owned by " + owner, tone: tc)] }
+          #if ls.len() > 0 { [#h(3pt) #pill(..ls)] }
         ])
       // The two groups label themselves — see _census-enter below. The state is
       // cleared as the card opens so every card starts a fresh run.
@@ -207,6 +217,12 @@
   let linked = link-values.any(v => v != none)
   if linked and link-values.any(v => v == none) {
     _fail("attribute", "state link requires id, state-type, and state-machine together")
+  }
+  if context-projection {
+    return semantic("attribute", fields: (
+      id: id, provenance: provenance, name: name, type: type,
+      state-type: state-type, state-machine: state-machine, body: body,
+    ))
   }
   _census-enter("attributes")
   let c = if provenance != none { PROVENANCE-COLOR.at(provenance) } else { none }
@@ -247,7 +263,7 @@
 #let CARDINALITY = ("1", "0..1", "n", "0..n")
 
 #let relates(cardinality: none, ..a, body) = {
-  _census-enter("relationships")
+  if not context-projection { _census-enter("relationships") }
   // The cardinality is DECLARED rather than written into the body precisely so
   // it can be checked: the census states the shape of every relation uniformly
   // instead of burying it in a sentence, and a shape nothing validates is a
@@ -272,6 +288,9 @@
                " is expected to be one of " + repr(CARDINALITY))
       }
     }
+  }
+  if context-projection {
+    return semantic("relates", fields: (cardinality: cardinality, body: body))
   }
   block(width: 100%, inset: (left: 2pt, y: 2.5pt),
     grid(columns: (58pt, 1fr), column-gutter: 7pt, align: (right + top, left),

@@ -6,6 +6,7 @@
 // matters. Inline mathematics remains ordinary Typst math in prose; this block
 // is for an expression the reader should be able to find and cite as a unit.
 #import "schema.typ": *
+#import "semantic.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *
 
@@ -32,6 +33,17 @@
     if type(item) != array or item.len() != 2 {
       panic("formula notation entry " + repr(item)
         + " must be a (symbol, meaning) pair")
+    }
+  }
+  if context-projection {
+    let projected = semantic("formula", fields: (
+      id: id, title: title, caption: caption, numbered: numbered,
+      notation: notation, body: body,
+    ))
+    return if id == none {
+      projected
+    } else {
+      [#_semantic-target("formula-" + id)#projected]
     }
   }
 
@@ -89,7 +101,7 @@
   if id == none {
     rendered
   } else {
-    [#metadata(id)#label("formula-" + id)#rendered]
+    [#metadata(id)#rendered#label("formula-" + id)]
   }
   v(0.55em)
 }

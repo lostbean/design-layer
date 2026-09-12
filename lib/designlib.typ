@@ -56,6 +56,7 @@
 //   formula.typ    display equations with notation and citation furniture
 //   pseudocode.typ implementation-neutral procedures with structured control flow
 #import "schema.typ": *
+#import "semantic.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *
 #import "furniture.typ": *

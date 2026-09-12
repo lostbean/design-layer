@@ -436,6 +436,7 @@
             export DESIGN_RAW_TYPST=${renderer}/bin/typst
             export DESIGN_RENDER_APP=${(gateApp "design-aggregate" "design-aggregate").program}
             export DESIGN_CHECK_APP=${checkApp.program}
+            export DESIGN_CONTEXT_APP=${(gateApp "context" "design-context").program}
           '';
         };
 
@@ -478,6 +479,10 @@
         # once the hosts have moved.
         apps.aggregate = gateApp "design-aggregate" "design-aggregate";
         apps.check = checkApp;
+
+        # The ephemeral agent-context projection. It uses the same pinned
+        # Typst, schema, and projected library as the renderer and gate.
+        apps.context = gateApp "context" "design-context";
 
         # THE GUIDELINE PASS — reference, deliberately NOT a gate.
         #
@@ -596,6 +601,7 @@
               export DESIGN_RAW_TYPST=${renderer}/bin/typst
               export DESIGN_RENDER_APP=${(gateApp "design-aggregate" "design-aggregate").program}
               export DESIGN_CHECK_APP=${checkApp.program}
+              export DESIGN_CONTEXT_APP=${(gateApp "context" "design-context").program}
               # The tests exec the gate scripts directly; /usr/bin/env does
               # not exist in the sandbox.
               patchShebangs scripts
@@ -607,6 +613,8 @@
               # with a warm cache.
               bash ./scripts/vendored-offline.test.sh
               bash ./scripts/designlib-native.test.sh
+              bash ./scripts/design-context.test.sh
+              bash ./scripts/design-context-app.test.sh
               bash ./scripts/diagram-viewpoints.test.sh
               bash ./scripts/typst-layer.test.sh
               bash ./scripts/token-coverage.test.sh

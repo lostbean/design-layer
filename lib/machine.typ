@@ -78,7 +78,8 @@
   _note-state-type(id, title, normalized)
   [#metadata(id)#label("state-type-" + id)
    #block(width: 100%, breakable: true, radius: 3pt,
-          inset: (x: 9pt, y: 7pt), stroke: 0.6pt + luma(210), [
+          inset: (x: 9pt, y: 7pt), stroke: 0.5pt + HAIRLINE,
+          fill: SURFACE, [
     #text(weight: "bold", title)
     #h(5pt)
     #for variant in variants {
@@ -174,9 +175,9 @@
     + "  rankdir=" + _rankdir(flow) + ";" + nl
     + "  graph [" + f + ", fontsize=10, nodesep=0.35, ranksep=0.55];" + nl
     + "  node [shape=circle, style=" + _q("filled") + ", " + f
-    + ", fontsize=8, color=" + hx(c) + ", fillcolor=" + hx(c.lighten(88%))
+    + ", fontsize=9, color=" + hx(c) + ", fillcolor=" + hx(c.lighten(88%))
     + ", penwidth=1.0];" + nl
-    + "  edge [" + f + ", fontsize=7, color=" + _q("#555555") + "];" + nl
+    + "  edge [" + f + ", fontsize=8, color=" + _q("#555555") + "];" + nl
   )
 
   // An accepting state is declared before its edges so the shape applies

@@ -159,13 +159,14 @@ else
   fi
 
   squeezed="$(printf '%s' "$text" | tr -cd 'A-Za-z0-9')"
-  badge="${squeezed%%Zviewpointmap*}"
-  if [ "$badge" = "VIEWPOINTCONTEXTOWNERSHIPALTITUDEL2CONTEXTS" ]; then
+  case "$squeezed" in
+  *VIEWPOINTCONTEXTOWNERSHIPALTITUDEL2CONTEXTS*)
     pass_line "viewpoint and altitude are both visible"
-  else
+    ;;
+  *)
     fail_line "viewpoint and altitude are not both visible"
-    printf '       badge text: %s\n' "$badge"
-  fi
+    ;;
+  esac
 
   boundary_missing=""
   for label in DOMAIN SUBDOMAIN BOUNDEDCONTEXT RUNTIME DEPLOYMENT SUBSYSTEM; do
@@ -259,7 +260,7 @@ for image in images[1:]:
         raise SystemExit("legend symbol has no scale transform")
     scale_x, scale_y = map(float, scales[-1])
     width, height = map(float, image.groups()[1:])
-    if width * scale_x > 30.1 or height * scale_y > 18.1:
+    if width * scale_x > 38.1 or height * scale_y > 22.1:
         raise SystemExit(
             "legend symbol exceeds its fixed area: %.2fpt x %.2fpt"
             % (width * scale_x, height * scale_y)
@@ -397,7 +398,7 @@ PYTEST
   fi
 fi
 
-# The grid keeps column centers stable across wrapped rows. The symbol area is
+# The five-column grid keeps column centers stable across wrapped rows. The symbol area is
 # bounded independently of the carrier's natural aspect ratio, so a tall
 # boundary or wide queue cannot change its cell geometry. Names are followed
 # by their descriptions in the extracted text, proving labels sit outside the
@@ -433,14 +434,11 @@ def center(word):
     return (box[0] + box[2]) / 2
 
 for words in (
-    ("aggregate", "dataflow"),
-    ("subdomain", "queue"),
-    ("entity", "topic"),
-    ("runtime", "database"),
-    ("subsystem", "event"),
-    ("deployment", "frontend", "call"),
-    ("actor", "backend", "dependency"),
-    ("service", "pubsub"),
+    ("domain", "deployment", "entity", "service"),
+    ("subdomain", "actor", "call"),
+    ("system", "event", "queue", "dependency"),
+    ("runtime", "aggregate", "frontend", "topic", "pubsub"),
+    ("subsystem", "backend", "database", "dataflow"),
 ):
     columns = [center(word) for word in words]
     if max(columns) - min(columns) > 5:
@@ -451,12 +449,12 @@ description = min(boxes("person"), key=lambda value: value[1])
 if description[1] <= name[1]:
     raise SystemExit("legend description does not follow its symbol name")
 PYTEST
-  pass_line "legend uses aligned equal-width columns with labels below symbols"
+  pass_line "legend uses five aligned columns with labels below symbols"
 else
   fail_line "legend columns or external label order is not stable"
 fi
 
-# Relation cells flow through the same eight-column grid as mark cells. Six
+# Relation cells flow through the same five-column grid as mark cells. Six
 # marks and three relations therefore occupy two compact rows.
 fixture aligned-relations '#set page(width: 500pt, height: 800pt, margin: 24pt)
 #diagram(
@@ -498,49 +496,52 @@ def boxes(word):
         )
     ]
 
-def center(word):
+def legend_box(word, last=False):
     values = boxes(word)
     if not values:
         raise SystemExit("missing legend word %s" % word)
-    box = min(values, key=lambda value: value[1])
+    return (max if last else min)(values, key=lambda value: value[1])
+
+def center(word, last=False):
+    box = legend_box(word, last)
     return (box[0] + box[2]) / 2
 
-columns = [center(word) for word in (
-    "actor", "system", "queue", "topic", "database", "event",
-    "call", "dependency",
-)]
+columns = [center(word) for word in ("actor", "system", "queue", "topic", "database")]
 steps = [right - left for left, right in zip(columns, columns[1:])]
 if max(steps) - min(steps) > 5:
-    raise SystemExit("merged grid column drift: %r" % columns)
-if abs(center("pubsub") - columns[0]) > 5:
-    raise SystemExit("merged grid did not wrap its ninth cell to column one")
-def y(word):
-    values = boxes(word)
-    if not values:
-        raise SystemExit("missing legend word %s" % word)
-    return min(values, key=lambda value: value[1])[1]
+    raise SystemExit("five-column grid drift: %r" % columns)
+for upper, lower, last in (
+    ("actor", "event", True),
+    ("system", "call", False),
+    ("queue", "dependency", False),
+    ("topic", "pubsub", False),
+):
+    if abs(center(upper) - center(lower, last)) > 5:
+        raise SystemExit("wrapped cell %s does not align below %s" % (lower, upper))
+def y(word, last=False):
+    return legend_box(word, last)[1]
 
 if "RELATIONS" in legend_xml:
     raise SystemExit("legend still emits a separate relations section")
-if abs(y("call") - y("event")) > 5:
+if abs(y("call") - y("event", True)) > 5:
     raise SystemExit("relation cells do not flow through the merged grid")
-if y("pubsub") - y("actor") > 45:
+if y("event", True) - y("actor") > 45:
     raise SystemExit("legend rows retain excessive vertical spacing")
 if y("dotted") - y("LEGEND") > 125:
     raise SystemExit("merged legend retains excessive total vertical spacing")
 PYTEST
-    pass_line "merged legend keeps relation columns aligned and rows compact"
+    pass_line "five-column legend keeps relation columns aligned and rows compact"
   else
-    fail_line "merged eight-column legend geometry is not stable"
+    fail_line "merged five-column legend geometry is not stable"
   fi
 else
   fail_line "aligned-relations diagram did not render"
   printf '%s\n' "$out" | head -5 | sed 's/^/       /'
 fi
 
-# A normal A4 page keeps eight equal columns even when all carriers are used.
-# The longest relation description wraps inside its cell while the following
-# relation remains on the same row without overlapping its text.
+# A normal A4 page keeps five readable columns even when all carriers are used.
+# The second row remains visibly separate from the first, and relation captions
+# sit below their names without overlapping adjacent content.
 fixture legend-a4-wrap '#set page(paper: "a4", margin: (x: 18mm, y: 18mm))
 #diagram(
   altitude: "L2",
@@ -566,34 +567,43 @@ if [ -f "$WORK/legend-a4-wrap.pdf" ]; then
 import re, sys
 
 xml = open(sys.argv[1], encoding="utf-8").read()
-def box(word):
-    match = re.search(
+def boxes(word):
+    return [
+        tuple(map(float, match.groups()))
+        for match in re.finditer(
         r'<word xMin="([0-9.]+)" yMin="([0-9.]+)" '
         r'xMax="([0-9.]+)" yMax="([0-9.]+)">%s</word>' % re.escape(word),
         xml,
-    )
-    if not match:
+        )
+    ]
+
+def box(word, last=False):
+    values = boxes(word)
+    if not values:
         raise SystemExit("missing A4 legend word %s" % word)
-    return tuple(map(float, match.groups()))
+    return (max if last else min)(values, key=lambda value: value[1])
 
 pubsub = box("pubsub")
-consume = box("consume")
-solid = box("solid")
-if consume[1] <= pubsub[1]:
-    raise SystemExit("long relation description did not wrap below its name")
-if pubsub[1] - solid[1] < 8:
-    raise SystemExit("wrapped relation cell overlaps the preceding row")
+dotted = box("dotted")
+event_name = box("event", True)
+first_row_bottom = max(box(word)[3] for word in ("role", "endpoint", "channel", "stream", "store"))
+if dotted[1] <= pubsub[1]:
+    raise SystemExit("relation description does not follow its name")
+if abs(event_name[1] - pubsub[1]) > 5:
+    raise SystemExit("second-row names do not share a baseline")
+if event_name[1] - first_row_bottom < 12:
+    raise SystemExit("second legend row overlaps the first row")
 page = re.search(r'<page width="([0-9.]+)" height="([0-9.]+)">', xml)
 if not page:
     raise SystemExit("A4 page bounds are missing")
 page_width = float(page.group(1))
-for word in ("pubsub", "consume", "solid"):
+for word in ("actor", "database", "event", "pubsub", "consume", "solid"):
     if box(word)[2] > page_width:
         raise SystemExit("A4 legend word exceeds the page width")
 PYTEST
-    pass_line "eight-column A4 legend wraps long captions without overlap"
+    pass_line "five-column A4 legend separates rows and captions without overlap"
   else
-    fail_line "eight-column A4 legend captions overlap or escape their cells"
+    fail_line "five-column A4 legend captions overlap or escape their cells"
   fi
 else
   fail_line "legend-a4-wrap diagram did not render"

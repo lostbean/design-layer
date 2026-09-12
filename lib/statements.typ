@@ -160,8 +160,9 @@
   // nested in `body` sees the level this update makes visible, never a stale
   // one from a previous behavior block.
   if kind == "behavior" { _behavior-level.update(level) }
-  block(width: 100%, inset: (left: 9pt, rest: 7pt), fill: c.lighten(94%),
-        stroke: (left: 2.5pt + c), radius: (right: 2pt), breakable: false,
+  block(width: 100%, inset: (x: 9pt, top: 7pt, bottom: 8pt), fill: c.lighten(95%),
+        stroke: (top: 1.4pt + c, rest: 0.45pt + c.lighten(52%)),
+        radius: 2pt, breakable: false,
     [
       #text(size: RENDERER-META, fill: c, weight: "bold", tracking: 0.4pt, upper(kind))
       #linebreak() #text(weight: "bold", size: RENDERER-TITLE, title)

@@ -196,6 +196,88 @@ The tint marks ownership. It does not transfer authority, persistence access,
 or lifecycle ownership across an edge. State those limits in the caption or
 adjacent clauses.
 
+### Equations and formulas
+
+Inline mathematics uses Typst's native math syntax directly. Use `#formula`
+when an expression is a named design unit that benefits from a title, equation
+number, notation key, caption, or stable internal target:
+
+```typst
+#formula(
+  id: "availability-budget",
+  title: "Availability budget",
+  numbered: true,
+  notation: (
+    ([$A$], [availability over the observation window]),
+    ([$D$], [accumulated downtime]),
+    ([$T$], [total observation time]),
+  ),
+  caption: [Subsystem targets may refine this shared budget but cannot silently
+    redefine it.],
+)[
+  $ A = 1 - frac(D, T) $
+]
+```
+
+A formula states a mathematical relation rather than structural containment,
+so it carries no diagram altitude. An `id:` creates a target named
+`formula-<id>`; the example above is referenced as
+`@formula-availability-budget`.
+
+### Pseudocode
+
+Use structured pseudocode when a procedure matters but its implementation
+language does not. The renderer owns the keywords and indentation; the author
+supplies the inputs, outputs, conditions, and domain actions:
+
+```typst
+#pseudocode(
+  id: "accept-one-change",
+  title: "Accept one change",
+  inputs: ([a work order], [repository state]),
+  outputs: ([an accepted change], [actionable findings]),
+  steps: (
+    pseudo-for([criterion], [acceptance criteria], (
+      pseudo-if(
+        [the criterion can be observed],
+        (pseudo-step([bind it to one check]),),
+        otherwise: (pseudo-return([a clarification request]),),
+      ),
+    )),
+    pseudo-repeat([the gate is green], (
+      pseudo-step([implement one coherent change]),
+      pseudo-step([run the complete gate]),
+    )),
+    pseudo-return([the accepted change]),
+  ),
+)
+```
+
+Pseudocode complements behavior rules rather than replacing them: behavior
+states what an observer can see, while pseudocode may explain the internal
+logical procedure. It is ordered by control flow and therefore has no altitude.
+An `id:` creates a `pseudocode-<id>` target; the example above is referenced as
+`@pseudocode-accept-one-change`.
+
+### Code snippets
+
+Use `#code-block` when the programming language is itself part of the design
+evidence—for example, an existing interface, configuration fragment, or API
+usage whose exact syntax matters. The first argument is the language used for
+syntax highlighting and the second is the literal source:
+
+````typst
+#code-block("rust", ```rust
+pub trait Clock {
+    fn now(&self) -> Instant;
+}
+```)
+````
+
+Use `#pseudocode` instead when the procedure should survive a change of
+implementation language. A code block preserves syntax; pseudocode preserves
+intent and control flow.
+
 ## Development
 
 `nix develop` provides the vendored Typst renderer (a version-exact package

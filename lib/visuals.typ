@@ -7,8 +7,8 @@
 #let _clue(kind, title, tint, body) = {
   _enum(kind, "tint", tint, TINTS)
   let c = if tint == none { KIND-COLOR.at(kind) } else { TINT-COLOR.at(tint) }
-  block(width: 100%, inset: 7pt, fill: c.lighten(93%),
-    stroke: (left: 2.5pt + c), radius: (right: 2pt),
+  block(width: 100%, inset: (x: 8pt, y: 7pt), fill: c.lighten(95%),
+    stroke: 0.5pt + c.lighten(50%), radius: 2pt,
     [
       #set par(justify: false)
       #text(size: 6.5pt, fill: c, weight: "bold", tracking: 0.4pt,
@@ -82,7 +82,7 @@
         none
       } else {
         let color = _cards-item-color(items.at(x + y * n), c)
-        0.6pt + color.lighten(35%)
+        (top: 1.2pt + color, rest: 0.4pt + color.lighten(55%))
       },
       align: left + top,
       ..items.map(it => _card-item(it, body-size)),
@@ -107,11 +107,12 @@
   for t in ts { _guides(t.at("_guides", default: ())) }
   block(width: 100%, grid(columns: (1fr,) * calc.min(ts.len(), int(cols)),
     gutter: 6pt,
-    ..ts.map(t => block(width: 100%, inset: 7pt, radius: 3pt, fill: luma(246),
+    ..ts.map(t => block(width: 100%, inset: (x: 8pt, y: 8pt), radius: 2pt,
+      fill: SURFACE, stroke: 0.45pt + HAIRLINE,
       [
         #text(size: 16pt, weight: "bold", t.at("value", default: ""))
         #linebreak()
-        #text(size: 7pt, fill: luma(110), t.at("label", default: ""))
+        #text(size: 7pt, fill: MUTED, t.at("label", default: ""))
         #if t.at("delta", default: none) != none [
           #linebreak()
           #text(size: 6.8pt, weight: "bold",
@@ -152,13 +153,14 @@
     #set par(justify: false)
     #table(
       columns: columns,
+      fill: (_, y) => if y == 0 { SURFACE-STRONG } else if calc.rem(y, 2) == 0 { SURFACE } else { none },
       stroke: (_, y) => (
         top: none,
         right: none,
         bottom: if y == last-row { none } else if y == 0 {
-          0.7pt + luma(150)
+          0.7pt + MUTED
         } else {
-          0.3pt + luma(220)
+          0.35pt + HAIRLINE
         },
         left: none,
       ),
@@ -168,7 +170,45 @@
     )
   ]
 }
-#let code-block(lang, src) = raw(src, block: true, lang: lang)
-#let embedded-svg(caption: none, file: none, ..a, body) = block(
-  width: 100%, inset: 6pt, stroke: 0.5pt + luma(200), radius: 3pt,
-  text(size: 7.5pt, fill: luma(120), "figure: " + str(file)))
+#let code-block(lang, src) = {
+  if type(lang) != str or lang.trim() == "" {
+    panic("code-block language must be a non-empty string")
+  }
+  let c = TINT-COLOR.at("slate")
+  block(
+    width: 100%, breakable: false,
+    inset: (x: 8pt, y: 6pt),
+    fill: SURFACE,
+    stroke: (top: 1.2pt + c, rest: 0.4pt + HAIRLINE),
+    radius: 2pt,
+  )[
+    #grid(
+      columns: (1fr, auto),
+      text(size: RENDERER-META, fill: c, weight: "bold", tracking: 0.5pt)[CODE],
+      text(size: RENDERER-COMPACT, fill: MUTED, font: "DejaVu Sans Mono")[#upper(lang)],
+    )
+    #v(4pt)
+    #raw(src, block: true, lang: lang)
+  ]
+  v(0.45em)
+}
+#let embedded-svg(caption: none, file: none, ..a, body) = {
+  let c = TINT-COLOR.at("slate")
+  block(
+    width: 100%, breakable: false,
+    inset: (x: 8pt, y: 6pt),
+    stroke: (top: 1.2pt + c, rest: 0.4pt + HAIRLINE),
+    radius: 2pt, fill: SURFACE,
+  )[
+    #grid(
+      columns: (1fr, auto),
+      text(size: RENDERER-META, fill: c, weight: "bold", tracking: 0.5pt)[EXTERNAL SVG],
+      text(size: RENDERER-COMPACT, fill: MUTED, font: "DejaVu Sans Mono")[#file],
+    )
+    #if caption != none [
+      #v(4pt)
+      #text(size: 7.5pt, fill: MUTED, style: "italic")[#caption]
+    ]
+  ]
+  v(0.45em)
+}

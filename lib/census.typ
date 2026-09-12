@@ -10,7 +10,7 @@
 // each run emits its heading and the rest emit nothing. The authored source is
 // unchanged by this.
 #let _census-head(label) = block(sticky: true, inset: (top: 4pt, bottom: 3pt),
-  text(size: 6pt, fill: luma(125), weight: "bold", tracking: 1pt, upper(label)))
+  text(size: 6pt, fill: FAINT, weight: "bold", tracking: 1pt, upper(label)))
 #let _census-group = state("census-group", none)
 #let _state-link-owner = state("state-link-owner", none)
 #let _state-link-trail = state("state-link-trail", ())
@@ -155,10 +155,10 @@
   _enum("entity", "kind", kind, ENTITY-KINDS)
   _enum("entity", "lifecycle", lifecycle, ENTITY-LIFECYCLES)
   _enum("entity", "tint", tint, TINTS)
-  let kc = if kind != none { ENTITY-KIND-COLOR.at(kind) } else { luma(120) }
+  let kc = if kind != none { ENTITY-KIND-COLOR.at(kind) } else { MUTED }
   let lc = if lifecycle != none { ENTITY-LIFECYCLE-COLOR.at(lifecycle) } else { none }
   let tc = if tint == none { none } else { TINT-COLOR.at(tint) }
-  let frame = if tc == none { luma(190) } else { tc }
+  let frame = if tc == none { HAIRLINE } else { tc }
   if id != none { _note-state-link((kind: "entity", id: id)) }
   block(width: 100%, breakable: true, radius: 3pt, inset: 0pt,
         stroke: 0.6pt + frame.lighten(55%),
@@ -229,7 +229,7 @@
             block(below: 2pt, sticky: true, [
               #if name != none { text(weight: "bold", name) }
               #if name != none and type != none { [#h(5pt)·#h(5pt)] }
-              #if type != none { text(fill: luma(90), type) }
+              #if type != none { text(fill: MUTED, type) }
               #if linked {
                 [#h(6pt)#lnk(label("state-type-" + state-type), state-type)
                  #h(4pt)·#h(4pt)

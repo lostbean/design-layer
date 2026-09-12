@@ -19,10 +19,22 @@
 // headings use TITLE; dense supporting copy uses COMPACT; labels and furniture
 // use META. Keeping these values here prevents one block family from quietly
 // becoming denser or louder than another.
-#let RENDERER-TITLE = 10pt
-#let RENDERER-BODY = 8pt
-#let RENDERER-COMPACT = 7.6pt
-#let RENDERER-META = 6.5pt
+#let RENDERER-TITLE = 10.2pt
+#let RENDERER-BODY = 8.4pt
+#let RENDERER-COMPACT = 7.8pt
+#let RENDERER-META = 6.7pt
+
+// The neutral foundation is shared as deliberately as the semantic hues. It
+// gives every block family one paper, ink, secondary voice, keyline, and quiet
+// surface. Semantic colour then answers "what kind?" or "who owns this?"
+// instead of also having to invent depth, borders, and typography each time.
+#let PAPER = rgb("#fbfbf8")
+#let INK = rgb("#172126")
+#let MUTED = rgb("#58656b")
+#let FAINT = rgb("#7b868b")
+#let HAIRLINE = rgb("#d7ddda")
+#let SURFACE = rgb("#f2f5f3")
+#let SURFACE-STRONG = rgb("#e8eeeb")
 
 // A vocabulary member with no declared colour is an error, raised at the point
 // where the table is built rather than at the first card that reads it.
@@ -43,30 +55,30 @@
 }
 
 #let _LENS-HUES = (
-  "modeling": "#7c3aed",
-  "depth": "#0ea5e9",
-  "composition": "#14b8a6",
-  "state": "#f59e0b",
-  "invariants": "#e11d48",
-  "robustness": "#64748b",
+  "modeling": "#6952a3",
+  "depth": "#2870a6",
+  "composition": "#087f79",
+  "state": "#a86408",
+  "invariants": "#ad3451",
+  "robustness": "#5f6b73",
 )
 
 #let _TINT-HUES = (
-  "teal": "#14b8a6",
-  "violet": "#7c3aed",
-  "amber": "#f59e0b",
-  "blue": "#0ea5e9",
-  "rose": "#e11d48",
-  "slate": "#64748b",
+  "teal": "#087f79",
+  "violet": "#6952a3",
+  "amber": "#a86408",
+  "blue": "#2870a6",
+  "rose": "#ad3451",
+  "slate": "#5f6b73",
 )
 
 // enforcement reads as a STRENGTH scale: how much of the claim is actually
 // checked. mechanism (a check decides the whole property) -> partial (it checks
 // a mechanical shadow) -> convention (held by review).
 #let _ENFORCEMENT-HUES = (
-  "mechanism": "#14b8a6",
-  "partial": "#f59e0b",
-  "convention": "#64748b",
+  "mechanism": "#087f79",
+  "partial": "#a86408",
+  "convention": "#5f6b73",
 )
 
 // ---- the entity census's three colour axes --------------------------------
@@ -79,18 +91,18 @@
 // reusing the foundation's goal/no-goal/invariant assignments as a set, because
 // this is a different axis; it shares the tint VOCABULARY, not its meanings.
 #let _ENTITY-KIND-HUES = (
-  "aggregate": "#7c3aed",
-  "entity": "#0ea5e9",
-  "value-object": "#14b8a6",
-  "event": "#f59e0b",
+  "aggregate": "#6952a3",
+  "entity": "#2870a6",
+  "value-object": "#087f79",
+  "event": "#a86408",
 )
 
 // LIFECYCLE is the second axis on the same card, so it must stay legible
 // against every kind fill rather than against one.
 #let _ENTITY-LIFECYCLE-HUES = (
-  "stateful": "#e11d48",
-  "append-only": "#14b8a6",
-  "immutable": "#64748b",
+  "stateful": "#ad3451",
+  "append-only": "#087f79",
+  "immutable": "#5f6b73",
 )
 
 // PROVENANCE is how an attribute's fact arises, and the three values carry
@@ -99,9 +111,9 @@
 // value that cannot desynchronize. `observed` takes slate, the quiet ground,
 // because it describes reality without authorizing anything.
 #let _PROVENANCE-HUES = (
-  "authored": "#f59e0b",
-  "derived": "#14b8a6",
-  "observed": "#64748b",
+  "authored": "#a86408",
+  "derived": "#087f79",
+  "observed": "#5f6b73",
 )
 
 // COVERAGE is the breadth axis: `captured` is the state the layer is working
@@ -110,8 +122,8 @@
 // else — `out-of-scope` — takes the warning tone, since a reader auditing
 // breadth is looking for exactly the rows the layer decided not to cover.
 #let _COVERAGE-HUES = (
-  "captured": "#14b8a6",
-  "standard": "#82828e",
+  "captured": "#087f79",
+  "standard": "#6f7a80",
   "out-of-scope": "#a8492a",
 )
 
@@ -119,7 +131,7 @@
 // at a glance rather than by reading each entry's badge.
 #let _PENDING-HUES = (
   "build": "#2f5f8f",
-  "verify": "#14b8a6",
+  "verify": "#087f79",
   "foundation": "#5a4fa0",
   "ruling": "#8a6a1f",
 )
@@ -169,15 +181,17 @@
 // entry falls back to a neutral tone instead of failing. There is no key list
 // to be total against, so this one table is not asserted.
 #let _KIND-HUES = (
-  "behavior": "#f59e0b",
-  "entity": "#7c3aed",
-  "goal": "#0ea5e9",
-  "info": "#0ea5e9",
-  "invariant": "#7c3aed",
-  "no-goal": "#e11d48",
-  "pending": "#f59e0b",
-  "principle": "#14b8a6",
-  "warning": "#f59e0b",
+  "behavior": "#a86408",
+  "entity": "#6952a3",
+  "goal": "#2870a6",
+  "info": "#2870a6",
+  "invariant": "#6952a3",
+  "no-goal": "#ad3451",
+  "pending": "#a86408",
+  "principle": "#087f79",
+  "warning": "#a86408",
+  "formula": "#6952a3",
+  "pseudocode": "#187b78",
 )
 #let KIND-COLOR = _KIND-HUES.pairs().fold(
   (:),

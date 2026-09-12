@@ -6,29 +6,29 @@
 
 #let design-doc(eyebrow: none, hero_title: none, lede: none, footer: none, body) = {
   show: _link-rule
-  set page(paper: "a4", margin: (x: 2.1cm, y: 2cm),
+  set page(paper: "a4", fill: PAPER, margin: (x: 2.05cm, y: 1.9cm),
     footer: context {
-      set text(size: 7pt, fill: luma(130))
+      set text(size: 7pt, fill: FAINT)
       grid(columns: (1fr, auto), align: (left, right),
         [#hero_title], [#counter(page).display()])
     })
-  set text(size: 9.5pt, font: "Libertinus Serif")
-  set par(justify: true, leading: 0.62em)
-  show heading: set block(above: 1.3em, below: 0.7em)
-  show heading.where(level: 1): set text(size: 15pt)
-  show heading.where(level: 2): set text(size: 12pt)
-  show heading.where(level: 3): set text(size: 10pt)
+  set text(size: 9.4pt, font: "Libertinus Serif", fill: INK)
+  set par(justify: true, leading: 0.68em)
+  show heading: set block(above: 1.55em, below: 0.55em)
+  show heading.where(level: 1): set text(size: 16pt, weight: "bold", fill: INK)
+  show heading.where(level: 2): set text(size: 12.5pt, weight: "bold", fill: INK)
+  show heading.where(level: 3): set text(size: 10.2pt, weight: "semibold", fill: INK)
   if eyebrow != none {
-    text(size: 7.5pt, fill: luma(120), tracking: 0.3pt, upper(eyebrow))
+    text(size: 7.2pt, fill: FAINT, tracking: 0.7pt, upper(eyebrow))
     linebreak()
   }
-  if hero_title != none { v(2pt); text(size: 21pt, weight: "bold", hero_title); linebreak() }
-  if lede != none { v(3pt); block(width: 100%, text(size: 9pt, fill: luma(95), lede)) }
-  v(4pt); line(length: 100%, stroke: 0.6pt + luma(200)); v(10pt)
+  if hero_title != none { v(4pt); text(size: 23pt, weight: "bold", fill: INK, hero_title); linebreak() }
+  if lede != none { v(5pt); block(width: 88%, text(size: 10pt, fill: MUTED, lede)) }
+  v(9pt); line(length: 100%, stroke: 1.1pt + TINT-COLOR.at("teal")); v(13pt)
   body
   if footer != none {
-    v(12pt); line(length: 100%, stroke: 0.6pt + luma(200)); v(4pt)
-    text(size: 7.5pt, fill: luma(120), footer)
+    v(6pt); line(length: 100%, stroke: 0.5pt + HAIRLINE); v(4pt)
+    text(size: 7.5pt, fill: FAINT, footer)
   }
 }
 
@@ -38,28 +38,30 @@
 // citation is an INTRA-document reference, so the compiler resolves it.
 #let aggregate-doc(title: none, subtitle: none, body) = {
   show: _link-rule
-  set page(paper: "a4", margin: (x: 2.1cm, y: 2cm),
+  set page(paper: "a4", fill: PAPER, margin: (x: 2.05cm, y: 1.9cm),
     footer: context {
-      set text(size: 7pt, fill: luma(130))
+      set text(size: 7pt, fill: FAINT)
       grid(columns: (1fr, auto), align: (left, right),
         [#title], [#counter(page).display()])
     })
-  set text(size: 9.5pt, font: "Libertinus Serif")
-  set par(justify: true, leading: 0.62em)
+  set text(size: 9.4pt, font: "Libertinus Serif", fill: INK)
+  set par(justify: true, leading: 0.68em)
   // Level one is the aggregate-owned chapter. Author-owned sections begin at
   // level two, so Typst derives chapter-local paths such as 1.10.1 without a
   // number entering authored source or an anchor.
   set heading(numbering: "1.1.1")
-  show heading: set block(above: 1.3em, below: 0.7em)
-  show heading.where(level: 1): set text(size: 16pt)
-  show heading.where(level: 2): set text(size: 12pt)
-  show heading.where(level: 3): set text(size: 10pt)
+  show heading: set block(above: 1.55em, below: 0.55em)
+  show heading.where(level: 1): set text(size: 17pt, weight: "bold", fill: INK)
+  show heading.where(level: 2): set text(size: 12.5pt, weight: "bold", fill: INK)
+  show heading.where(level: 3): set text(size: 10.2pt, weight: "semibold", fill: INK)
 
   // title page
   v(1fr)
   align(center)[
-    #text(size: 28pt, weight: "bold", title)
-    #if subtitle != none [ #v(6pt) #text(size: 11pt, fill: luma(110), subtitle) ]
+    #line(length: 44pt, stroke: 2pt + TINT-COLOR.at("teal"))
+    #v(13pt)
+    #text(size: 31pt, weight: "bold", fill: INK, title)
+    #if subtitle != none [ #v(8pt) #text(size: 11pt, fill: MUTED, subtitle) ]
   ]
   v(1fr)
   pagebreak()
@@ -72,12 +74,12 @@
     above: 11pt,
     below: 4pt,
     inset: (left: 8pt, bottom: 5pt),
-    stroke: (left: 2.4pt + TINT-COLOR.at("blue"), bottom: 0.45pt + luma(210)),
+    stroke: (bottom: 0.7pt + TINT-COLOR.at("blue")),
   )[
-    #text(size: 10.5pt, weight: "bold", fill: luma(45), it)
+    #text(size: 10.5pt, weight: "bold", fill: INK, it)
   ]
-  show outline.entry.where(level: 2): set text(size: 9pt, fill: luma(65))
-  show outline.entry.where(level: 3): set text(size: 8pt, fill: luma(105))
+  show outline.entry.where(level: 2): set text(size: 9pt, fill: MUTED)
+  show outline.entry.where(level: 3): set text(size: 8pt, fill: FAINT)
   outline(title: [Contents], depth: 3, indent: auto)
   pagebreak()
 
@@ -94,27 +96,27 @@
 // outline and the numbering stay the renderer's, not a second hand-built one.
 #let chapter-page(title, lede: none, accent: none, index: (), kind: "context") = {
   pagebreak(weak: true)
-  let hue = if accent != none and accent in TINTS { TINT-COLOR.at(accent) } else { luma(90) }
+  let hue = if accent != none and accent in TINTS { TINT-COLOR.at(accent) } else { MUTED }
   v(3.2cm)
-  block(width: 100%, stroke: (left: 3pt + hue), inset: (left: 14pt, y: 2pt))[
+  block(width: 100%, stroke: (top: 2.2pt + hue), inset: (top: 12pt))[
     #text(size: 8pt, fill: hue, weight: "bold", tracking: 1.2pt,
           upper(kind))
     #v(5pt)
-    #text(size: 24pt, weight: "bold", title)
+    #text(size: 26pt, weight: "bold", fill: INK, title)
     #if lede != none [
       #v(7pt)
-      #text(size: 10pt, fill: luma(105), style: "italic", lede)
+      #text(size: 10.5pt, fill: MUTED, lede)
     ]
   ]
   // what this chapter contains — the reader sees the shape before the prose.
   if index.len() > 0 {
     v(14pt)
     block(inset: (left: 17pt))[
-      #text(size: 7.5pt, fill: luma(130), weight: "bold", tracking: 0.8pt,
+      #text(size: 7.5pt, fill: FAINT, weight: "bold", tracking: 0.8pt,
             upper("in this chapter"))
       #v(5pt)
       #for s in index [
-        #text(size: 9pt, fill: luma(70))[#s] #linebreak()
+        #text(size: 9pt, fill: MUTED)[#s] #linebreak()
       ]
     ]
   }

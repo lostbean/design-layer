@@ -6,23 +6,27 @@
 #let pill(..names) = {
   let ns = names.pos()
   for n in ns { _enum("lens pill", "lens", n, LENSES) }
-  let cs = ns.map(n => LENS-COLOR.at(n))
-  box(inset: (x: 4pt, y: 1.5pt), radius: 6pt, baseline: 2pt,
-      fill: if cs.len() == 1 { cs.first() }
-            else { gradient.linear(..cs).sharp(cs.len()) },
-      text(size: 6.5pt, fill: white, weight: "bold", ns.join("+")))
+  box(baseline: 2pt)[
+    #for (i, n) in ns.enumerate() {
+      let c = LENS-COLOR.at(n)
+      box(inset: (x: 4pt, y: 1.35pt), radius: 6pt,
+          fill: c.lighten(84%), stroke: 0.45pt + c.lighten(38%),
+          text(size: 6.4pt, fill: c.darken(22%), weight: "bold", n))
+      if i < ns.len() - 1 { h(2pt) }
+    }
+  ]
 }
 
 #let chip(body, tone: none) = {
-  let c = if tone == none { luma(233) } else { tone.lighten(82%) }
-  let fg = if tone == none { luma(70) } else { tone.darken(25%) }
+  let c = if tone == none { SURFACE-STRONG } else { tone.lighten(85%) }
+  let fg = if tone == none { MUTED } else { tone.darken(24%) }
   box(inset: (x: 4pt, y: 1.5pt), radius: 3pt, fill: c, baseline: 2pt,
       stroke: if tone == none { none } else { 0.5pt + tone.lighten(45%) },
       text(size: 6.5pt, fill: fg, weight: if tone == none { "regular" } else { "bold" },
            body))
 }
 
-#let lnk(dest, body) = link(dest, text(fill: rgb("#0369a1"), body))
+#let lnk(dest, body) = link(dest, text(fill: TINT-COLOR.at("blue"), body))
 
 // ---- the inline layer ----------------------------------------------------
 // Prose runs are parsed by cmarker rather than by regex in the router. SCOPE
@@ -36,11 +40,10 @@
 #let _link-rule(body) = {
   show link: it => {
     if type(it.dest) == str and it.dest.starts-with("@") {
-      link(label(it.dest.slice(1)), text(fill: rgb("#0369a1"), it.body))
+      link(label(it.dest.slice(1)), text(fill: TINT-COLOR.at("blue"), it.body))
     } else {
-      text(fill: rgb("#0369a1"), it)
+      text(fill: TINT-COLOR.at("blue"), it)
     }
   }
   body
 }
-

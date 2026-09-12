@@ -146,8 +146,8 @@
     tint: c,
     kind: [SEQUENCE],
     title: title, caption: caption,
-    align(center, {
-      set text(size: 7.6pt)
+    align(center, scale(x: 108%, y: 108%, reflow: true, {
+      set text(size: 8.4pt)
       _chronos.diagram({
         import _chronos: _par
         for p in participants {
@@ -160,6 +160,6 @@
         }
         _emit(steps, c)
       })
-    }),
+    })),
   )
 }

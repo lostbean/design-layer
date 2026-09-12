@@ -53,6 +53,8 @@
 //   machine.typ    the state machine, drawn by an automaton carrier
 //   sequence.typ   the message sequence, drawn by a sequence carrier
 //   chart.typ      the chart, drawn by a plotting carrier
+//   formula.typ    display equations with notation and citation furniture
+//   pseudocode.typ implementation-neutral procedures with structured control flow
 #import "schema.typ": *
 #import "tokens.typ": *
 #import "rules.typ": *
@@ -68,3 +70,5 @@
 #import "machine.typ": *
 #import "sequence.typ": *
 #import "chart.typ": *
+#import "formula.typ": *
+#import "pseudocode.typ": *

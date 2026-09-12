@@ -1,0 +1,495 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-12T12:35:42.717Z",
+  "title": "Design System: Design Layer Renderer",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Near-Paper",
+        "canonical": "#fbfbf8",
+        "tonalRamp": [
+          "#172126",
+          "#58656b",
+          "#7b868b",
+          "#d7ddda",
+          "#e8eeeb",
+          "#f2f5f3",
+          "#fbfbf8",
+          "#ffffff"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Blueprint Ink",
+        "canonical": "#172126",
+        "tonalRamp": [
+          "#172126",
+          "#58656b",
+          "#7b868b",
+          "#d7ddda",
+          "#e8eeeb",
+          "#f2f5f3",
+          "#fbfbf8",
+          "#ffffff"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Blueprint",
+        "canonical": "#58656b",
+        "tonalRamp": [
+          "#172126",
+          "#58656b",
+          "#7b868b",
+          "#d7ddda",
+          "#e8eeeb",
+          "#f2f5f3",
+          "#fbfbf8",
+          "#ffffff"
+        ]
+      },
+      "faint": {
+        "role": "neutral",
+        "displayName": "Faint Blueprint",
+        "canonical": "#7b868b",
+        "tonalRamp": [
+          "#172126",
+          "#58656b",
+          "#7b868b",
+          "#d7ddda",
+          "#e8eeeb",
+          "#f2f5f3",
+          "#fbfbf8",
+          "#ffffff"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline Sage",
+        "canonical": "#d7ddda",
+        "tonalRamp": [
+          "#172126",
+          "#58656b",
+          "#7b868b",
+          "#d7ddda",
+          "#e8eeeb",
+          "#f2f5f3",
+          "#fbfbf8",
+          "#ffffff"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Quiet Surface",
+        "canonical": "#f2f5f3",
+        "tonalRamp": [
+          "#172126",
+          "#58656b",
+          "#7b868b",
+          "#d7ddda",
+          "#e8eeeb",
+          "#f2f5f3",
+          "#fbfbf8",
+          "#ffffff"
+        ]
+      },
+      "surface-strong": {
+        "role": "neutral",
+        "displayName": "Strong Surface",
+        "canonical": "#e8eeeb",
+        "tonalRamp": [
+          "#172126",
+          "#58656b",
+          "#7b868b",
+          "#d7ddda",
+          "#e8eeeb",
+          "#f2f5f3",
+          "#fbfbf8",
+          "#ffffff"
+        ]
+      },
+      "teal": {
+        "role": "primary",
+        "displayName": "Atlas Teal",
+        "canonical": "#087f79",
+        "tonalRamp": [
+          "oklch(15% 0.092 188.9)",
+          "oklch(27% 0.092 188.9)",
+          "oklch(39% 0.092 188.9)",
+          "oklch(51% 0.092 188.9)",
+          "oklch(63% 0.092 188.9)",
+          "oklch(75% 0.092 188.9)",
+          "oklch(87% 0.092 188.9)",
+          "oklch(95% 0.092 188.9)"
+        ]
+      },
+      "violet": {
+        "role": "secondary",
+        "displayName": "Model Violet",
+        "canonical": "#6952a3",
+        "tonalRamp": [
+          "oklch(15% 0.126 294.5)",
+          "oklch(27% 0.126 294.5)",
+          "oklch(39% 0.126 294.5)",
+          "oklch(51% 0.126 294.5)",
+          "oklch(63% 0.126 294.5)",
+          "oklch(75% 0.126 294.5)",
+          "oklch(87% 0.126 294.5)",
+          "oklch(95% 0.126 294.5)"
+        ]
+      },
+      "amber": {
+        "role": "tertiary",
+        "displayName": "Caution Amber",
+        "canonical": "#a86408",
+        "tonalRamp": [
+          "oklch(15% 0.125 64.5)",
+          "oklch(27% 0.125 64.5)",
+          "oklch(39% 0.125 64.5)",
+          "oklch(51% 0.125 64.5)",
+          "oklch(63% 0.125 64.5)",
+          "oklch(75% 0.125 64.5)",
+          "oklch(87% 0.125 64.5)",
+          "oklch(95% 0.125 64.5)"
+        ]
+      },
+      "blue": {
+        "role": "secondary",
+        "displayName": "Structural Blue",
+        "canonical": "#2870a6",
+        "tonalRamp": [
+          "oklch(15% 0.110 245.1)",
+          "oklch(27% 0.110 245.1)",
+          "oklch(39% 0.110 245.1)",
+          "oklch(51% 0.110 245.1)",
+          "oklch(63% 0.110 245.1)",
+          "oklch(75% 0.110 245.1)",
+          "oklch(87% 0.110 245.1)",
+          "oklch(95% 0.110 245.1)"
+        ]
+      },
+      "rose": {
+        "role": "tertiary",
+        "displayName": "Invariant Rose",
+        "canonical": "#ad3451",
+        "tonalRamp": [
+          "oklch(15% 0.157 10.5)",
+          "oklch(27% 0.157 10.5)",
+          "oklch(39% 0.157 10.5)",
+          "oklch(51% 0.157 10.5)",
+          "oklch(63% 0.157 10.5)",
+          "oklch(75% 0.157 10.5)",
+          "oklch(87% 0.157 10.5)",
+          "oklch(95% 0.157 10.5)"
+        ]
+      },
+      "slate": {
+        "role": "neutral",
+        "displayName": "Quiet Slate",
+        "canonical": "#5f6b73",
+        "tonalRamp": [
+          "oklch(15% 0.019 237.0)",
+          "oklch(27% 0.019 237.0)",
+          "oklch(39% 0.019 237.0)",
+          "oklch(51% 0.019 237.0)",
+          "oklch(63% 0.019 237.0)",
+          "oklch(75% 0.019 237.0)",
+          "oklch(87% 0.019 237.0)",
+          "oklch(95% 0.019 237.0)"
+        ]
+      },
+      "coverage-standard": {
+        "role": "neutral",
+        "displayName": "Standard Gray",
+        "canonical": "#6f7a80",
+        "tonalRamp": [
+          "oklch(15% 0.016 231.4)",
+          "oklch(27% 0.016 231.4)",
+          "oklch(39% 0.016 231.4)",
+          "oklch(51% 0.016 231.4)",
+          "oklch(63% 0.016 231.4)",
+          "oklch(75% 0.016 231.4)",
+          "oklch(87% 0.016 231.4)",
+          "oklch(95% 0.016 231.4)"
+        ]
+      },
+      "scope-rust": {
+        "role": "tertiary",
+        "displayName": "Scope Rust",
+        "canonical": "#a8492a",
+        "tonalRamp": [
+          "oklch(15% 0.133 38.3)",
+          "oklch(27% 0.133 38.3)",
+          "oklch(39% 0.133 38.3)",
+          "oklch(51% 0.133 38.3)",
+          "oklch(63% 0.133 38.3)",
+          "oklch(75% 0.133 38.3)",
+          "oklch(87% 0.133 38.3)",
+          "oklch(95% 0.133 38.3)"
+        ]
+      },
+      "pending-build": {
+        "role": "tertiary",
+        "displayName": "Build Blue",
+        "canonical": "#2f5f8f",
+        "tonalRamp": [
+          "oklch(15% 0.094 250.4)",
+          "oklch(27% 0.094 250.4)",
+          "oklch(39% 0.094 250.4)",
+          "oklch(51% 0.094 250.4)",
+          "oklch(63% 0.094 250.4)",
+          "oklch(75% 0.094 250.4)",
+          "oklch(87% 0.094 250.4)",
+          "oklch(95% 0.094 250.4)"
+        ]
+      },
+      "pending-foundation": {
+        "role": "tertiary",
+        "displayName": "Foundation Violet",
+        "canonical": "#5a4fa0",
+        "tonalRamp": [
+          "oklch(15% 0.126 286.8)",
+          "oklch(27% 0.126 286.8)",
+          "oklch(39% 0.126 286.8)",
+          "oklch(51% 0.126 286.8)",
+          "oklch(63% 0.126 286.8)",
+          "oklch(75% 0.126 286.8)",
+          "oklch(87% 0.126 286.8)",
+          "oklch(95% 0.126 286.8)"
+        ]
+      },
+      "pending-ruling": {
+        "role": "tertiary",
+        "displayName": "Ruling Ochre",
+        "canonical": "#8a6a1f",
+        "tonalRamp": [
+          "oklch(15% 0.098 84.4)",
+          "oklch(27% 0.098 84.4)",
+          "oklch(39% 0.098 84.4)",
+          "oklch(51% 0.098 84.4)",
+          "oklch(63% 0.098 84.4)",
+          "oklch(75% 0.098 84.4)",
+          "oklch(87% 0.098 84.4)",
+          "oklch(95% 0.098 84.4)"
+        ]
+      },
+      "procedure-teal": {
+        "role": "tertiary",
+        "displayName": "Procedure Teal",
+        "canonical": "#187b78",
+        "tonalRamp": [
+          "oklch(15% 0.085 191.7)",
+          "oklch(27% 0.085 191.7)",
+          "oklch(39% 0.085 191.7)",
+          "oklch(51% 0.085 191.7)",
+          "oklch(63% 0.085 191.7)",
+          "oklch(75% 0.085 191.7)",
+          "oklch(87% 0.085 191.7)",
+          "oklch(95% 0.085 191.7)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Aggregate Display",
+        "purpose": "Centered aggregate title pages only."
+      },
+      "chapter": {
+        "displayName": "Chapter Opening",
+        "purpose": "Context and chapter front pages."
+      },
+      "hero": {
+        "displayName": "Document Hero",
+        "purpose": "Standalone document titles."
+      },
+      "heading-1": {
+        "displayName": "Primary Heading",
+        "purpose": "Highest in-document heading."
+      },
+      "heading-2": {
+        "displayName": "Section Heading",
+        "purpose": "Recurring authored sections."
+      },
+      "heading-3": {
+        "displayName": "Subsection Heading",
+        "purpose": "Local divisions within a section."
+      },
+      "body": {
+        "displayName": "Reading Body",
+        "purpose": "Long-form explanatory prose."
+      },
+      "renderer-title": {
+        "displayName": "Block Title",
+        "purpose": "Titles inside semantic blocks."
+      },
+      "renderer-body": {
+        "displayName": "Block Body",
+        "purpose": "Primary component copy."
+      },
+      "compact": {
+        "displayName": "Compact Support",
+        "purpose": "Dense answers, captions, and notation."
+      },
+      "label": {
+        "displayName": "Tracked Label",
+        "purpose": "Kinds, headers, and low-level semantic furniture."
+      },
+      "mono": {
+        "displayName": "Structured Mono",
+        "purpose": "Identifiers, dates, cardinalities, code, and procedures."
+      }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Foundation Statement",
+      "kind": "card",
+      "refersTo": "statement-card",
+      "description": "The shared kind-title-body-furniture anatomy for goals, principles, invariants, no-goals, and behavior.",
+      "html": "<section class=\"ds-statement\"><div class=\"ds-statement-kind\">PRINCIPLE</div><h3>One name per concept</h3><p>A block kind and the function rendering it carry the same name.</p><span class=\"ds-chip\">composition</span></section>",
+      "css": ".ds-statement { width: 100%; color: #172126; background: color-mix(in srgb, #087f79 5%, white); border: .45pt solid color-mix(in srgb, #087f79 48%, white); border-top: 1.4pt solid #087f79; border-radius: 2pt; padding: 7pt 9pt 8pt; font-family: \"Libertinus Serif\", Georgia, serif; font-size: 8.4pt; } .ds-statement-kind { color: #087f79; font-size: 6.7pt; font-weight: 700; letter-spacing: .4pt; } .ds-statement h3 { margin: 1pt 0 2pt; font-size: 10.2pt; } .ds-statement p { margin: 0 0 4pt; } .ds-chip { display: inline-block; color: #05645f; background: color-mix(in srgb, #087f79 15%, white); border: .5pt solid color-mix(in srgb, #087f79 55%, white); border-radius: 6pt; padding: 1.35pt 4pt; font-size: 6.4pt; font-weight: 700; }"
+    },
+    {
+      "name": "Semantic Chip",
+      "kind": "chip",
+      "refersTo": "semantic-chip",
+      "description": "Compact inline furniture for ownership, status, provenance, lifecycle, and references.",
+      "html": "<span class=\"ds-semantic-chip\">captured</span>",
+      "css": ".ds-semantic-chip { display: inline-block; color: #05645f; background: color-mix(in srgb, #087f79 12%, white); border: .5pt solid color-mix(in srgb, #087f79 55%, white); border-radius: 3pt; padding: 1.5pt 4pt; font-family: \"Libertinus Serif\", Georgia, serif; font-size: 6.5pt; font-weight: 700; line-height: 1; }"
+    },
+    {
+      "name": "Drawing Frame",
+      "kind": "custom",
+      "refersTo": "drawing-frame",
+      "description": "The shared kind strip and caption frame for diagrams, charts, sequences, and state machines.",
+      "html": "<figure class=\"ds-drawing\"><header><strong>CHART · LINE</strong><span>decisions recorded, by version</span></header><div class=\"ds-drawing-body\"><svg viewBox=\"0 0 220 70\" aria-label=\"Rising three-point line\"><path d=\"M15 57 L110 38 L205 12\"/><circle cx=\"15\" cy=\"57\" r=\"3\"/><circle cx=\"110\" cy=\"38\" r=\"3\"/><circle cx=\"205\" cy=\"12\" r=\"3\"/></svg></div><figcaption>Values retain their authored reading order.</figcaption></figure>",
+      "css": ".ds-drawing { margin: 0; width: 100%; color: #172126; font-family: \"Libertinus Serif\", Georgia, serif; } .ds-drawing header { display: flex; gap: .8em; align-items: baseline; padding: 4.5pt 8pt; background: color-mix(in srgb, #6952a3 6%, white); border: .4pt solid color-mix(in srgb, #6952a3 42%, white); border-top: 1.35pt solid #6952a3; border-radius: 2pt; } .ds-drawing header strong { color: #6952a3; font-size: 6.2pt; letter-spacing: .7pt; } .ds-drawing header span { color: #58656b; font-size: 8pt; } .ds-drawing-body { display: grid; place-items: center; padding: 10pt 8pt 5pt; } .ds-drawing svg { width: 70%; max-height: 110pt; overflow: visible; } .ds-drawing path { fill: none; stroke: #6952a3; stroke-width: 2; } .ds-drawing circle { fill: #6952a3; } .ds-drawing figcaption { color: #58656b; padding: 0 2pt; font-size: 7.5pt; font-style: italic; }"
+    },
+    {
+      "name": "Entity Census",
+      "kind": "card",
+      "refersTo": "entity-census",
+      "description": "A classified entity with a sticky head and visibly separated attribute and relationship groups.",
+      "html": "<section class=\"ds-entity\"><header><strong>Issue</strong><span>entity</span><span>stateful</span><small>owned by the tracker</small></header><div class=\"ds-entity-body\"><p>A tracked unit of work.</p><h4>ATTRIBUTES</h4><div class=\"ds-entity-row\"><b>derived</b><span><strong>State</strong> · Issue state</span></div></div></section>",
+      "css": ".ds-entity { width: 100%; overflow: hidden; color: #172126; border: .6pt solid #d7ddda; border-radius: 3pt; font-family: \"Libertinus Serif\", Georgia, serif; font-size: 8.4pt; } .ds-entity header { display: flex; align-items: center; gap: 4pt; padding: 7pt 9pt; background: color-mix(in srgb, #2870a6 8%, white); } .ds-entity header strong { color: #1e5780; font-size: 10pt; } .ds-entity header span { color: #1e5780; background: color-mix(in srgb, #2870a6 14%, white); border-radius: 3pt; padding: 1.5pt 4pt; font-size: 6.5pt; font-weight: 700; } .ds-entity header small { margin-left: auto; color: #58656b; } .ds-entity-body { padding: 6pt 9pt; } .ds-entity-body h4 { color: #7b868b; margin: 4pt 0 3pt; font-size: 6pt; letter-spacing: 1pt; } .ds-entity-row { display: grid; grid-template-columns: 58pt 1fr; gap: 7pt; } .ds-entity-row b { color: #05645f; text-align: right; font-size: 6.5pt; }"
+    },
+    {
+      "name": "Stat Tile",
+      "kind": "card",
+      "refersTo": "stat-tile",
+      "description": "A compact magnitude, label, and optional directional delta.",
+      "html": "<article class=\"ds-stat\"><strong>2.4M</strong><span>words rendered</span><b>+12%</b></article>",
+      "css": ".ds-stat { width: 150pt; padding: 8pt; color: #172126; background: #f2f5f3; border: .45pt solid #d7ddda; border-radius: 2pt; font-family: \"Libertinus Serif\", Georgia, serif; } .ds-stat strong, .ds-stat span, .ds-stat b { display: block; } .ds-stat strong { font-size: 16pt; } .ds-stat span { color: #58656b; font-size: 7pt; } .ds-stat b { color: #087f79; font-size: 6.8pt; }"
+    },
+    {
+      "name": "Pending Ledger Entry",
+      "kind": "custom",
+      "refersTo": "pending-entry",
+      "description": "A dated design-debt row whose category is visible before its prose.",
+      "html": "<article class=\"ds-pending\"><header><b>build</b><strong>The context map is still authored by hand</strong><time>2026-08-23</time></header><p>The generated map should not be able to disagree with the source it indexes.</p></article>",
+      "css": ".ds-pending { width: 100%; padding: 6pt 8pt; color: #172126; background: color-mix(in srgb, #2f5f8f 4%, white); border: .4pt solid color-mix(in srgb, #2f5f8f 42%, white); border-top: 1.2pt solid #2f5f8f; border-radius: 2pt; font-family: \"Libertinus Serif\", Georgia, serif; font-size: 8.2pt; } .ds-pending header { display: grid; grid-template-columns: auto 1fr auto; gap: 6pt; align-items: baseline; } .ds-pending header b { color: #244b71; background: color-mix(in srgb, #2f5f8f 15%, white); border-radius: 1.5pt; padding: 1pt 3pt; font-size: 6pt; } .ds-pending header strong { font-size: 9.2pt; } .ds-pending time { color: #7b868b; font-family: \"DejaVu Sans Mono\", ui-monospace, monospace; font-size: 7pt; } .ds-pending p { margin: 2pt 0 0; }"
+    },
+    {
+      "name": "Formula Block",
+      "kind": "custom",
+      "refersTo": "formula-block",
+      "description": "A named equation with optional number, notation key, caption, and stable visual target.",
+      "html": "<figure class=\"ds-formula\"><header><strong>FORMULA</strong><span>Availability budget</span></header><div class=\"ds-equation\">A = 1 − D / T <b>(1)</b></div><div class=\"ds-notation\"><strong>NOTATION</strong><p><i>A</i><span>availability over the observation window</span></p><p><i>D</i><span>accumulated downtime</span></p></div><figcaption>The expression makes the shared reliability budget explicit.</figcaption></figure>",
+      "css": ".ds-formula { width: 100%; margin: 0; padding: 8pt 10pt; color: #172126; background: color-mix(in srgb, #6952a3 4%, white); border: .45pt solid color-mix(in srgb, #6952a3 45%, white); border-top: 1.4pt solid #6952a3; border-radius: 2pt; font-family: \"Libertinus Serif\", Georgia, serif; } .ds-formula header { display: flex; justify-content: space-between; color: #58656b; font-size: 7.8pt; } .ds-formula header strong { color: #6952a3; font-size: 6.7pt; letter-spacing: .65pt; } .ds-equation { padding: 8pt; text-align: center; font-size: 10.5pt; } .ds-equation b { float: right; font-weight: 400; } .ds-notation { padding-top: 5pt; border-top: .4pt solid color-mix(in srgb, #6952a3 45%, white); } .ds-notation > strong { color: #7b868b; font-size: 6.1pt; letter-spacing: .55pt; } .ds-notation p { display: grid; grid-template-columns: 25pt 1fr; margin: 3pt 0 0; color: #58656b; font-size: 7.8pt; } .ds-notation i { color: #6952a3; font-weight: 600; } .ds-formula figcaption { margin-top: 7pt; color: #58656b; font-size: 7.5pt; font-style: italic; }"
+    },
+    {
+      "name": "Pseudocode Block",
+      "kind": "custom",
+      "refersTo": "pseudocode-block",
+      "description": "Implementation-neutral control flow with renderer-owned keywords and indentation.",
+      "html": "<section class=\"ds-pseudocode\"><header><strong>PSEUDOCODE</strong><span>Accept one coherent change</span></header><div class=\"ds-io\"><b>INPUT</b><span>a durable work order</span><b>OUTPUT</b><span>an accepted change</span></div><ol><li><b>DO</b><code>read the design brief</code></li><li class=\"ds-depth\"><b>IF</b><code>the criterion can be observed</code></li><li class=\"ds-depth-2\"><b>RETURN</b><code>a clarification request</code></li></ol></section>",
+      "css": ".ds-pseudocode { width: 100%; padding: 8pt 10pt; color: #172126; background: color-mix(in srgb, #187b78 3%, white); border: .45pt solid color-mix(in srgb, #187b78 42%, white); border-top: 1.4pt solid #187b78; border-radius: 2pt; font-family: \"Libertinus Serif\", Georgia, serif; } .ds-pseudocode header { display: flex; justify-content: space-between; color: #58656b; font-size: 7.8pt; } .ds-pseudocode header strong { color: #187b78; font-size: 6.7pt; letter-spacing: .65pt; } .ds-io { display: grid; grid-template-columns: 58pt 1fr; gap: 2pt 8pt; margin: 6pt 0; padding: 5pt 7pt; color: #58656b; background: #f2f5f3; border: .4pt solid #d7ddda; border-radius: 1.5pt; font-size: 7.6pt; } .ds-io b { color: #187b78; font-size: 6.2pt; letter-spacing: .45pt; text-align: right; } .ds-pseudocode ol { list-style: none; margin: 6pt 0 0; padding: 3pt 0 0; border-top: .4pt solid color-mix(in srgb, #187b78 42%, white); } .ds-pseudocode li { display: grid; grid-template-columns: 58pt 1fr; gap: 8pt; padding: 2.5pt 0; } .ds-pseudocode li b { color: #187b78; text-align: right; font-size: 6.4pt; letter-spacing: .45pt; } .ds-pseudocode code { color: #172126; font-family: \"DejaVu Sans Mono\", ui-monospace, monospace; font-size: 8.2pt; } .ds-pseudocode .ds-depth { padding-left: 14pt; } .ds-pseudocode .ds-depth-2 { padding-left: 28pt; }"
+    },
+    {
+      "name": "Open Data Table",
+      "kind": "custom",
+      "refersTo": "data-table",
+      "description": "A full-measure table with tonal headers, content-sized columns, and open horizontal rules.",
+      "html": "<table class=\"ds-table\"><thead><tr><th>Phase</th><th>Reads</th><th>Decides</th></tr></thead><tbody><tr><td>assert</td><td>the authored source</td><td>document-level contracts</td></tr><tr><td>compile</td><td>the projected library</td><td>per-block contracts</td></tr></tbody></table>",
+      "css": ".ds-table { width: 100%; border-collapse: collapse; color: #172126; font-family: \"Libertinus Serif\", Georgia, serif; font-size: 8.4pt; } .ds-table th, .ds-table td { padding: 4pt 5pt; text-align: left; border: 0; border-bottom: .35pt solid #d7ddda; } .ds-table th { color: #172126; background: #e8eeeb; border-bottom: .7pt solid #58656b; font-weight: 600; } .ds-table tbody tr:nth-child(even) { background: #f2f5f3; } .ds-table tbody tr:last-child td { border-bottom: 0; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Systems Atlas",
+    "overview": "The renderer treats an architecture document as a calm technical atlas: warm paper, dark editorial type, exact rules, and restrained semantic color make a dense model feel deliberate rather than busy. The page establishes orientation first, then lets headings, labels, frames, and diagrams disclose deeper structure without changing visual language.\n\nThe system is editorial in voice and mechanical in discipline. Large ideas receive generous white space; dense evidence is compressed into small, repeated anatomies. Color never decorates a page or simulates depth. It names a concept, owner, status, or evidence class, while wording, shape, line style, and order repeat the same meaning for print and color-independent reading.",
+    "keyCharacteristics": [
+      "Warm near-white pages with dark blue-black text.",
+      "A serif-first hierarchy with compact tracked labels and sparing monospaced identifiers.",
+      "Thin frames, quiet tonal fills, and colored top rules instead of shadows.",
+      "One six-accent vocabulary reused across blocks, diagrams, charts, and inline furniture.",
+      "Repeated component anatomies that stay legible at high information density."
+    ],
+    "rules": [
+      {
+        "name": "The Semantic Accent Rule",
+        "body": "Color answers what kind, who owns it, what state it is in, or how evidence arose; it does not invent depth or decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Reinforced Meaning Rule",
+        "body": "Every semantic color is repeated by a label, shape, line style, position, or explicit word, so color never carries meaning alone.",
+        "section": "colors"
+      },
+      {
+        "name": "The Serif-First Rule",
+        "body": "Use the serif family for reading and explanation; reserve monospace for identifiers, dates, cardinality shapes, source, and procedure lines.",
+        "section": "typography"
+      },
+      {
+        "name": "The Quiet Label Rule",
+        "body": "Labels are small, tracked, and explicit; hierarchy comes from placement and repetition rather than oversized chrome.",
+        "section": "typography"
+      },
+      {
+        "name": "The Orientation-Before-Depth Rule",
+        "body": "Page, chapter, section, and drawing frames state their level or kind before the reader meets detail.",
+        "section": "layout"
+      },
+      {
+        "name": "The Natural-Drawing Rule",
+        "body": "Do not stretch a small drawing to fill the column; drawing size communicates complexity only when natural proportions are preserved.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-By-Contract Rule",
+        "body": "Every surface rests on the page; hierarchy is expressed through tone, frame weight, and spacing rather than simulated elevation.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Shallow-Corner Rule",
+        "body": "Keep document surfaces nearly square; rounded capsules belong to compact semantic furniture, not to panels.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Boundary-Style Rule",
+        "body": "Solid rules describe owned or internal structure; dashed rules describe external ownership, cross-seam relations, or a different rendering contract.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do begin with orientation: name the page, chapter, section, and drawing kind before showing detail.",
+      "Do reuse the declared semantic accent for the same concept across cards, charts, diagrams, and inline furniture.",
+      "Do pair color with words, shapes, line styles, or position so the document remains legible in grayscale and without reliable color discrimination.",
+      "Do preserve the serif reading voice and use monospace only where fixed-width comparison or authored syntax matters.",
+      "Do keep component spacing compact and repeat the same anatomy before adding a new visual form.",
+      "Do preserve natural diagram proportions and let white space carry the page-level hierarchy."
+    ],
+    "donts": [
+      "Don't use shadows, strong gradients, or ornamental color to create hierarchy.",
+      "Don't round large panels into capsules; reserve pronounced rounding for inline semantic furniture.",
+      "Don't merge distinct semantic labels into a blended pill or rely on hue alone to distinguish them.",
+      "Don't stretch sparse drawings to the full text measure or assign importance through arbitrary scale.",
+      "Don't style individual authoring calls; visual decisions belong to the renderer's shared component and token grammar.",
+      "Don't turn open tables into boxed spreadsheet grids when alignment and horizontal rules already reveal structure."
+    ]
+  }
+}

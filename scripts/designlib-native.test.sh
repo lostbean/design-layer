@@ -166,12 +166,24 @@ fixture render-positive '#show: design-doc.with(hero_title: [Doc])
   #points([A bullet.])
   #coverage(("part/x", "captured"), ("vendor/y", "out-of-scope", "Zreason"))
   #answers(title: "Unit", responsibility: [Zduty.])
+  #formula(
+    title: "Zformula", caption: [Zformula-caption],
+    notation: (([$x$], [Zformula-variable]),),
+  )[$ x = y + z $]
+  #pseudocode(
+    title: "Zprocedure", inputs: ([Zinput],), outputs: ([Zoutput],),
+    steps: (
+      pseudo-step([Zstep]),
+      pseudo-if([Zcondition], (pseudo-return([Zreturn]),)),
+    ),
+    caption: [Zprocedure-caption],
+  )
 ])'
 out="$(compile render-positive plain)"
 if [ -f "$WORK/render-positive.pdf" ]; then
   text="$(pdftotext "$WORK/render-positive.pdf" - 2>/dev/null)"
   missing=""
-  for mark in Zalpha Zbeta Zgamma Zreason Zduty; do
+  for mark in Zalpha Zbeta Zgamma Zreason Zduty Zformula Zformula-caption Zformula-variable Zprocedure Zinput Zoutput Zstep Zcondition Zreturn Zprocedure-caption; do
     case "$text" in
     *"$mark"*) ;;
     *) missing="$missing $mark" ;;
@@ -675,7 +687,7 @@ for mark in ("Zcontract-title", "Zcontract-mission", "Zcontract-responsibility")
         raise SystemExit("contract card is missing rendered mark %s" % mark)
 if not re.search(r"(?m)^\s*contract\s*$", text):
     raise SystemExit("contract card is missing its exact role mark")
-if not re.search(r'#0ea5e9', svg):
+if not re.search(r'#2870a6', svg):
     raise SystemExit("contract card did not retain its declared blue accent")
 
 shapes = [
@@ -715,9 +727,9 @@ fixture entity-neutral-tint '#set page(width: 360pt, height: 400pt, margin: 24pt
 #entity(title: "Neutral", description: [Unknown owner.], kind: "value-object", owner: "Shared", lifecycle: "immutable", domain: "Shared")[]'
 compile_svg entity-known-tint >/dev/null
 compile_svg entity-neutral-tint >/dev/null
-if rg -q '#fad6de|#f299ad|#ef839a' "$WORK/entity-known-tint.svg" &&
-  ! rg -q '#fad6de|#f299ad|#ef839a' "$WORK/entity-neutral-tint.svg" &&
-  rg -q '#e2e2e2' "$WORK/entity-neutral-tint.svg"; then
+if rg -q '#f3e1e5|#d28f9f|#daa4b1' "$WORK/entity-known-tint.svg" &&
+  ! rg -q '#f3e1e5|#d28f9f|#daa4b1' "$WORK/entity-neutral-tint.svg" &&
+  rg -q '#edf0ee' "$WORK/entity-neutral-tint.svg"; then
   pass_line "known ownership is tinted and unknown ownership stays neutral"
 else
   fail_line "entity ownership tint did not distinguish known from neutral"
@@ -738,7 +750,7 @@ fixture owner-palette '#set page(width: 420pt, height: 300pt, margin: 24pt)
 #context-owner("sales") #context-owner("unknown")'
 compile_svg owner-palette >/dev/null
 if [ -f "$WORK/owner-palette.svg" ] &&
-  rg -q '#e11d48|#fad6de|#f299ad|#ef839a' "$WORK/owner-palette.svg"; then
+  rg -q '#ad3451|#f3e1e5|#d28f9f|#daa4b1' "$WORK/owner-palette.svg"; then
   pass_line "declared context palette reaches context, term, and owner chips"
 else
   fail_line "declared context palette did not reach owner surfaces"
@@ -808,8 +820,8 @@ if compact_interface_label[1] - compact_value[3] <= compact_value[1] - compact_l
 PYTEST
     compile_svg answers-stack >/dev/null
     if [ -f "$WORK/answers-stack.svg" ] &&
-      rg -q '#e11d48|#fad6de|#f299ad|#ef839a' "$WORK/answers-stack.svg" &&
-      rg -q '#14b8a6|#a7e8e1' "$WORK/answers-stack.svg" &&
+      rg -q '#ad3451|#f3e1e5|#d28f9f|#daa4b1' "$WORK/answers-stack.svg" &&
+      rg -q '#087f79|#90c5c3' "$WORK/answers-stack.svg" &&
       ! rg -q 'fill="#737373"' "$WORK/answers-stack.svg"; then
       pass_line "answers stack compact label gaps, item spacing, and ownership colours"
     else
@@ -1265,6 +1277,27 @@ assert_invariant diagram-node-tint 'diagram node \"a\" tint' \
 
 assert_invariant diagram-native-layout "unexpected argument" \
   '#diagram-native(layout: "solved", altitude: "L1", nodes: ())'
+
+assert_invariant formula-numbered "numbered= must be true or false" \
+  '#formula(numbered: "yes")[$ x = 1 $]'
+
+assert_invariant formula-notation "must be a (symbol, meaning) pair" \
+  '#formula(notation: (([$x$],),))[$ x = 1 $]'
+
+assert_invariant pseudocode-steps "steps= must be an array" \
+  '#pseudocode(title: "Procedure", steps: "not steps")'
+
+assert_invariant pseudocode-kind "has unknown step kind" \
+  '#pseudocode(title: "Procedure", steps: ((kind: "mystery"),))'
+
+assert_invariant pseudocode-nested "steps[0].steps= must be an array" \
+  '#pseudocode(title: "Procedure", steps: (pseudo-if([condition], "not steps"),))'
+
+assert_invariant code-block-language "language must be a non-empty string" \
+  '#code-block("", "value")'
+
+assert_guideline pseudocode-empty "at least one step" \
+  '#pseudocode(title: "Empty procedure")'
 
 assert_guideline diagram-empty "at least one node" \
   '#diagram-native(altitude: "L1", nodes: (), edges: ())'

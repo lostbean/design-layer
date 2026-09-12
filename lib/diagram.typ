@@ -62,7 +62,7 @@
     align(center, dot-render(body, width: scaled))
   })
   if caption != none {
-    v(3pt); align(center, text(size: 7.5pt, fill: luma(110), caption))
+    v(4pt); align(center, text(size: 7.5pt, fill: MUTED, style: "italic", caption))
   }
   v(0.45em)
 }
@@ -92,14 +92,14 @@
     }
   }
   block(width: 100%, inset: 8pt, radius: 3pt,
-        stroke: (paint: luma(150), thickness: 0.6pt, dash: "dashed"),
+        stroke: (paint: FAINT, thickness: 0.6pt, dash: "dashed"),
     [
-      #text(size: 6.5pt, fill: luma(110), weight: "bold", tracking: 0.4pt,
+      #text(size: 6.5pt, fill: MUTED, weight: "bold", tracking: 0.4pt,
             "NATIVE FIGURE · " + uses.join(", "))
       #v(4pt)
       #align(center, body)
       #v(4pt)
-      #text(size: 7.5pt, fill: luma(110), caption)
+      #text(size: 7.5pt, fill: MUTED, style: "italic", caption)
     ])
   v(0.45em)
 }

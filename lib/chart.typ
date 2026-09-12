@@ -69,7 +69,7 @@
     kind: [CHART · #upper(kind)],
     title: title, caption: caption,
     align(center, {
-      set text(size: 7.4pt)
+      set text(size: 8.6pt, fill: INK)
       if kind == "pie" {
         // The carrier plots on axes; a pie is drawn from the values directly.
         // Each slice takes a tint from the shared vocabulary so a pie is
@@ -88,17 +88,22 @@
             let mid = start + sweep / 2
             content(
               (1.05 * calc.cos(mid), 1.05 * calc.sin(mid)),
-              text(size: 6.6pt, fill: luma(30))[#labels.at(i)],
+              text(size: 8pt, fill: INK)[#labels.at(i)],
             )
             start = start + sweep
           }
         })
       } else if kind == "line" {
         _lilaq.diagram(
-          width: 7cm, height: 3.6cm,
-          xaxis: (ticks: idx.map(i => (i, text(size: 6.6pt)[#labels.at(i)]))),
-          ylabel: if unit != none { text(size: 6.6pt)[#unit] } else { none },
-          _lilaq.plot(idx, values, color: c, mark: "o", stroke: 1pt + c),
+          width: 10.8cm, height: 4.2cm,
+          grid: (stroke: 0.35pt + HAIRLINE, stroke-sub: none),
+          xaxis: (
+            ticks: idx.map(i => (i, text(size: 8.3pt)[#labels.at(i)])),
+            subticks: none, stroke: 0.55pt + MUTED,
+          ),
+          yaxis: (subticks: none, stroke: 0.55pt + MUTED),
+          ylabel: if unit != none { text(size: 8pt)[#unit] } else { none },
+          _lilaq.plot(idx, values, color: c, mark: "o", stroke: 1.2pt + c),
         )
       } else {
         // bar draws its categories down the side, column across the bottom.
@@ -106,15 +111,24 @@
         // are one carrier call with the arguments swapped.
         let horizontal = kind == "bar"
         _lilaq.diagram(
-          width: 7cm, height: 3.6cm,
+          width: 10.8cm, height: 4.2cm,
+          grid: (stroke: 0.35pt + HAIRLINE, stroke-sub: none),
           xaxis: if horizontal {
-            (ticks: auto)
+            (ticks: auto, subticks: none, stroke: 0.55pt + MUTED)
           } else {
-            (ticks: idx.map(i => (i, text(size: 6.6pt)[#labels.at(i)])))
+            (
+              ticks: idx.map(i => (i, text(size: 8.3pt)[#labels.at(i)])),
+              subticks: none, stroke: 0.55pt + MUTED,
+            )
           },
           yaxis: if horizontal {
-            (ticks: idx.map(i => (i, text(size: 6.6pt)[#labels.at(i)])))
-          } else { (ticks: auto) },
+            (
+              ticks: idx.map(i => (i, text(size: 8.3pt)[#labels.at(i)])),
+              subticks: none, stroke: 0.55pt + MUTED,
+            )
+          } else {
+            (ticks: auto, subticks: none, stroke: 0.55pt + MUTED)
+          },
           // The carrier has a dedicated call per orientation: `hbar` reads
           // its categories down the side, `bar` across the bottom.
           if horizontal {

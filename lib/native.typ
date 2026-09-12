@@ -144,21 +144,24 @@
 // output identical to the markup it replaced.
 #let _drawing-frame(tint: none, kind: none, title: none, caption: none, body) = {
   let c = if tint == none { luma(120) } else { tint }
-  block(width: 100%, inset: (x: 7pt, y: 3.5pt), fill: c.lighten(92%),
-        stroke: (left: 2.4pt + c))[
-    #text(size: 6.2pt, weight: "bold", fill: c, tracking: 0.7pt)[
-      #kind
+  block(width: 100%, breakable: false)[
+    #block(width: 100%, inset: (x: 8pt, y: 4.5pt), fill: c.lighten(94%),
+           stroke: (top: 1.35pt + c, rest: 0.4pt + c.lighten(58%)),
+           radius: 2pt)[
+      #text(size: 6.2pt, weight: "bold", fill: c, tracking: 0.7pt)[
+        #kind
+      ]
+      #if title != none [ #h(0.8em) #text(size: 8pt, fill: MUTED)[#title] ]
     ]
-    #if title != none [ #h(0.6em) #text(size: 8pt, fill: luma(70))[#title] ]
+    #v(0.45em)
+    #body
+    #if caption != none [
+      #v(0.35em)
+      #block(width: 100%, inset: (x: 2pt))[
+        #text(size: 7.5pt, fill: MUTED, style: "italic")[#caption]
+      ]
+    ]
   ]
-  v(0.45em)
-  body
-  if caption != none {
-    v(0.35em)
-    block(width: 100%, inset: (x: 2pt))[
-      #text(size: 7.4pt, fill: luma(115))[#caption]
-    ]
-  }
   v(0.55em)
 }
 
@@ -187,11 +190,21 @@
 #let section(title: none, lead: none, visual: none, notes: none, body: none) = {
   _need("section", "title", title)
   _max-lead("section lead", lead)
-  heading(level: 2)[#title]
-  if lead != none {
-    block(text(size: 9.4pt, fill: luma(70))[#lead]); v(0.3em)
+  if visual != none {
+    block(width: 100%, breakable: false)[
+      #heading(level: 2)[#title]
+      #if lead != none [
+        #block(width: 92%, text(size: 9.4pt, fill: MUTED)[#lead])
+        #v(0.45em)
+      ]
+      #visual
+    ]
+  } else {
+    heading(level: 2)[#title]
+    if lead != none {
+      block(width: 92%, text(size: 9.4pt, fill: MUTED)[#lead]); v(0.45em)
+    }
   }
-  if visual != none { visual }
   if notes != none { notes }
   if body != none { body }
 }
@@ -204,9 +217,9 @@
 
 #let notes(title: none, body) = {
   _need("notes", "title", title)
-  block(width: 100%, inset: (x: 7pt, y: 6pt), fill: luma(248),
-        stroke: (left: 2.4pt + luma(175)), radius: (right: 2pt))[
-    #text(size: 6.2pt, weight: "bold", tracking: 0.6pt, fill: luma(95),
+  block(width: 100%, inset: (x: 8pt, y: 7pt), fill: SURFACE,
+        stroke: 0.5pt + HAIRLINE, radius: 2pt)[
+    #text(size: 6.2pt, weight: "bold", tracking: 0.6pt, fill: MUTED,
           upper(title))
     #linebreak() #body
   ]
@@ -579,9 +592,9 @@
   )
 }
 
-#let DIAGRAM-LEGEND-PER-ROW = 8
-#let DIAGRAM-LEGEND-SYMBOL-WIDTH = 30pt
-#let DIAGRAM-LEGEND-SYMBOL-HEIGHT = 18pt
+#let DIAGRAM-LEGEND-PER-ROW = 5
+#let DIAGRAM-LEGEND-SYMBOL-WIDTH = 38pt
+#let DIAGRAM-LEGEND-SYMBOL-HEIGHT = 22pt
 
 // Each symbol remains a real Graphviz carrier. The empty label and fixed
 // dimensions keep the mark small and stable while Typst owns its arrangement.
@@ -590,7 +603,7 @@
   (
     "digraph {\n"
     + "  graph [margin=0, bgcolor=\"transparent\"];\n"
-    + "  node [fontname=\"Libertinus Serif\", fontsize=8];\n"
+    + "  node [fontname=\"Libertinus Serif\", fontsize=9];\n"
     + _diagram-node-declaration(
       (id: id, kind: node.kind,
        tint: node.at("tint", default: accent),
@@ -665,8 +678,8 @@
     row-gutter: 2pt,
     align: center,
     _diagram-legend-symbol(source),
-    text(size: 6.1pt, weight: "bold")[#name],
-    text(size: 5.3pt, fill: luma(105))[#description],
+    text(size: 7.2pt, weight: "bold", fill: INK)[#name],
+    text(size: 6.5pt, fill: MUTED)[#description],
   )
 ]
 
@@ -739,7 +752,7 @@
     let legend-table = _diagram-legend-table(legend-cells)
     v(0.35em)
     block(width: 100%, inset: (x: 2pt, y: 2pt), fill: none, stroke: none)[
-      #text(size: 5.8pt, weight: "bold", tracking: 0.55pt, fill: luma(100))[LEGEND]
+      #text(size: 6.6pt, weight: "bold", tracking: 0.55pt, fill: FAINT)[LEGEND]
       #v(1pt)
       #legend-table
     ]
@@ -879,7 +892,7 @@
       let lbl = if "sub" in n {
         align(center)[
           #text(size: 8.6pt)[#n.label] \
-          #text(size: 7.6pt, fill: luma(95))[#n.sub]
+          #text(size: 7.6pt, fill: MUTED)[#n.sub]
         ]
       } else { text(size: 8.6pt)[#n.label] }
       _fl-node(n.pos, lbl, name: label(n.id),
@@ -893,12 +906,12 @@
       let dashed = e.len() > 3 and e.at(3) == "dashed"
       _fl-edge(label(e.at(0)), label(e.at(1)),
         if dashed { "-->" } else { "->" },
-        label: text(size: 7pt, fill: luma(80))[#e.at(2)],
+        label: text(size: 7pt, fill: MUTED)[#e.at(2)],
         label-side: if e.len() > 4 { e.at(4) } else { auto },
         label-sep: 3pt, label-size: 7pt,
         stroke: if dashed {
           (dash: "dashed", thickness: 0.6pt, paint: luma(110))
-        } else { 0.7pt + luma(85) })
+        } else { 0.7pt + MUTED })
     })
     align(center, _fletcher.diagram(spacing: spacing, ..ns, ..es))
   } else { none }
@@ -950,8 +963,8 @@
     let source = (
       "digraph {\n  rankdir=" + _diagram-rankdir(flow) + ";\n"
       + "  graph [fontname=\"Libertinus Serif\", fontsize=10, nodesep=0.35, ranksep=0.55];\n"
-      + "  node [shape=box, fontname=\"Libertinus Serif\", fontsize=9, penwidth=1.0];\n"
-      + "  edge [fontname=\"Libertinus Serif\", fontsize=7, color=\"#555555\"];\n"
+      + "  node [shape=box, fontname=\"Libertinus Serif\", fontsize=10, penwidth=1.0];\n"
+      + "  edge [fontname=\"Libertinus Serif\", fontsize=8.3, color=\"#555555\"];\n"
       + root-node-declarations + group-declarations + edge-declarations + "}"
     )
     let graph = _diagram-layout-box(size => {
@@ -1039,7 +1052,7 @@
   pairs.filter(r => r.at(1) != none)
 }
 
-#let _answer-row(r, size: 7.6pt, label-size: none, color: luma(115)) = {
+#let _answer-row(r, size: 7.6pt, label-size: none, color: FAINT) = {
   let label-size = if label-size == none { size - 0.8pt } else { label-size }
   block(width: 100%)[
     #set par(justify: false)
@@ -1051,7 +1064,7 @@
   ]
 }
 
-#let _answers-compact(data, size: 7.6pt, color: luma(115)) = {
+#let _answers-compact(data, size: 7.6pt, color: FAINT) = {
   let rows = _answer-rows(data)
   for (i, r) in rows.enumerate() {
     if i > 0 { v(2pt) }
@@ -1157,7 +1170,7 @@
   #text(weight: "bold")[#item.mission]
   #if item.body != none [ #v(1.5pt) #item.body ]
   #if item.answers != none [
-    #v(3pt) #line(length: 100%, stroke: 0.4pt + luma(220)) #v(3pt)
+    #v(3pt) #line(length: 100%, stroke: 0.4pt + HAIRLINE) #v(3pt)
     #_answers-compact(item.answers, color: color)
   ]
 ]
@@ -1307,7 +1320,7 @@
     #table(columns: (auto, auto, 1fr), stroke: none,
       inset: (x: 5pt, y: 3.5pt), align: (left, left, left),
       table.header(..("Part", "Status", "Why").map(h => text(size: 6.3pt,
-        weight: "bold", tracking: 0.5pt, fill: luma(110), upper(h)))),
+        weight: "bold", tracking: 0.5pt, fill: FAINT, upper(h)))),
       ..rs.map(r => (
         text(size: 8.3pt, font: "DejaVu Sans Mono")[#r.at(0)],
         {
@@ -1379,29 +1392,35 @@
   }
   // Replay each entry's deferred guidance from here, a content position.
   for e in es { _guides(e.at("_guides", default: ())) }
-  heading(level: 2)[Pending updates]
-  v(0.3em)
-  // An entry with no date sorts to the front rather than crashing the sort:
-  // `since` is a guideline now, so the ledger has to be able to draw a row that
-  // does not carry one. The empty key keeps the comparison total.
-  for e in es.sorted(key: e => if e.since == none { "" } else { e.since }) {
-    // A missing kind takes a neutral row rather than indexing the colour table
-    // with `none`, which would be a crash where the library promised guidance.
-    let col = if e.kind == none { luma(150) } else { PENDING-COLOR.at(e.kind) }
-    block(width: 100%, inset: (x: 7pt, y: 5pt), stroke: (left: 2.4pt + col),
-          fill: col.lighten(96%), radius: (right: 2pt))[
-      #grid(columns: (auto, 1fr, auto), gutter: 6pt,
-        box(fill: col.lighten(85%), inset: (x: 3pt, y: 1pt), radius: 1.5pt,
-            text(size: 6pt, weight: "bold", fill: col.darken(15%))[
-              #if e.kind == none { "—" } else { e.kind }]),
-        text(size: 9.2pt, weight: "bold")[#e.title],
-        text(size: 7pt, fill: luma(120), font: "DejaVu Sans Mono")[
-          #if e.since == none { "—" } else { e.since }])
-      #if e.body != none [ #v(2pt) #text(size: 8.2pt)[#e.body] ]
-      #if e.adr != none [ #v(1.5pt) #text(size: 7.2pt, fill: luma(110))[#e.adr] ]
-    ]
-    v(0.35em)
-  }
+  // A short ledger is one reading unit, so keep its heading and rows together.
+  // A longer ledger remains breakable; otherwise a real backlog could overflow
+  // the page merely to avoid one page turn.
+  block(width: 100%, breakable: es.len() > 3)[
+    #heading(level: 2)[Pending updates]
+    #v(0.3em)
+    // An entry with no date sorts to the front rather than crashing the sort:
+    // `since` is a guideline now, so the ledger has to be able to draw a row that
+    // does not carry one. The empty key keeps the comparison total.
+    #for e in es.sorted(key: e => if e.since == none { "" } else { e.since }) {
+      // A missing kind takes a neutral row rather than indexing the colour table
+      // with `none`, which would be a crash where the library promised guidance.
+      let col = if e.kind == none { FAINT } else { PENDING-COLOR.at(e.kind) }
+      block(width: 100%, inset: (x: 8pt, y: 6pt),
+            stroke: (top: 1.2pt + col, rest: 0.4pt + col.lighten(58%)),
+            fill: col.lighten(96%), radius: 2pt)[
+        #grid(columns: (auto, 1fr, auto), gutter: 6pt,
+          box(fill: col.lighten(85%), inset: (x: 3pt, y: 1pt), radius: 1.5pt,
+              text(size: 6pt, weight: "bold", fill: col.darken(15%))[
+                #if e.kind == none { "—" } else { e.kind }]),
+          text(size: 9.2pt, weight: "bold")[#e.title],
+          text(size: 7pt, fill: FAINT, font: "DejaVu Sans Mono")[
+            #if e.since == none { "—" } else { e.since }])
+        #if e.body != none [ #v(2pt) #text(size: 8.2pt)[#e.body] ]
+        #if e.adr != none [ #v(1.5pt) #text(size: 7.2pt, fill: MUTED)[#e.adr] ]
+      ]
+      v(0.35em)
+    }
+  ]
   v(0.3em)
 }
 
@@ -1447,9 +1466,9 @@
 #let how-to-read(accent: "teal") = {
   _req-enum("accent", accent, TINTS)
   let c = TINT-COLOR.at(accent)
-  block(width: 100%, inset: (x: 7pt, y: 6pt), fill: luma(250),
-        stroke: 0.5pt + luma(215), radius: 2pt)[
-    #text(size: 6.3pt, weight: "bold", tracking: 0.6pt, fill: luma(95))[
+  block(width: 100%, inset: (x: 8pt, y: 7pt), fill: SURFACE,
+        stroke: 0.5pt + HAIRLINE, radius: 2pt)[
+    #text(size: 6.3pt, weight: "bold", tracking: 0.6pt, fill: MUTED)[
       HOW TO READ THIS
     ]
     #v(3pt)
@@ -1461,10 +1480,10 @@
           stroke: (dash: "dashed", paint: luma(150), thickness: 0.7pt),
           radius: 2pt),
       text(size: 7.6pt)[a part owned elsewhere, drawn as a pointer],
-      align(horizon, line(length: 26pt, stroke: 0.7pt + luma(85))),
+      align(horizon, line(length: 26pt, stroke: 0.7pt + MUTED)),
       text(size: 7.6pt)[a relationship inside this unit],
       align(horizon, line(length: 26pt,
-        stroke: (dash: "dashed", thickness: 0.6pt, paint: luma(110)))),
+        stroke: (dash: "dashed", thickness: 0.6pt, paint: FAINT))),
       text(size: 7.6pt)[a relationship crossing the seam],
       ..COVERAGE-STATUSES.map(s => {
         let col = COVERAGE-COLOR.at(s)

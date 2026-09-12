@@ -15,7 +15,6 @@
 #import ".render/designlib.typ": *
 
 #show: design-doc.with(
-  eyebrow: [Reference],
   hero_title: [The block gallery],
   lede: [Every function a design.typ calls, rendered once, so a change in any
     one of them is visible in a diff of this document.],
@@ -59,18 +58,22 @@
       is nothing to translate and nothing to look up.
     ]
 
-    #invariant(
-      title: "Every diagram edge names a declared node",
-      enforcement: "mechanism",
-    )[
-      The library checks each endpoint against the declared node ids, so an
-      edge to nowhere stops the compile instead of rendering a missing line.
-    ]
+    #block(breakable: false)[
+      #subsection(title: "Enforcement and evidence")[
+        #invariant(
+          title: "Every diagram edge names a declared node",
+          enforcement: "mechanism",
+        )[
+          The library checks each endpoint against the declared node ids, so an
+          edge to nowhere stops the compile instead of rendering a missing line.
+        ]
 
-    #notes(title: "On enforcement labels")[
-      The `enforcement` argument is required. A convention labelled honestly
-      beats a mechanism claimed falsely, and an omitted label claims nothing
-      while looking like a claim.
+        #notes(title: "On enforcement labels")[
+          The `enforcement` argument is required. A convention labelled honestly
+          beats a mechanism claimed falsely, and an omitted label claims nothing
+          while looking like a claim.
+        ]
+      ]
     ]
   ],
 )
@@ -185,17 +188,19 @@
       failure: [Exit 1 on a violation, exit 2 on a missing tool.],
     )
 
-    #contract(
-      name: "The projection contract",
-      accent: "rose",
-      mission: "Keep the declared schema and projected library aligned.",
-      lens: "composition",
-      answers: answers-data(
-        responsibility: [Project the schema into the callable library.],
-        interface: [The schema and library compile as one contract.],
-        failure: [A projection mismatch stops the render.],
-      ),
-    )
+    #block(breakable: false)[
+      #contract(
+        name: "The projection contract",
+        accent: "rose",
+        mission: "Keep the declared schema and projected library aligned.",
+        lens: "composition",
+        answers: answers-data(
+          responsibility: [Project the schema into the callable library.],
+          interface: [The schema and library compile as one contract.],
+          failure: [A projection mismatch stops the render.],
+        ),
+      )
+    ]
   ],
 )
 
@@ -219,6 +224,30 @@
         ("LICENSE", "out-of-scope", "Not a designed subsystem."),
       )
     ]
+  ],
+)
+
+#pending-ledger(
+  pending-entry(
+    title: "The context map is still authored by hand",
+    kind: "build",
+    since: "2026-08-23",
+    adr: [#adr(65)],
+  )[
+    The context map and the coverage map are markdown files kept beside the
+    layer they index, so each can disagree with what it indexes. Generating
+    them from the Typst sources would remove the disagreement rather than
+    check for it.
+  ],
+  pending-entry(
+    title: "The mechanism fence catches only a denylist",
+    kind: "verify",
+    since: "2026-08-23",
+  )[
+    A behavior clause must state an observable outcome rather than the
+    mechanism producing it. The check matches a list of implementation-shaped
+    words and a few id patterns, so it is labelled partial: a mechanism
+    described in ordinary words passes it.
   ],
 )
 
@@ -249,22 +278,24 @@
   title: "The entity census",
   lead: "An entity states what it is made of and how it sits against others.",
   body: [
-    #entity(
-      title: "Design layer",
-      description: [The authored model and the document rendered from it.],
-      kind: "aggregate",
-      owner: "the author",
-      lifecycle: "stateful",
-      domain: "documentation",
-    )[
-      #attribute(name: "Notation", type: "Authoring notation", provenance: "authored")[
-        The notation the layer is written in.
-      ]
-      #attribute(name: "Rendered document", type: [Design document], provenance: "derived")[
-        The rendered document, produced by the renderer and never hand-edited.
-      ]
-      #relates(cardinality: "1 : 0..n")[
-        A layer holds many contexts, and a context belongs to exactly one layer.
+    #block(breakable: false)[
+      #entity(
+        title: "Design layer",
+        description: [The authored model and the document rendered from it.],
+        kind: "aggregate",
+        owner: "the author",
+        lifecycle: "stateful",
+        domain: "documentation",
+      )[
+        #attribute(name: "Notation", type: "Authoring notation", provenance: "authored")[
+          The notation the layer is written in.
+        ]
+        #attribute(name: "Rendered document", type: [Design document], provenance: "derived")[
+          The rendered document, produced by the renderer and never hand-edited.
+        ]
+        #relates(cardinality: "1 : 0..n")[
+          A layer holds many contexts, and a context belongs to exactly one layer.
+        ]
       ]
     ]
 
@@ -319,19 +350,21 @@
       worse than no check, because it reports success.
     ]
 
-    #cards(
-      cols: "2",
-      tint: "blue",
-      items: (
-        (title: "Invariant", tint: "rose", body: [A rule whose violation makes the model
-          wrong. It panics. This long explanation keeps the explicit two-column
-          contract visible even when automatic layout would prefer one column.]),
-        (title: "Guideline", tint: "teal", body: [A rule of style. It is silent unless the
-          author asks for it. This long explanation keeps the explicit
-          two-column contract visible even when automatic layout would prefer
-          one column.]),
-      ),
-    )
+    #block(breakable: false)[
+      #cards(
+        cols: "2",
+        tint: "blue",
+        items: (
+          (title: "Invariant", tint: "rose", body: [A rule whose violation makes the model
+            wrong. It panics. This long explanation keeps the explicit two-column
+            contract visible even when automatic layout would prefer one column.]),
+          (title: "Guideline", tint: "teal", body: [A rule of style. It is silent unless the
+            author asks for it. This long explanation keeps the explicit
+            two-column contract visible even when automatic layout would prefer
+            one column.]),
+        ),
+      )
+    ]
 
     #md-table(
       3,
@@ -430,9 +463,104 @@
 )
 
 #section(
+  title: "Equations and formulas",
+  lead: "Native mathematics carries the same hierarchy and reading aids as every other design unit.",
+  visual: block(width: 100%, breakable: false)[
+    Inline mathematics remains part of prose: the availability target is
+    $A >= 0.999$. An expression that needs a name, notation key, caption, or
+    stable target becomes a formula block.
+
+    #formula(
+      id: "availability-budget",
+      title: "Availability budget",
+      numbered: true,
+      accent: "violet",
+      notation: (
+        ([$A$], [availability over the observation window]),
+        ([$D$], [accumulated downtime]),
+        ([$T$], [total observation time]),
+      ),
+      caption: [The expression makes the shared reliability budget explicit;
+        subsystem targets may refine it but cannot silently redefine it.],
+    )[
+      $ A = 1 - frac(D, T) $
+    ]
+  ],
+)
+
+#section(
+  title: "Implementation-neutral procedures",
+  lead: "Pseudocode makes consequential control flow explicit without choosing a programming language.",
+  visual: pseudocode(
+    id: "accept-one-change",
+    title: "Accept one coherent change",
+    inputs: ([a durable work order], [the current repository state]),
+    outputs: ([an accepted change], [actionable findings]),
+    accent: "teal",
+    steps: (
+      pseudo-step([read the design brief and its acceptance evidence]),
+      pseudo-for([criterion], [the acceptance criteria], (
+        pseudo-if(
+          [the criterion can be observed],
+          (pseudo-step([bind the criterion to one check]),),
+          otherwise: (pseudo-return([a clarification request]),),
+        ),
+      )),
+      pseudo-repeat(
+        [the gate is green],
+        (
+          pseudo-step([implement one coherent change]),
+          pseudo-step([run the complete gate]),
+        ),
+      ),
+      pseudo-return([the accepted change]),
+    ),
+    caption: [Keywords, indentation, branches, and loops belong to the renderer;
+      the author supplies only the procedure's meaning.],
+  ),
+)
+
+#section(
+  title: "The sequence",
+  lead: "A sequence is ordered by time, and says when a party is active.",
+  visual: sequence(
+      title: "a work order, from dispatch to accepted change",
+      accent: "violet",
+      participants: (
+        (id: "coder", label: "coder", shape: "control"),
+        (id: "wo", label: "work-order", shape: "participant"),
+        (id: "gate", label: "the gate", shape: "boundary"),
+        (id: "repo", label: "repository", shape: "database"),
+      ),
+      steps: (
+        seq-msg("coder", "wo", "dispatch one chunk", activate: true),
+        seq-note("wo", [the brief is durable], side: "right"),
+        seq-loop("until the gate is green", (
+          seq-msg("wo", "repo", "write the change"),
+          seq-msg("wo", "gate", "run the gate"),
+          seq-alt(
+            "the gate passes",
+            (seq-msg("gate", "wo", "green", dashed: true),),
+            otherwise: (
+              seq-msg("gate", "wo", "violation", dashed: true),
+              seq-msg("wo", "repo", "repair"),
+            ),
+          ),
+        )),
+        seq-msg("wo", "coder", "deliver", dashed: true, deactivate: true),
+        seq-opt("the delivery is bounced", (
+          seq-msg("coder", "wo", "re-dispatch with findings"),
+        )),
+      ),
+      caption: [Activation, branch, repetition, and an optional block —
+        the constructs a node-and-edge drawing cannot state.],
+    ),
+)
+
+#section(
   title: "The state machine",
   lead: "A machine declares states and transitions, never positions.",
-  body: [
+  visual: block(width: 100%, breakable: false)[
     #state-type(
       id: "issue-state",
       title: "Issue state",
@@ -490,45 +618,6 @@
 )
 
 #section(
-  title: "The sequence",
-  lead: "A sequence is ordered by time, and says when a party is active.",
-  body: [
-    #sequence(
-      title: "a work order, from dispatch to accepted change",
-      accent: "violet",
-      participants: (
-        (id: "coder", label: "coder", shape: "control"),
-        (id: "wo", label: "work-order", shape: "participant"),
-        (id: "gate", label: "the gate", shape: "boundary"),
-        (id: "repo", label: "repository", shape: "database"),
-      ),
-      steps: (
-        seq-msg("coder", "wo", "dispatch one chunk", activate: true),
-        seq-note("wo", [the brief is durable], side: "right"),
-        seq-loop("until the gate is green", (
-          seq-msg("wo", "repo", "write the change"),
-          seq-msg("wo", "gate", "run the gate"),
-          seq-alt(
-            "the gate passes",
-            (seq-msg("gate", "wo", "green", dashed: true),),
-            otherwise: (
-              seq-msg("gate", "wo", "violation", dashed: true),
-              seq-msg("wo", "repo", "repair"),
-            ),
-          ),
-        )),
-        seq-msg("wo", "coder", "deliver", dashed: true, deactivate: true),
-        seq-opt("the delivery is bounced", (
-          seq-msg("coder", "wo", "re-dispatch with findings"),
-        )),
-      ),
-      caption: [Activation, branch, repetition, and an optional block —
-        the constructs a node-and-edge drawing cannot state.],
-    )
-  ],
-)
-
-#section(
   title: "End-to-end walkthrough",
   lead: "A prose-only section is legal, and this one demonstrates it.",
   body: [
@@ -545,29 +634,5 @@
     failure of the document. The spine mandates a walkthrough, and a
     walkthrough is a sequence carried in sentences, so the `visual` argument
     is optional and this section supplies none.
-  ],
-)
-
-#pending-ledger(
-  pending-entry(
-    title: "The context map is still authored by hand",
-    kind: "build",
-    since: "2026-08-23",
-    adr: [#adr(65)],
-  )[
-    The context map and the coverage map are markdown files kept beside the
-    layer they index, so each can disagree with what it indexes. Generating
-    them from the Typst sources would remove the disagreement rather than
-    check for it.
-  ],
-  pending-entry(
-    title: "The mechanism fence catches only a denylist",
-    kind: "verify",
-    since: "2026-08-23",
-  )[
-    A behavior clause must state an observable outcome rather than the
-    mechanism producing it. The check matches a list of implementation-shaped
-    words and a few id patterns, so it is labelled partial: a mechanism
-    described in ordinary words passes it.
   ],
 )

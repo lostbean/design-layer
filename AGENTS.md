@@ -67,6 +67,9 @@ nix run .#render  -- <layer-root> <out.pdf> [--check]   # #aggregate: old name
 nix run .#check   -- <layer-root> <repo-root>
 nix run .#lint    -- <layer-root>            # the guideline sweep, never a gate
 nix run .#project -- schema/design-schema.json <out-dir>
+nix run .#context -- <layer-root> --estimate
+nix run .#context -- <layer-root> --manifest
+nix run .#context -- <layer-root> --section 1.1 --expect-digest <digest>
 ```
 
 `check` runs the invariants and decides pass or fail. `lint` promotes every
@@ -74,6 +77,12 @@ GUIDELINE to an error and is invoked by an author, never by the gate or the
 commit hook: a guideline names a document that could read better, never one
 that is wrong, so blocking a commit on one would impose a house style through
 a mechanism meant for correctness.
+
+The context app keeps the complete Markdown projection as its default. Use
+--manifest or --preview to plan incremental loading, then use --section PATH
+to emit an exact heading subtree. Section addresses belong to the manifest that
+produced them; use its projection digest with --expect-digest when several
+section calls must share one source snapshot.
 
 The self-tests are the correctness proof — this repo has no design layer of its
 own by decision, so nothing here is verified by dogfooding:

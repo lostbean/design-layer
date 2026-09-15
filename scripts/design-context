@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import importlib.util
 from importlib.machinery import SourceFileLoader
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
@@ -20,8 +22,13 @@ from typst_policy import command as typst_command
 from typst_policy import environment as typst_environment
 
 
-USAGE = "usage: design-context <layer-root> [--estimate | --output PATH]"
+USAGE = (
+    "usage: design-context <layer-root> "
+    "[--estimate | --manifest | --preview [--depth N] | --section PATH] "
+    "[--output PATH] [--expect-digest DIGEST]"
+)
 LABEL = "<design-semantic>"
+MANIFEST_FORMAT = "design-context-manifest/v1"
 
 SEMANTIC_FIELDS = {
     "document": {"name", "level", "title", "body"},
@@ -79,16 +86,36 @@ class ProjectionOperationalError(Exception):
     """The projection could not run because its execution inputs are invalid."""
 
 
+@dataclass
+class CliOptions:
+    layer: Path
+    mode: str
+    output: Path | None
+    depth: int
+    section: str | None
+    expect_digest: str | None
+
+
 def fail(message: str, code: int = 2) -> NoReturn:
     sys.stderr.write(f"design-context: error: {message}\n")
     raise SystemExit(code)
 
 
-def parse_args(argv: list[str]) -> tuple[Path, str, Path | None]:
-    mode = "default"
+def parse_args(argv: list[str]) -> CliOptions:
+    mode: str | None = None
     output: Path | None = None
+    depth: int | None = None
+    section: str | None = None
+    expect_digest: str | None = None
     positionals: list[str] = []
     index = 0
+
+    def select_mode(candidate: str) -> None:
+        nonlocal mode
+        if mode is not None:
+            fail(f"--{candidate} and --{mode} are mutually exclusive")
+        mode = candidate
+
     while index < len(argv):
         arg = argv[index]
         if arg in ("--help", "-h"):
@@ -97,16 +124,38 @@ def parse_args(argv: list[str]) -> tuple[Path, str, Path | None]:
             sys.stderr.write(USAGE + "\n")
             raise SystemExit(2)
         if arg == "--estimate":
-            if mode != "default":
-                fail("--estimate and --output are mutually exclusive")
-            mode = "estimate"
+            select_mode("estimate")
+        elif arg == "--manifest":
+            select_mode("manifest")
+        elif arg == "--preview":
+            select_mode("preview")
+        elif arg == "--section":
+            index += 1
+            if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
+                fail("--section requires a path")
+            section = argv[index]
+            select_mode("section")
+        elif arg == "--depth":
+            index += 1
+            if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
+                fail("--depth requires a positive integer")
+            try:
+                depth = int(argv[index])
+            except ValueError:
+                fail("--depth requires a positive integer")
+            if depth < 1:
+                fail("--depth requires a positive integer")
+        elif arg == "--expect-digest":
+            index += 1
+            if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
+                fail("--expect-digest requires a digest")
+            expect_digest = argv[index]
         elif arg == "--output":
-            if mode != "default":
-                fail("--estimate and --output are mutually exclusive")
+            if output is not None:
+                fail("--output may be specified once")
             index += 1
             if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
                 fail("--output requires a path")
-            mode = "output"
             output = Path(argv[index])
         elif arg.startswith("-"):
             fail(f"unknown option: {arg}")
@@ -115,12 +164,30 @@ def parse_args(argv: list[str]) -> tuple[Path, str, Path | None]:
         index += 1
     if len(positionals) != 1:
         fail(USAGE)
+    mode = mode or "default"
+    if mode in {"estimate", "manifest", "preview"} and output is not None:
+        fail(f"--{mode} and --output are mutually exclusive")
+    if mode != "preview" and depth is not None:
+        fail("--depth is only valid with --preview")
+    if mode != "section" and expect_digest is not None:
+        fail("--expect-digest is only valid with --section")
+    if mode != "section" and section is not None:
+        fail("--section requires a section path")
+    if mode == "section" and section is None:
+        fail("--section requires a path")
     layer = Path(positionals[0])
     if not layer.is_dir():
         fail(f"layer root not found: {layer}")
     if not (layer / "design.typ").is_file():
         fail(f"root design.typ not found: {layer / 'design.typ'}")
-    return layer.resolve(), mode, output
+    return CliOptions(
+        layer=layer.resolve(),
+        mode=mode,
+        output=output,
+        depth=depth or 2,
+        section=section,
+        expect_digest=expect_digest,
+    )
 
 
 def typst_string(path: Path) -> str:
@@ -1897,6 +1964,215 @@ def estimate(markdown: bytes) -> dict[str, int | str]:
     }
 
 
+@dataclass
+class SectionNode:
+    address: str
+    level: int
+    title: str
+    start_line: int
+    parent: str | None
+    children: list[str]
+    direct_end_line: int = 0
+    end_line: int = 0
+
+
+@dataclass
+class SectionIndex:
+    lines: list[str]
+    order: list[str]
+    nodes: dict[str, SectionNode]
+
+
+_FENCE_RE = re.compile(r"^[ \t]{0,3}((?:\x60{3,}|~{3,}))")
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*\r?\n?$")
+
+
+def index_sections(markdown: bytes) -> SectionIndex:
+    try:
+        text = markdown.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ProjectionError(f"Markdown projection is not UTF-8: {error}") from error
+    lines = text.splitlines(keepends=True)
+    headings: list[tuple[int, int, str]] = []
+    fence: str | None = None
+    for line_number, line in enumerate(lines):
+        fence_match = _FENCE_RE.match(line)
+        marker = fence_match.group(1) if fence_match else None
+        if marker is not None and len(set(marker)) != 1:
+            marker = None
+            fence_match = None
+        if fence is not None:
+            if (
+                marker is not None
+                and marker[0] == fence[0]
+                and len(marker) >= len(fence)
+                and not line[fence_match.end() :].strip()
+            ):
+                fence = None
+            continue
+        if marker is not None:
+            fence = marker
+            continue
+        heading = _HEADING_RE.match(line)
+        if heading is not None:
+            headings.append(
+                (line_number, len(heading.group(1)), heading.group(2).strip())
+            )
+
+    nodes: dict[str, SectionNode] = {}
+    order: list[str] = []
+    stack: list[SectionNode] = []
+    roots: list[str] = []
+    for line_number, level, title in headings:
+        while stack and stack[-1].level >= level:
+            stack.pop()
+        parent = stack[-1] if stack else None
+        if parent is None:
+            address = str(len(roots) + 1)
+            roots.append(address)
+        else:
+            address = f"{parent.address}.{len(parent.children) + 1}"
+        node = SectionNode(
+            address=address,
+            level=level,
+            title=title,
+            start_line=line_number,
+            parent=parent.address if parent else None,
+            children=[],
+        )
+        nodes[address] = node
+        order.append(address)
+        if parent is not None:
+            parent.children.append(address)
+        stack.append(node)
+
+    for position, address in enumerate(order):
+        node = nodes[address]
+        next_boundary = len(lines)
+        for later_address in order[position + 1 :]:
+            later = nodes[later_address]
+            if later.level <= node.level:
+                next_boundary = later.start_line
+                break
+        node.end_line = next_boundary
+        node.direct_end_line = (
+            nodes[node.children[0]].start_line if node.children else next_boundary
+        )
+    return SectionIndex(lines=lines, order=order, nodes=nodes)
+
+
+def section_bytes(index: SectionIndex, start_line: int, end_line: int) -> bytes:
+    return "".join(index.lines[start_line:end_line]).encode("utf-8")
+
+
+def digest(markdown: bytes) -> str:
+    return f"sha256:{hashlib.sha256(markdown).hexdigest()}"
+
+
+def metrics(markdown: bytes) -> dict[str, int | str]:
+    result = estimate(markdown)
+    result["sha256"] = digest(markdown)
+    return result
+
+
+def section_manifest(markdown: bytes, index: SectionIndex) -> dict[str, object]:
+    sections: list[dict[str, object]] = []
+    for address in index.order:
+        node = index.nodes[address]
+        direct = section_bytes(index, node.start_line, node.direct_end_line)
+        subtree = section_bytes(index, node.start_line, node.end_line)
+        sections.append(
+            {
+                "address": node.address,
+                "level": node.level,
+                "title": node.title,
+                "parent": node.parent,
+                "children": list(node.children),
+                "direct": metrics(direct),
+                "subtree": metrics(subtree),
+            }
+        )
+    result: dict[str, object] = {
+        "format": MANIFEST_FORMAT,
+        "projection": {
+            "sha256": digest(markdown),
+            "metrics": estimate(markdown),
+        },
+        "section_count": len(sections),
+        "sections": sections,
+    }
+    if index.order and index.nodes[index.order[0]].start_line:
+        result["preamble"] = metrics(
+            section_bytes(index, 0, index.nodes[index.order[0]].start_line)
+        )
+    return result
+
+
+def preview(markdown: bytes, index: SectionIndex, depth: int) -> str:
+    projection = estimate(markdown)
+    visible = [
+        index.nodes[address]
+        for address in index.order
+        if address.count(".") + 1 <= depth
+    ]
+    lines = [
+        "# Agent context preview",
+        "",
+        f"Format: {MANIFEST_FORMAT}",
+        f"Projection digest: {digest(markdown)}",
+        (
+            "Projection token range: "
+            f"{projection['likely_tokens']:,}–{projection['conservative_tokens']:,}"
+        ),
+        f"Visible sections: {len(visible)} of {len(index.order)} (depth {depth})",
+        "",
+        "| Address | Section | Own tokens | Subtree tokens | Subtree SHA-256 |",
+        "| --- | --- | ---: | ---: | --- |",
+    ]
+    for node in visible:
+        direct = metrics(section_bytes(index, node.start_line, node.direct_end_line))
+        subtree = metrics(section_bytes(index, node.start_line, node.end_line))
+        title = node.title.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+        lines.append(
+            f"| {node.address} | {title} | "
+            f"{direct['likely_tokens']:,}–{direct['conservative_tokens']:,} | "
+            f"{subtree['likely_tokens']:,}–{subtree['conservative_tokens']:,} | "
+            f"{subtree['sha256']} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def digest_matches(expected: str, actual: str) -> bool:
+    return expected == actual or expected.removeprefix("sha256:") == actual.removeprefix(
+        "sha256:"
+    )
+
+
+def selected_section(
+    markdown: bytes,
+    index: SectionIndex,
+    address: str,
+    expect_digest: str | None,
+) -> bytes:
+    node = index.nodes.get(address)
+    if node is None:
+        raise ProjectionOperationalError(f"section not found: {address}")
+    subtree = section_bytes(index, node.start_line, node.end_line)
+    if expect_digest is not None:
+        projection_digest = digest(markdown)
+        section_digest = digest(subtree)
+        if not (
+            digest_matches(expect_digest, projection_digest)
+            or digest_matches(expect_digest, section_digest)
+        ):
+            raise ProjectionOperationalError(
+                "digest mismatch for "
+                f"{address}: expected {expect_digest}, projection is {projection_digest}, "
+                f"section is {section_digest}"
+            )
+    return subtree
+
+
 def write_new_output(output: Path, markdown: bytes) -> None:
     temporary: Path | None = None
     try:
@@ -1915,9 +2191,9 @@ def write_new_output(output: Path, markdown: bytes) -> None:
 
 
 def main(argv: list[str]) -> int:
-    layer, mode, output = parse_args(argv)
+    options = parse_args(argv)
     try:
-        markdown = project(layer)
+        markdown = project(options.layer)
     except ProjectionOperationalError as error:
         sys.stderr.write(f"design-context: error: {error}\n")
         return 2
@@ -1927,13 +2203,49 @@ def main(argv: list[str]) -> int:
     except ProjectionError as error:
         sys.stderr.write(f"design-context: error: {error}\n")
         return 1
-    if mode == "estimate":
+    if options.mode == "estimate":
         sys.stdout.write(json.dumps(estimate(markdown), sort_keys=True) + "\n")
         return 0
-    if mode == "output":
-        assert output is not None
+    if options.mode in {"manifest", "preview", "section"}:
         try:
-            write_new_output(output, markdown)
+            index = index_sections(markdown)
+            if not index.order:
+                raise ProjectionOperationalError(
+                    "Markdown projection has no addressable sections"
+                )
+            if options.mode == "manifest":
+                sys.stdout.write(
+                    json.dumps(
+                        section_manifest(markdown, index), indent=2, sort_keys=True
+                    )
+                    + "\n"
+                )
+                return 0
+            if options.mode == "preview":
+                sys.stdout.write(preview(markdown, index, options.depth))
+                return 0
+            assert options.section is not None
+            selected = selected_section(
+                markdown, index, options.section, options.expect_digest
+            )
+        except ProjectionOperationalError as error:
+            sys.stderr.write(f"design-context: error: {error}\n")
+            return 2
+        except ProjectionError as error:
+            sys.stderr.write(f"design-context: error: {error}\n")
+            return 1
+        if options.output is not None:
+            try:
+                write_new_output(options.output, selected)
+            except OSError as error:
+                sys.stderr.write(f"design-context: error: cannot write output: {error}\n")
+                return 2
+            return 0
+        sys.stdout.buffer.write(selected)
+        return 0
+    if options.output is not None:
+        try:
+            write_new_output(options.output, markdown)
         except OSError as error:
             sys.stderr.write(f"design-context: error: cannot write output: {error}\n")
             return 2

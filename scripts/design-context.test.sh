@@ -620,6 +620,103 @@ if estimate != expected:
     raise SystemExit(f"estimate mismatch: {estimate!r} != {expected!r}")
 PY
 
+manifest="$WORK/manifest.json"
+./scripts/design-context "$LAYER" --manifest >"$manifest"
+python3 - "$manifest" "$default" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+raw = pathlib.Path(sys.argv[2]).read_bytes()
+projection = manifest["projection"]
+expected_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+assert manifest["format"] == "design-context-manifest/v1"
+assert projection["sha256"] == expected_digest
+assert projection["metrics"]["utf8_bytes"] == len(raw)
+assert manifest["section_count"] == len(manifest["sections"])
+addresses = [section["address"] for section in manifest["sections"]]
+assert addresses[0] == "1"
+assert len(addresses) == len(set(addresses))
+root = manifest["sections"][0]
+assert root["children"][0] == "1.1"
+section = next(item for item in manifest["sections"] if item["address"] == "1.1")
+assert section["parent"] == "1"
+assert section["subtree"]["sha256"].startswith("sha256:")
+assert section["subtree"]["utf8_bytes"] >= section["direct"]["utf8_bytes"]
+PY
+
+section="$WORK/section-1.1.md"
+./scripts/design-context "$LAYER" --section 1.1 >"$section"
+python3 - "$section" "$default" "$manifest" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+selected = pathlib.Path(sys.argv[1]).read_bytes()
+full = pathlib.Path(sys.argv[2]).read_bytes()
+manifest = json.loads(pathlib.Path(sys.argv[3]).read_text())
+start = full.index(b"## Root overview\n")
+end = full.index(b"## Math and procedure\n")
+expected = full[start:end]
+assert selected == expected
+entry = next(item for item in manifest["sections"] if item["address"] == "1.1")
+assert entry["subtree"]["sha256"] == "sha256:" + hashlib.sha256(selected).hexdigest()
+assert entry["subtree"]["utf8_bytes"] == len(selected)
+PY
+
+projection_digest="$(
+  python3 - "$manifest" <<'PY'
+import json
+import pathlib
+import sys
+
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["projection"]["sha256"])
+PY
+)"
+guarded="$WORK/guarded-section.md"
+./scripts/design-context "$LAYER" --section 1.1 --expect-digest "$projection_digest" >"$guarded"
+cmp -s "$section" "$guarded"
+
+preview="$WORK/preview.md"
+./scripts/design-context "$LAYER" --preview >"$preview"
+grep -q 'Projection digest: sha256:' "$preview"
+grep -q '| 1.1 | Root overview |' "$preview"
+if grep -q '| 1.1.1 |' "$preview"; then
+  echo "design-context: default preview exposed deeper sections" >&2
+  exit 1
+fi
+deep_preview="$WORK/deep-preview.md"
+./scripts/design-context "$LAYER" --preview --depth 3 >"$deep_preview"
+grep -q '| 1.1.1 |' "$deep_preview"
+
+fence_docs="$WORK/fence/docs"
+fence_layer="$fence_docs/design"
+mkdir -p "$fence_layer/.render"
+cp -R "$LAYER/.render/." "$fence_layer/.render/"
+cat >"$fence_layer/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Fence heading]
+#let body = [#code-block("text", "# inside fence\nBody.")]
+EOF
+cat >"$fence_docs/COVERAGE.md" <<'EOF'
+# Coverage map
+EOF
+fence_manifest="$WORK/fence-manifest.json"
+./scripts/design-context "$fence_layer" --manifest >"$fence_manifest"
+python3 - "$fence_manifest" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert manifest["section_count"] == 2
+assert [item["title"] for item in manifest["sections"]] == ["Fence heading", "Coverage map"]
+assert "inside fence" not in [item["title"] for item in manifest["sections"]]
+PY
+
 assert_failure() {
   expected_status="$1"
   label="$2"
@@ -641,6 +738,13 @@ assert_failure() {
     exit 1
   fi
 }
+
+assert_failure 2 stale-section-digest \
+  ./scripts/design-context "$LAYER" --section 1.1 --expect-digest sha256:stale
+assert_failure 2 missing-section \
+  ./scripts/design-context "$LAYER" --section 999.999
+assert_failure 2 duplicate-output \
+  ./scripts/design-context "$LAYER" --output "$WORK/a.md" --output "$WORK/b.md"
 
 saved_context_map="$WORK/docs/CONTEXT-MAP.md.saved"
 mv "$WORK/docs/CONTEXT-MAP.md" "$saved_context_map"

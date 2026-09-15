@@ -292,24 +292,54 @@ Estimate the projection before loading it:
 nix run .#context -- docs/design --estimate
 ```
 
-Emit the same Markdown bytes to standard output, or write them to a new
-temporary path:
+Emit the same complete Markdown bytes to standard output, or write them to a
+new temporary path:
 
 ```sh
 nix run .#context -- docs/design
 nix run .#context -- docs/design --output /tmp/design-context.md
 ```
 
+When the complete projection is too large for the agent's context, inspect its
+manifest or a compact preview before selecting a section:
+
+```sh
+nix run .#context -- docs/design --manifest > /tmp/design-context-manifest.json
+nix run .#context -- docs/design --preview
+nix run .#context -- docs/design --preview --depth 3
+```
+
+The manifest assigns deterministic, manifest-scoped addresses such as `1`,
+`1.1`, and `1.1.2` to headings outside fenced code. Each address records its
+parent, children, direct-content metrics, subtree metrics, and SHA-256 digest.
+The projection record carries the digest that pairs the manifest with the
+source snapshot. The preview shows the same addresses, token ranges, and
+subtree digests as a human-readable table; it shows depth two by default.
+
+Render one exact subtree to standard output or a new file:
+
+```sh
+nix run .#context -- docs/design --section 1.1
+nix run .#context -- docs/design --section 1.1 \
+  --expect-digest sha256:<projection-or-section-digest> \
+  --output /tmp/design-context-1.1.md
+```
+
+`--expect-digest` accepts the manifest projection digest or the selected
+subtree digest. Pass the projection digest when the manifest and section must
+come from one source snapshot. Section output is an exact byte slice of the
+complete projection, so the default and incremental modes cannot drift in
+their Markdown mapping.
+
 The estimate reports UTF-8 bytes, characters, words, lines, and the named
 planning estimates `ceil(utf8_bytes/4)` and `ceil(utf8_bytes/3)`. These values
-are model-independent estimates rather than tokenizer counts. Re-estimate
-after a source change because an estimate and a later projection do not share
-a digest handshake.
+are model-independent estimates rather than tokenizer counts. The manifest
+adds SHA-256 digests without changing the legacy estimate shape.
 
 The Markdown is a temporary reading projection. Typst remains authoritative,
 the PDF remains the published rendered artifact, and the Markdown output is not
 committed. A semantic violation exits 1 without usable output; an invocation,
-runtime, or output-write error exits 2.
+runtime, digest, section-selection, or output-write error exits 2.
 
 ## Development
 

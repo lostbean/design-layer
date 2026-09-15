@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The agent-context projector now exposes a deterministic manifest, depth-limited
+  preview, exact heading-subtree selection, token metrics, SHA-256 digests, and
+  digest guards while preserving the complete projection as the default.
 - The document renderer now uses one restrained visual grammar across pages,
   statements, cards, tables, drawings, legends, and inline semantic furniture.
 - Added the native `#formula` block for displayed equations with optional

@@ -76,6 +76,38 @@ expected = {
 assert data == expected, (data, expected)
 PY
 
+manifest="$WORK/manifest.json"
+"$APP" "$LAYER" --manifest >"$manifest"
+python3 - "$manifest" "$default" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+raw = pathlib.Path(sys.argv[2]).read_bytes()
+assert manifest["format"] == "design-context-manifest/v1"
+assert manifest["projection"]["sha256"] == "sha256:" + hashlib.sha256(raw).hexdigest()
+assert [item["address"] for item in manifest["sections"][:3]] == ["1", "1.1", "1.1.1"]
+PY
+
+section="$WORK/section.md"
+"$APP" "$LAYER" --section 1.1 >"$section"
+grep -q '^## One$' "$section"
+grep -q '^### goal: Ship$' "$section"
+digest="$(
+  python3 - "$manifest" <<'PY'
+import json
+import pathlib
+import sys
+
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["projection"]["sha256"])
+PY
+)"
+guarded="$WORK/guarded.md"
+"$APP" "$LAYER" --section 1.1 --expect-digest "$digest" >"$guarded"
+cmp -s "$section" "$guarded"
+
 assert_exit() {
   expected_status="$1"
   label="$2"

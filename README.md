@@ -359,3 +359,27 @@ check (projecting the schema twice must yield identical bytes).
 - [Reproducible font resolution](docs/migrations/reproducible-fonts.md) covers the embedded-font policy and host migration.
 
 The [changelog](CHANGELOG.md) records unreleased renderer changes.
+
+## Tested README snippets
+
+The `snips` app packages upstream [Snips](https://github.com/cortesi/snips), pinned
+by revision in `nix/snips.nix`. No snippet parser or checker is maintained here.
+
+Keep example code in compiled, tested projects. Mark source regions with
+`// snips-start: example` and `// snips-end: example`, then place
+`<!-- snips: examples/example.gleam#example -->` above the README code fence.
+Snips synchronizes the excerpt; the example project's tests establish behavior.
+When using Prettier, place generated marker/fence pairs in its standard
+`prettier-ignore-start` / `prettier-ignore-end` ranges: Snips requires adjacent
+markers and fences, while Prettier normally inserts a blank line between them.
+Format the source file with its language formatter before synchronizing snippets.
+
+```sh
+nix run .#snips -- --commands deny README.md
+nix run .#snips -- --check --commands deny README.md
+```
+
+Consumers can expose `design-layer.apps.${system}.snips` as `apps.snips` and call
+it directly from CI alongside their normal example tests. The package is also
+available as `design-layer.packages.${system}.snips`. Snippet checking is separate
+from the Typst design check and runs only on explicitly named Markdown files.

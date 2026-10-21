@@ -22,6 +22,7 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        snips = pkgs.callPackage ./nix/snips.nix { };
 
         # The renderer: the typst binary together with a VENDORED,
         # version-exact package set — every direct and transitive package
@@ -442,6 +443,12 @@
 
         # The bundle itself, buildable: `nix build .#gate-bundle` gives the
         # store path an installer or a CI job can reference directly.
+        packages.snips = snips;
+        apps.snips = {
+          type = "app";
+          program = pkgs.lib.getExe snips;
+        };
+
         packages.gate-bundle = gateBundle;
         packages.default = gateBundle;
 
@@ -556,6 +563,7 @@
 
         # `nix flake check` verifies everything is formatted.
         checks.formatting = treefmtEval.config.build.check ./.;
+        checks.snips = snips;
 
         checks.workflow-lint =
           pkgs.runCommand "workflow-lint"

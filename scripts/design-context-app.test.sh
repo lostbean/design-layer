@@ -13,8 +13,7 @@ fi
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/design-context-app.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 LAYER="$WORK/docs/design"
-mkdir -p "$LAYER/.render"
-bash ./scripts/render-project schema/design-schema.json "$LAYER/.render" >/dev/null
+mkdir -p "$LAYER"
 
 cat >"$LAYER/design.typ" <<'EOF'
 #import ".render/designlib.typ": *
@@ -145,11 +144,10 @@ assert_exit 1 semantic-failure "$LAYER" --output "$semantic_output"
 [ ! -e "$semantic_output" ]
 cp "$WORK/design.good.typ" "$LAYER/design.typ"
 
-# The app must reject a stale source-tree projection instead of silently using
-# the bundled library with a source tree whose imports no longer agree.
+# Refresh generated imports from the same bundle that performs the projection.
 printf 'divergence probe\n' >>"$LAYER/.render/native.typ"
 divergent="$WORK/divergent.md"
-assert_exit 2 divergent-library "$LAYER" --output "$divergent"
-[ ! -e "$divergent" ]
+"$APP" "$LAYER" --output "$divergent"
+cmp -s "$default" "$divergent"
 
-echo "design-context-app: bundled app modes, estimates, failures, and divergence are green"
+echo "design-context-app: bundled app modes, estimates, failures, and generated-library refresh are green"

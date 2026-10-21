@@ -1128,6 +1128,7 @@ EOF
     public_env=(env TYPST=/bin/false TYPST_FONT_PATHS="$FONT_DIR"
       TYPST_IGNORE_SYSTEM_FONTS=false TYPST_IGNORE_EMBEDDED_FONTS=true)
     cp "$FONT_LAYER/design-layer.pdf" "$FONT_LAYER/public-clean.pdf"
+    rm -rf "$FONT_LAYER/.render"
     if "${public_env[@]}" "$PUBLIC_RENDER" "$FONT_LAYER" \
       "$FONT_LAYER/design-layer.pdf" >/dev/null 2>&1 &&
       cmp -s "$FONT_LAYER/design-layer.pdf" "$FONT_LAYER/public-clean.pdf"; then
@@ -1137,6 +1138,7 @@ EOF
       fail_line "the public render app did not render the font fixture"
     fi
 
+    printf "stale library\n" >"$FONT_LAYER/.render/native.typ"
     if "${public_env[@]}" "$PUBLIC_CHECK" "$FONT_LAYER" "$FONT_REPO" \
       >/dev/null 2>&1; then
       pass_line "the public check app accepts the fresh ambient-font render"
@@ -1158,6 +1160,27 @@ EOF
       fail_line "the public check app did not report the stale PDF correctly"
     fi
     cp "$FONT_LAYER/public-good.pdf" "$FONT_LAYER/design-layer.pdf"
+
+    NESTED_LAYER="$FONT_REPO/integrations/example/docs/design"
+    mkdir -p "$NESTED_LAYER"
+    cp "$FONT_LAYER/design.typ" "$NESTED_LAYER/design.typ"
+    "$PUBLIC_RENDER" "$NESTED_LAYER" "$NESTED_LAYER/design-layer.pdf" >/dev/null 2>&1
+    rm -rf "$FONT_LAYER/.render" "$NESTED_LAYER/.render"
+    if "$PUBLIC_CHECK" "$FONT_LAYER" "$FONT_REPO" --nested-project integrations/example \
+      >"$WORK/nested-check.out" 2>&1; then
+      pass_line "the public check app prepares root and declared nested libraries"
+    else
+      fail_line "the public check app failed to prepare nested libraries"
+      cat "$WORK/nested-check.out"
+    fi
+    if "$PUBLIC_CHECK" "$FONT_LAYER" "$FONT_REPO" --nested-project ../outside \
+      >"$WORK/invalid-nested.out" 2>&1; then
+      fail_line "the public check app accepted an escaping nested project"
+    elif grep -q "invalid nested project path" "$WORK/invalid-nested.out"; then
+      pass_line "projection preparation preserves nested path validation"
+    else
+      fail_line "the public check app changed the nested path error"
+    fi
   fi
 
   if typst compile --root "$FONT_LAYER" --font-path "$FONT_DIR" \

@@ -56,6 +56,12 @@ Every command below is a `nix run` against the design-layer flake. A host repo
 copies nothing in: the scripts, the schema, and the renderer travel together as
 one pinned bundle, and the host stores only its own sources.
 
+The shared `render`, `check`, and `context` apps prepare the layer-local `.render`
+library from their selected bundle. Forward those apps directly in consumer Nix
+configuration; do not copy a projection wrapper into each repository. `check`
+also prepares layers supplied through its validated `--nested-project` arguments.
+Generated library refresh does not update a stale rendered PDF.
+
 ### Optional README excerpts from tested examples
 
 When a host wants README code to follow its tested example projects, forward

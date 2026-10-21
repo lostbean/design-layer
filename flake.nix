@@ -142,6 +142,7 @@
         # vendored renderer (the typst compile).
         gateRuntime = [
           pkgs.bash
+          pkgs.coreutils
           pkgs.python3
           pkgs.git
           typstRenderer
@@ -164,6 +165,19 @@
         # The store is read-only, so nothing is written into $out at run time —
         # the scripts write their scratch and their output under the TARGET
         # directory, which the caller owns.
+        # Authored imports are layer-relative; render, check and context use the
+        # same selected library for those imports and their own compilation.
+        prepareLayer = ''
+          prepare_layer() {
+            if [ -f "$1/design.typ" ]; then
+              mkdir -p "$1/.render"
+              if [ "$(realpath "$DESIGN_LIB_DIR")" != "$(realpath "$1/.render")" ]; then
+                cp -RL --remove-destination --no-preserve=mode "$DESIGN_LIB_DIR/." "$1/.render/"
+              fi
+            fi
+          }
+        '';
+
         gateApp =
           name: script:
           let
@@ -173,6 +187,10 @@
               text = ''
                 export DESIGN_SCHEMA="''${DESIGN_SCHEMA:-${gateBundle}/schema/design-schema.json}"
                 export DESIGN_LIB_DIR="''${DESIGN_LIB_DIR:-${gateBundle}/render}"
+                ${pkgs.lib.optionalString (script == "design-aggregate" || script == "design-context") ''
+                  ${prepareLayer}
+                  prepare_layer "''${1:-}"
+                ''}
                 exec ${gateBundle}/scripts/${script} "$@"
               '';
             };
@@ -348,6 +366,12 @@
                   nested_seen+=("$nested_project")
                   nested_projects+=("$nested_project")
                   nested_relpaths+=("$nested_value")
+                done
+
+                ${prepareLayer}
+                prepare_layer "$layer_root"
+                for nested_project in "''${nested_projects[@]}"; do
+                  prepare_layer "$nested_project/docs/design"
                 done
 
                 ${gateBundle}/scripts/design-aggregate \

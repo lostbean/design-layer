@@ -428,3 +428,23 @@ and behavioral tests for the source example projects in that job or the existing
 application gate. Snips only detects stale excerpts; it does not compile or test
 them. `--commands deny` disables command-backed snippets. No wrapper script,
 README structure test, or duplicate example test suite is needed.
+
+## Consumer app integration
+
+Forward the pinned shared apps directly from a consumer flake:
+
+```nix
+apps.design-gate-render = design-layer.apps.${system}.render;
+apps.design-gate-check = design-layer.apps.${system}.check;
+apps.design-gate-context = design-layer.apps.${system}.context;
+```
+
+These apps prepare or refresh the generated `.render` library beside the root
+`design.typ` before using it. The selected bundle owns this operation; consumers
+need no projection wrapper or copied bootstrap script. `check` also prepares each
+validated `--nested-project` layer. It still reports a stale PDF without rewriting
+that PDF. All preparation uses local bundled files, without network access.
+
+`DESIGN_LIB_DIR` remains an explicit library override: preparation uses that
+library when supplied. Direct script invocation retains its existing contract
+and does not refresh a divergent layer library automatically.

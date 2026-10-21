@@ -56,6 +56,29 @@ Every command below is a `nix run` against the design-layer flake. A host repo
 copies nothing in: the scripts, the schema, and the renderer travel together as
 one pinned bundle, and the host stores only its own sources.
 
+### Optional README excerpts from tested examples
+
+When a host wants README code to follow its tested example projects, forward
+`design-layer.apps.${system}.snips` as `apps.snips` in its per-system flake outputs.
+Use the existing `github:lostbean/design-layer/main` input and commit its lockfile;
+do not copy a parser or checker into the host.
+
+Mark a source region with `// snips-start: example` and `// snips-end: example`
+(using the source language's comment syntax). Place
+`<!-- snips: examples/basic/src/main.gleam#example -->` immediately before its
+README code fence. Paths are relative to that README. With Prettier, wrap the
+marker and fence in its standard `prettier-ignore-start` / `prettier-ignore-end`
+range, with blank lines inside the range boundaries; Snips requires adjacency
+between its marker and the fence.
+
+Format and test the source example, then synchronize with
+`nix run .#snips -- --commands deny README.md`. In CI, run
+`nix run --no-update-lock-file .#snips -- --check --commands deny README.md`,
+listing nested READMEs explicitly as additional arguments. Keep the examples in
+the normal compilation and behavioral test gate. Snips verifies excerpt freshness
+only; it is independent of the Typst design check and does not establish example
+correctness. Use the shared app directly, without a local checker script.
+
 ---
 
 ## 1 · The artifact set and where it lives

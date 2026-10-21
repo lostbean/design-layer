@@ -383,3 +383,48 @@ Consumers can expose `design-layer.apps.${system}.snips` as `apps.snips` and cal
 it directly from CI alongside their normal example tests. The package is also
 available as `design-layer.packages.${system}.snips`. Snippet checking is separate
 from the Typst design check and runs only on explicitly named Markdown files.
+
+In an existing flake, add the input and forward the app inside its per-system
+outputs (reuse an existing design-layer input):
+
+```nix
+inputs.design-layer.url = "github:lostbean/design-layer/main";
+# Inside the outputs for each system, with design-layer in scope:
+apps.snips = design-layer.apps.${system}.snips;
+```
+
+Commit `flake.lock` to keep CI and development on the same revision. Use
+`nix flake update design-layer` to adopt a newer main revision deliberately.
+
+For example, a README excerpt from `examples/basic/src/main.gleam` uses:
+
+````markdown
+<!-- prettier-ignore-start -->
+
+<!-- snips: examples/basic/src/main.gleam#example -->
+```gleam
+pub fn greeting() {
+  "Hello"
+}
+```
+
+<!-- prettier-ignore-end -->
+````
+
+The source region encloses the complete `greeting` function. Use the source
+language's comment syntax for region markers. Paths are relative to the Markdown
+file; omit `#example` to include the whole file. Edit and format the source, then
+run Snips in update mode and commit both files. Do not edit generated excerpts.
+
+Add the check directly to an existing CI job, naming every managed README:
+
+```yaml
+- name: Check README snippets
+  run: nix run --no-update-lock-file .#snips -- --check --commands deny README.md packages/example/README.md
+```
+
+Replace the example paths with the repository's actual files. Keep compilation
+and behavioral tests for the source example projects in that job or the existing
+application gate. Snips only detects stale excerpts; it does not compile or test
+them. `--commands deny` disables command-backed snippets. No wrapper script,
+README structure test, or duplicate example test suite is needed.

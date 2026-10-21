@@ -62,6 +62,8 @@ assuming the sandbox has it.
 nix develop                       # the dev shell: lefthook, typst, pdftotext, python3
 nix flake check                   # formatting, the self-tests, projection determinism
 nix fmt                           # treefmt: nixfmt, prettier, shfmt, ruff-format
+nix run .#snips -- --commands deny README.md          # synchronize opted-in snippets
+nix run .#snips -- --check --commands deny README.md  # check freshness only
 
 nix run .#render  -- <layer-root> <out.pdf> [--check]   # #aggregate: old name
 nix run .#check   -- <layer-root> <repo-root>

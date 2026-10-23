@@ -7,103 +7,95 @@ status: ship
 
 # Document design
 
-## Purpose and authority
+## Contract
 
-- Produce a shared mental model for a reader unfamiliar with the repository. Explain the use case, the abstractions that address it, and how those abstractions cooperate. The PDF and agent Markdown must communicate the same claims.
-- Code is the source of truth for implemented behavior and structure. Established owner intent supplies goals, non-goals, principles, and reasons that code cannot establish. Never infer an intentional guarantee merely from one implementation path or passing test.
-- This skill owns documentation selection, explanation, and representation. It does not choose a new architecture, improve the implementation, or judge whether the system follows a preferred design philosophy. Describe an unconventional design faithfully; report a consequential uncertainty separately.
-- Consult the bundled [design-document-syntax](../design-document-syntax/SKILL.md) when authoring or checking the layer. It owns file homes, Typst bindings, block signatures, declared vocabularies, and mechanical contracts. Use the host's pinned version; do not copy or reinvent those contracts here.
+- Give humans and code agents the same architectural mental model: purpose, boundaries, principal concepts, and their cooperation. Code is authoritative for implemented detail; established owner intent supplies goals, constraints, principles, and rationale.
+- Document the system faithfully. This skill does not choose its architecture, redesign its implementation, install workflows, or authorize broad document deletion. Separate implemented facts, accepted unbuilt intent, and unresolved inference; never infer a guarantee from a dependency or one passing test.
+- Use the bundled [design-document-syntax](../design-document-syntax/SKILL.md) for file homes, Typst calls, vocabularies, and mechanical checks. Follow the host's pinned version; do not duplicate its contracts here.
 
-## Gather evidence
+## Workflow
 
-- Read repository instructions, the existing layer, public entry points, and relevant tests and configuration. Trace a representative use case through the code to identify actual boundaries, responsibility, state ownership, and external interactions. Expand investigation only where a missing fact changes the architectural explanation.
-- Distinguish implemented facts, established intent, and unresolved inference. Use code and configuration for implementation claims, tests as supporting evidence, and supplied requirements or decision records for rationale. A package dependency alone does not establish its architectural role.
-- Ask the owner only for missing intent that materially changes the explanation. Continue documenting supported facts while an answer is pending. Do not invent business goals, non-goals, historical rationale, domains, or guarantees to complete a template.
-- When an existing document contradicts the code, describe the implemented state and preserve the discrepancy explicitly. Do not silently discard accepted intent or present an unbuilt proposal as current behavior. Use the existing pending mechanism for material uncertainty or planned changes; preserve decision history.
-- Respect the requested scope. A documentation request does not authorize implementation changes, new design decisions, repository-wide document deletion, or workflow installation.
+```mermaid
+flowchart TD
+    A[Gather evidence and establish scope] --> B[Describe consumers, use cases, and system boundary]
+    B --> C[Explain the current view using the checklist]
+    C --> D{Does a consequential architectural question remain?}
+    D -->|Yes, evidence is missing| E[Investigate or record uncertainty]
+    E --> C
+    D -->|Yes, internal cooperation needs explanation| F[Select a child view and name its question]
+    F --> C
+    D -->|No, or only implementation detail remains| G[Stop this branch and link to code]
+    G --> H{Other selected views remain?}
+    H -->|Yes| C
+    H -->|No| I[Reconcile views and validate PDF and Markdown]
+    I -->|Architectural explanation is incomplete| C
+    I -->|Complete| J[Report sources, outputs, checks, and limits]
+```
 
-## Select the content
+### 1. Gather evidence
 
-- Standardize the questions below across projects. Group answers into concise sections using the pinned syntax's section guidance. The document's opening summary should establish purpose before asking the reader to interpret detailed constraints.
+Read repository instructions, existing documentation, public entry points, tests, and configuration. Trace a representative consumer use case through the implementation; investigate further only where a missing fact changes the explanation. Record supported claims, their evidence, and consequential uncertainties without creating a second implementation ledger.
 
-| Question                                        | Include                                                                                                  | Stop before                                            |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| What is this system for?                        | Users or callers, problem, principal use cases, intended outcome, deliberate exclusions                  | Feature backlog or exhaustive requirements             |
-| Where does it begin and end?                    | System boundary, external actors and systems, meaningful inputs and outputs, trust boundaries            | Endpoint and payload catalogues                        |
-| What shapes the solution?                       | Established goals, constraints, invariants, principles, and their reasons                                | Generic quality slogans or a new design philosophy     |
-| How is it organized?                            | Major responsibilities, ownership, dependencies, and why the decomposition matters                       | File trees, classes, functions, or every module        |
-| What concepts must a reader understand?         | Principal abstractions, domain concepts, meaningful relationships, state ownership, important lifecycles | Every entity, field, status, or database table         |
-| How do the parts deliver the use case?          | One representative path; additional failure or recovery paths when architecturally significant           | Exhaustive behavior rules or handler-by-handler traces |
-| What should a newcomer preserve or investigate? | Consequential trade-offs, limitations, unresolved claims, and selected code or reference entry points    | Runbooks, API references, or copied decision history   |
+Ask only for missing owner intent that materially changes the explanation; continue supported work meanwhile. When code contradicts accepted intent, describe the implemented state and preserve the discrepancy through the existing pending mechanism. Preserve decision history and do not invent rationale or ADRs.
 
-- Include a detail when omitting it would cause a reader to misunderstand a responsibility, boundary, guarantee, or major decision. Technical specificity is justified when it explains the architecture; abstraction does not require concealing a consequential technology choice.
-- Stop decomposition when a reader can explain the part's role, important interactions and constraints, and where to investigate further. Do not require that a reader could rebuild the part from documentation alone. A child with an interface or state does not automatically deserve its own section.
-- Aim for an overview readable in a few pages. Treat length as editorial guidance, never as a gate or a reason to hide essential complexity. Add a focused deeper view only for a named architectural question; keep the overview understandable without it.
-- Name major system responsibilities at a consistent level. A domain boundary, deployment unit, source module, and storage boundary are different relationships; do not force them into one hierarchy or assume each system has multiple domains.
-- Preserve one canonical home for each explanation and project term. Link to implementation detail instead of transcribing it. Use a few stable paths to orient investigation; avoid a symbol-by-symbol mapping that requires updates after ordinary refactoring.
+### 2. Establish the system view
 
-## Required use cases, scope, and domain model
+Always include these clearly labeled sections, placed within the pinned syntax's section structure:
 
-- Always include a clearly labeled **Use cases and scope** section for the documented library or application. Introduce it before the internal architecture; it may be a subsection within the pinned syntax's section structure.
-- Describe the system from the user or consumer's perspective. Identify who uses it, the problem they bring, the principal interactions, and the outcomes they expect. For a library, include the integrating developer or calling system; for an application, include the relevant human users or external callers.
-- State what the system provides, what the user or host must supply, and what remains outside its scope. Describe representative use cases through the consumer's goal, meaningful input or action, and observable outcome. Keep API signatures, exhaustive scenarios, and feature backlogs in their authoritative references.
-- Always include a clearly labeled **Domain model** section. Describe the main concepts in the problem being solved, their meaning, and their relationships. Include identity, ownership, state, or lifecycle only where it explains an important property.
-- Keep the domain model high-level or focus it on the main elements needed to understand the principal use cases. A library's domain may consist of inputs, transformations, results, and errors; do not invent business entities, persistence, or multiple domains. A component inventory or glossary alone does not explain the relationships between domain concepts.
-- Express the model with concise prose, a compact table, or a semantic diagram. Connect its concepts to the use cases and explain how the principal abstractions cooperate to produce the consumer's outcome. Leave fields, classes, database schemas, and exhaustive state definitions in code unless a detail changes the architectural explanation.
+- **Use cases and scope:** identify users or consumers, their problems, representative inputs or actions, and observable outcomes. State what the system provides, what the user or host supplies, external dependencies and trust boundaries, and deliberate exclusions. Put this before internal architecture; for a library, include the integrating developer or calling system.
+- **Domain model:** explain the main problem-domain concepts and their relationships, connected to those use cases. Use a high-level model or focus on the main elements; a glossary or component inventory alone is insufficient. A library may model inputs, transformations, results, and errors without business entities or persistence.
 
-## Adapt to the system
+Establish goals, non-goals, constraints, invariants, and design principles from evidence. Show how the system interacts with the outside world before decomposing it. Keep the overview readable in a few pages and understandable without opening deeper views; length is guidance, not a gate.
 
-- Select these additional prompts by actual characteristics. They supplement the required Use cases and scope and Domain model sections; they are composable views, not mutually exclusive templates or further mandatory sections. Record an important absence when it prevents misunderstanding, such as a library that owns no durable state.
+### 3. Explain and selectively refine
 
-| Characteristic   | Architectural questions                                                                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Library          | What does the host supply? What are the conceptual operations, extension points, resource lifetimes, side effects, and compatibility commitments?                   |
-| Frontend         | Which journeys organize the interface? Who owns local and server state? Which rendering, accessibility, offline, or synchronization constraints shape the solution? |
-| Backend          | Who calls it? Which responsibilities and authorization decisions does it own? Where are transaction and failure boundaries? Which work is asynchronous?             |
-| Persistent state | Who owns durable facts? What is derived? Which consistency, lifecycle, deletion, and recovery rules affect the system model?                                        |
-| Distributed work | What delivery, ordering, duplicate-handling, coordination, and reconciliation assumptions are essential to understanding outcomes?                                  |
-| CLI or pipeline  | What enters and leaves? Which processing stages matter? Which side effects, reproducibility constraints, and restart behavior shape use?                            |
+Apply the checklist to the whole system, then repeat it for each selected domain, responsibility, or abstraction. At a child view, the outside world includes its siblings and parent. Consider every question, but document only relevant answers; explain an important absence, such as no durable state, instead of filling empty template sections.
 
-- Include an entity or lifecycle only when its identity, ownership, or transitions explain an important property. Explain principal concepts in domain language without manufacturing aggregates or state machines to match available widgets.
+| Question                   | Capture at this view                                                                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Purpose and boundary       | Whose outcome does this part serve? What enters, leaves, or stays outside? What does it own or depend on?                                                          |
+| Concepts and data          | What are the principal concepts, relationships, and validity rules? What is authoritative, derived, or transient? Where is incoming data interpreted or validated? |
+| State and evolution        | Who owns state? How can it change, and who decides legal transitions? Is the relevant model a state machine, reducer/store, workflow, or another abstraction?      |
+| Persistence and durability | What survives restart, where, and under whose authority? Which transaction, consistency, concurrency, retention, or recovery boundaries shape the guarantees?      |
+| Actions and control        | What triggers work: a user action, call, event, schedule, or job? Who decides, coordinates, and performs effects? What is synchronous or asynchronous?             |
+| Flow and cooperation       | How do the abstractions combine to deliver a representative outcome? Trace important data, control, and state changes across boundaries.                           |
+| Failure and constraints    | What happens on refusal, partial failure, duplication, or interruption? Which trust, ordering, retry, idempotency, or operational assumptions affect the model?    |
+| Rationale and navigation   | Which supported trade-offs or principles explain this structure? What remains uncertain, and where should a reader investigate in code?                            |
 
-## Choose a representation
+Describe the actual modeling approach and its consequences, not just its technology name. For example, explain which actions enter a Redux-style store, how reducers evolve state, and where effects happen; naming Redux alone does not explain the model. For durable background work, explain what is persisted, what triggers execution, and which retry or recovery assumptions matter.
 
-- Begin with the reader's question and select the carrier that answers it. Use existing semantic widgets before custom drawings. The renderer's vocabulary is a set of available representations, not a checklist of required document content.
+**Refine only for a named architectural question.** First describe sibling responsibilities at a consistent level and their cooperation. Select a deeper view when hiding its internal abstractions would obscure ownership, a guarantee, a significant lifecycle, or how the outcome is produced. Repeat the checklist there, then reconcile the result with its parent and siblings; do not descend through every branch automatically.
 
-| Information                                 | Representation                                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Purpose, rationale, limits                  | Short prose and applicable goal, no-goal, principle, or invariant blocks                   |
-| Responsibilities and dependencies           | `diagram`; label relationships and identify external participants                          |
-| A short inventory of major responsibilities | `components`, or a compact table                                                           |
-| Important concepts and relationships        | Prose or a small model diagram; `entity` only when its structured fields add understanding |
-| An important lifecycle                      | `state-machine`, with its meaning and abstraction limits explained                         |
-| Cooperation over time                       | `sequence`, or a short numbered walkthrough                                                |
-| A comparison                                | A table; a chart only for meaningful quantitative evidence                                 |
-| A drawing no semantic carrier expresses     | `figure-block` with a raw `typst` body; Markdown retains the source                        |
+**Stop when the reader can explain the role, concepts, interactions, state ownership, and important constraints, and knows where to investigate further.** Do not require reconstruction from documentation alone. Functions, classes, fields, endpoint catalogues, retry constants, and full schemas normally belong in code or reference documentation; include one only when it changes the architectural explanation. An interface, state, or directory does not by itself justify another view.
 
-- Use solved diagram layout by default. Use `diagram-native` when deliberate positioning conveys meaning. Keep ownership, deployment, and temporal views separate when combining them would obscure the relationships.
-- Give each drawing one question, a readable scope, and meaningful labels. Explain consequential delivery or failure assumptions in adjacent text; an arrow alone does not establish them. Use color only with labels or other marks that survive grayscale.
-- Custom figures with raw `typst` bodies render as drawings in PDF and fenced source in Markdown. Explain the drawing's architectural meaning in its caption or adjacent prose; the source preserves the drawing but does not replace that explanation. Ordinary evaluated figure bodies and embedded SVGs remain unsupported by the Markdown projector.
-- Ensure Markdown carries every claim communicated visually. Inspect its actual projection, including direction, boundaries, transition meaning, and any fenced figure source. Use supported semantic carriers when they express the information directly.
-- Add a new widget only for a recurring information need that existing carriers cannot represent faithfully. A new widget needs a defined meaning, a Markdown representation, validation contracts, and gallery coverage. Do not expand the renderer as part of a documentation task without that scope being requested.
+Domains, deployment units, storage boundaries, and source modules are different relationships. Do not force them into one hierarchy or invent domains, aggregates, state machines, or databases to match available widgets. Give shared concepts one canonical home and link to them rather than duplicating their explanation. Recursion need not create another file or repeat the system's required sections verbatim.
 
-## Keep the layer useful as code changes
+Adapt the questions to the system: libraries emphasize host responsibilities, resource lifetimes, extension points, side effects, and compatibility; frontends emphasize user journeys, local/server state, rendering, accessibility, offline behavior, and synchronization; backends emphasize callers, authorization, transactions, and asynchronous work. Pipelines emphasize stage inputs, outputs, side effects, reproducibility, and restart behavior. These are lenses, not mandatory architectures.
 
-- Update the layer when purpose, responsibility, ownership, major interaction, architectural constraint, or consequential trade-off changes. Ordinary renames, internal helper extraction, and nonarchitectural field additions should normally leave the explanation unchanged.
-- Keep current architecture distinct from proposed changes and historical decisions. Reuse the layer's declared pending and decision artifacts instead of introducing a second plan or implementation ledger. Do not fabricate an ADR for rationale discovered only by inference.
-- When scope reduction removes detail, preserve unique rationale, important guarantees, and incoming references. Do not discard architectural meaning merely because it is technical. Follow the owner of a generated artifact rather than editing its output.
+### 4. Represent and reconcile
 
-## Validate the result
+Choose the smallest representation that answers the question:
 
-- Confirm that the Use cases and scope and Domain model sections are present in both PDF and Markdown. Check that they identify users or consumers, their goals and observable outcomes, scope boundaries, and the main domain concepts and relationships.
-- Review the document as a newcomer: can the reader connect a consumer use case to the domain model and the cooperating abstractions, explain important constraints, and find where to investigate a change? A passing format gate cannot answer these questions.
-- Check selected implementation claims against their evidence. Label unresolved claims honestly. A well-formed invariant block does not prove that the implementation enforces the invariant.
-- Render through the host's pinned renderer and run its declared gate. Inspect affected PDF pages at normal reading scale for legibility, clipping, broken relationships, and missing context. Report an unavailable check or inspection rather than claiming it passed.
-- Produce and inspect the semantic Markdown through the pinned `context` app. Use the manifest and exact section extraction for large layers. Check that PDF and Markdown preserve the same architectural claims and canonical terminology.
-- Report the authored sources, rendered outputs, checks actually performed, and remaining uncertainties. Do not treat successful documentation as acceptance of the architecture or verification of every implementation behavior.
+| Meaning                                     | Carrier                                                                          |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| Purpose, rationale, limits                  | Short prose and applicable foundation blocks                                     |
+| Boundaries, responsibilities, relationships | `diagram`; `components` or a table for a short inventory                         |
+| Domain model                                | Prose, table, or semantic diagram; `entity` only when its structured fields help |
+| State evolution                             | `state-machine`, with abstraction limits explained                               |
+| Cooperation over time                       | `sequence` or a short walkthrough                                                |
+| Comparisons                                 | Table; chart only for meaningful quantitative evidence                           |
+| Otherwise inexpressible drawing             | `figure-block` with a raw `typst` body                                           |
 
-## Depth example
+Prefer semantic widgets and solved layout; use `diagram-native` when deliberate positioning conveys meaning. Give each drawing one question, labeled relationships, and a clear scope. Keep ownership, deployment, and temporal views separate when combining them obscures meaning; labels must carry meaning without color. Explain delivery and failure assumptions in adjacent prose.
 
-- For a payment application, document that Orders owns the purchase lifecycle, Payments owns settlement, confirmation advances an order, and repeated requests must not create repeated charges when those claims are supported. Show the collaboration and identify where to inspect each responsibility.
-- Leave table columns, handler names, retry constants, and the full provider API in their authoritative implementation or reference. Include a specific retry or storage constraint only if it changes the architectural guarantee or explains a consequential trade-off.
-- For a parser library, explain the input-to-result model, the host's responsibilities, error semantics, and whether parsing owns state or performs I/O. A service diagram, database model, or business-domain partition is unnecessary unless the library actually has those characteristics.
+Raw Typst figures become drawings in PDF and fenced source in Markdown; captions or prose must explain their architectural meaning. Evaluated figure bodies and embedded SVGs remain unsupported by the Markdown projector. Inspect actual projection rather than assuming visual claims survive. New widgets require explicit scope, recurring need, defined semantics, Markdown representation, validation, and gallery coverage.
+
+Walk a representative use case across the completed views. Resolve inconsistent names, boundaries, owners, and guarantees; add failure or recovery paths where they change the architectural understanding. Preserve unique rationale and incoming references when consolidating material. Update generated artifacts through their owner.
+
+### 5. Validate and maintain
+
+- Confirm **Use cases and scope** and **Domain model** appear in both PDF and Markdown. A newcomer should be able to connect consumer outcomes to domain concepts and cooperating abstractions, including significant state and failure boundaries.
+- Check claims against evidence and label remaining uncertainty. Review each deeper view's named question and stopping point; remove duplicate or implementation-level detail without losing consequential meaning.
+- Render with the pinned tools and run the declared gate. Inspect affected PDF pages for legibility, clipping, and broken relationships; inspect Markdown for the same claims, directions, boundaries, and transitions. Use manifests and exact sections for large projections.
+- Report authored sources, rendered outputs, checks performed, and limitations. An unavailable check is not a pass; well-formed documentation neither accepts the architecture nor proves the code implements its claims.
+- On later changes, revisit affected views and their parent interactions when purpose, ownership, abstractions, constraints, or important cooperation changes. Ordinary refactoring should usually leave the layer unchanged. Keep current architecture, proposals, and history distinct through existing artifacts.

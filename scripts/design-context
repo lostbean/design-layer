@@ -1610,7 +1610,22 @@ def semantic_markdown(
     if kind == "pending-ledger":
         level = heading_level if heading_level is not None else 3
         return _pending_markdown(value, path, level, term_titles, context_names)
-    if kind in ("embedded-svg", "figure-block"):
+    if kind == "figure-block":
+        source = value.get("body")
+        if not isinstance(source, dict) or source.get("func") != "raw" or source.get("lang") != "typst":
+            raise ProjectionError(
+                f"figure-block at {path} needs a raw typst body to preserve its source; "
+                "evaluated content cannot be reconstructed"
+            )
+        uses = value.get("uses")
+        if not isinstance(uses, list) or not all(isinstance(item, str) for item in uses):
+            raise ProjectionError(f"figure-block packages are not an array of names at {path}.uses")
+        caption = field_text(value.get("caption"), f"{path}.caption", term_titles, context_names)
+        return (
+            f"\n\nFigure: {caption}\n\nPackages: {', '.join(uses) or '(none)'}\n"
+            + markdown_code_block("typst", source, path)
+        )
+    if kind == "embedded-svg":
         raise ProjectionError(f"semantic block kind {kind!r} is not representable")
     if kind == "points":
         items = value.get("items")

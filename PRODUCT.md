@@ -15,13 +15,17 @@ and reasoning about an unfamiliar or evolving system.
 ## Product Purpose
 
 The design layer turns a system's architecture into a durable, navigable model.
-It should disclose complexity progressively: establish the whole-system picture,
-show the recurring principles and patterns that shape it, then let the reader
-descend through systems, domains, components, interactions, and implementation-
-relevant detail without losing orientation.
+It establishes purpose and the whole-system picture, then explains the principal
+abstractions, their cooperation, and the constraints that shape the solution.
+It stops when a newcomer can understand the architecture and navigate to the
+code for detail. Deeper views answer specific architectural questions rather
+than reproduce the implementation.
 
-Success means that a technical reader can understand both how the system fits
-together and why its parts repeatedly take the forms they do.
+Success means that a technical reader can understand how the system fits
+together, why its important decisions were made, and where to investigate a
+change. Code is authoritative for implemented behavior; established intent
+supplies goals and rationale that code cannot establish. Documentation guidance
+applies to applications and libraries without prescribing their architecture.
 
 ## Positioning
 

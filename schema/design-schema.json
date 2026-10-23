@@ -123,7 +123,7 @@
     "coverage_map": {
       "what": "the answer to 'is any part of the system blind to the design'. A table listing every meaningful system part with a status and a pointer. The STATUSES are declared here because the renderer validates them: a native coverage() row carries one of these values, and a row that is not `captured` states its reason, so absence is a recorded decision rather than an accident",
       "statuses": {
-        "captured": "a design unit describes this part at reproduction grade — the row links the owning design-document section or context",
+        "captured": "a design unit explains this part at architectural scope and links to its owning section; implementation detail remains in code",
         "standard": "intentionally not detailed — evident boilerplate the owner chose not to design (conventional dev tooling, CI, generated files). A recorded, revisitable decision, not a gap. The row states WHY it is standard.",
         "out-of-scope": "not a designed subsystem at all (license, .gitignore, vendored third-party). The row says so."
       }
@@ -143,7 +143,7 @@
         "L3": "amber",
         "L4": "violet"
       },
-      "note": "the depth labels a diagram declares itself at. The design layer is a recursively self-similar tree of units — a unit is the same shape at every altitude — so an altitude is a label on ONE node type rather than a fixed number of different things. The ladder is OPEN: any `L<n>` for a positive integer n is a legal altitude, per altitude_pattern, because a tree that recurses until its unit passes the reproduction test cannot have its depth capped by a vocabulary. `altitudes` lists the NAMED default rungs — L1..L4, the ladder a layer uses unless its recursion runs deeper — and `altitude_names` and `altitude_tints` declare the name and the accent of each named rung; every tint named here must be a declared design_doc.accents value. A rung past the named ones is legal and unnamed: it renders with its level number in place of a name, and its accent is chosen from the declared accents by level number, so the same altitude always draws the same colour. The renderer requires the label on every diagram: a drawing whose altitude is unstated leaves a reader unable to tell which zoom level they are looking at, and the tint keyed to it makes the level legible before the caption is read"
+      "note": "the depth labels a diagram declares itself at. The design layer is a recursively self-similar tree of units — a unit is the same shape at every altitude — so an altitude is a label on ONE node type rather than a fixed number of different things. The ladder is OPEN: any `L<n>` for a positive integer n is a legal altitude, per altitude_pattern, because a focused architectural view may need another level without requiring every project to use it. `altitudes` lists the NAMED default rungs — L1..L4, the ladder a layer uses unless its recursion runs deeper — and `altitude_names` and `altitude_tints` declare the name and the accent of each named rung; every tint named here must be a declared design_doc.accents value. A rung past the named ones is legal and unnamed: it renders with its level number in place of a name, and its accent is chosen from the declared accents by level number, so the same altitude always draws the same colour. The renderer requires the label on every diagram: a drawing whose altitude is unstated leaves a reader unable to tell which zoom level they are looking at, and the tint keyed to it makes the level legible before the caption is read"
     }
   },
   "design_doc": {
@@ -178,6 +178,7 @@
             "contract",
             "coverage",
             "ctx",
+            "figure-block",
             "declare-vocabulary",
             "diagram",
             "diagram-native",
@@ -231,7 +232,7 @@
             "design-doc",
             "how-to-read"
           ],
-          "unrepresentable": ["embedded-svg", "figure-block"]
+          "unrepresentable": ["embedded-svg"]
         }
       },
       "measurement": "measure the exact Markdown bytes produced by the same pipeline during each estimate invocation; report UTF-8 bytes, Unicode characters, whitespace-delimited words, lines, likely_tokens=ceil(UTF-8 bytes/4), and conservative_tokens=ceil(UTF-8 bytes/3), with both formulas named as model-independent planning estimates rather than exact tokenizer counts; the estimator performs no model lookup and has no model-specific tokenizer dependency; no digest handshake spans estimate and output, so callers re-estimate after source changes"
@@ -263,7 +264,7 @@
       "sequence": "a message sequence — what happened between parties, in time order. REQUIRED: `participants` as ordered (id, label, shape) entries, and `steps` built from the sequence constructors. Carries what a node-and-edge drawing cannot state: a participant active for only part of the exchange, a branch taken under a condition, a repeated block, an optional block, and notes. A message naming an undeclared participant is a hard failure, checked through nested groups as well as at the top level. NO ALTITUDE: a sequence is ordered by time, not by containment",
       "stat-grid": "a strip of magnitudes read as a set — a KPI row; attrs: cols optional (default 3). Body is NOT prose: it is the nested `stat-tile` entries, each carrying value= (the number, abbreviated for magnitude) and label= (what it counts). The tile is the ONE nested kind with no block of its own: the tiles are passed positionally into the grid because they render as cells of one grid rather than as independent blocks, so the grid is the projected unit. A tile states a fact; a trend is a chart",
       "mermaid": "structure diagrams — a node-and-edge graph handed to a layout-solving graph renderer, where the author declares nodes and edges and never coordinates. A MESSAGE SEQUENCE AND A STATE MACHINE ARE NOT THIS KIND: each has its own block (`sequence`, `state-machine`) over its own carrier, because each carries constructs a node-and-edge graph cannot state — activation and branching for one, an initial marker and accepting states for the other. Validated at build time — a syntax error fails the gate, never the reader. Convention: in-domain nodes tinted with the context accent, external nodes drawn dashed. A diagram is ALWAYS drawn by its carrier: an authored design document never contains renderer markup, and there is no verbatim-passthrough form. A drawing no block covers earns a new block kind with its own contract, marked in the source as the exception it is — never a silent raw mode of an ordinary diagram fence.",
-      "figure": "a self-contained drawing no diagram carrier covers, carrying renderer markup directly. REQUIRED: a caption, and a `uses` list naming the packages the drawing imports. The `uses` set is restricted to the packages the framework VENDORS — an import outside that set is a violation, so a design layer stays offline-reproducible. Renders inside a visibly distinct frame naming those packages, so the exception is legible in the rendered document as well as the source. It is a FIGURE, not an escape hatch: not renderer markup in ordinary prose, not a way to restyle a statement block, and never a second path for a node-and-edge graph, which belongs in a diagram fence where the gate validates it and the projected tokens colour it"
+      "figure": "A raw typst body is evaluated as self-contained markup for PDF and retained as a fenced typst code block with caption and package names for Markdown. Ordinary evaluated content remains valid for PDF but cannot project because its original source is unavailable. Source errors fail both outputs. A self-contained drawing no diagram carrier covers, carrying renderer markup directly. REQUIRED: a caption, and a `uses` list naming the packages the drawing imports. The `uses` set is restricted to the packages the framework VENDORS — an import outside that set is a violation, so a design layer stays offline-reproducible. Renders inside a visibly distinct frame naming those packages, so the exception is legible in the rendered document as well as the source. It is a FIGURE, not an escape hatch: not renderer markup in ordinary prose, not a way to restyle a statement block, and never a second path for a node-and-edge graph, which belongs in a diagram fence where the gate validates it and the projected tokens colour it"
     },
     "entity_contract": {
       "what": "the entity block's two closed vocabularies, declared as data because the renderer validates against them and colours each member. The `entity` block declaration above states what each member MEANS; these arrays state what the members ARE, and are what the projector reads",
@@ -346,7 +347,7 @@
       "Foundation — goals, no-goals, invariants, principles: each in its block kind, in that order",
       "Pending updates — immediately after the foundation; omitted when empty",
       "System at a glance",
-      "Progressive breakdown, gross to fine — recursing through subsections until every unit passes the completeness test",
+      "Progressive breakdown — major responsibilities and selective deeper views that explain architectural questions; implementation detail remains in code",
       "End-to-end walkthrough"
     ],
     "behavior_contract": {

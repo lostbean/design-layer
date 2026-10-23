@@ -92,6 +92,14 @@
             + "vendor (allowed: " + VENDORED.join(", ") + ")")
     }
   }
+  // Raw Typst is authored once: evaluate it for PDF, retain it for Markdown.
+  // Ordinary content has already been evaluated and cannot recover its source.
+  let drawing = if type(body) == content and body.func() == raw {
+    if body.lang != "typst" {
+      _fail("figure", "raw source must declare the typst language")
+    }
+    eval(body.text, mode: "markup")
+  } else { body }
   if context-projection {
     return semantic("figure-block", fields: (
       caption: caption, uses: uses, body: body,
@@ -103,7 +111,7 @@
       #text(size: 6.5pt, fill: MUTED, weight: "bold", tracking: 0.4pt,
             "NATIVE FIGURE · " + uses.join(", "))
       #v(4pt)
-      #align(center, body)
+      #align(center, drawing)
       #v(4pt)
       #text(size: 7.5pt, fill: MUTED, style: "italic", caption)
     ])

@@ -898,20 +898,74 @@ if [[ -e $duplicate_target_output ]]; then
   exit 1
 fi
 
-figure_layer="$WORK/figure-layer"
+figure_layer="$WORK/figure-docs/design"
 mkdir -p "$figure_layer/.render"
+cp "$WORK/docs/COVERAGE.md" "$figure_layer/../COVERAGE.md"
 cp -R "$LAYER/.render/." "$figure_layer/.render/"
 cat >"$figure_layer/design.typ" <<'EOF'
 #import ".render/designlib.typ": *
 #let title = [Unrepresentable figure]
-#let body = [#figure-block(caption: [Figure meaning], uses: ("cetz"))[Figure body.]]
+#let body = [#figure-block(caption: [Figure meaning], uses: ("cetz",))[Figure body.]]
 EOF
 figure_output="$WORK/figure.md"
 assert_failure 1 figure-block ./scripts/design-context "$figure_layer" --output "$figure_output"
+grep -q "needs a raw typst body" "$WORK/figure-block.stderr"
 if [[ -e $figure_output ]]; then
   echo "design-context: figure block created a usable output file" >&2
   exit 1
 fi
+
+# One source drives a visible PDF drawing and the exact fenced Markdown.
+cat >"$figure_layer/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Source figure]
+#let body = [#figure-block(caption: [Figure meaning], uses: ("cetz",),
+  ````typst
+  #import "@preview/cetz:0.4.2"
+  // A literal ``` marker must not close the Markdown fence.
+  #cetz.canvas({
+    import cetz.draw: *
+    circle((0, 0), radius: 1)
+    content((0, 0), [FIGURE DRAWING])
+  })
+  ````
+)]
+EOF
+./scripts/design-context "$figure_layer" --output "$figure_output"
+python3 - "$figure_output" <<'PYFIG'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+expected = '''````typst
+#import "@preview/cetz:0.4.2"
+// A literal ``` marker must not close the Markdown fence.
+#cetz.canvas({
+  import cetz.draw: *
+  circle((0, 0), radius: 1)
+  content((0, 0), [FIGURE DRAWING])
+})
+````'''
+assert expected in text, text
+assert "Figure: Figure meaning" in text
+assert "Packages: cetz" in text
+PYFIG
+cat >"$figure_layer/render.typ" <<'EOF'
+#import "design.typ": body
+#body
+EOF
+typst compile --root "$WORK" "$figure_layer/render.typ" "$WORK/figure.pdf"
+pdftotext "$WORK/figure.pdf" "$WORK/figure.txt"
+grep -q "FIGURE DRAWING" "$WORK/figure.txt"
+if grep -q 'cetz.canvas' "$WORK/figure.txt"; then
+  echo "design-context: PDF displayed source instead of evaluating figure" >&2
+  exit 1
+fi
+
+# Invalid source and a non-Typst raw body must fail both outputs.
+for figure_source in '```typst #missing-figure-function()```' '```python print("bad")```'; do
+  printf '#import ".render/designlib.typ": *\n#let title = [Bad figure]\n#let body = [#figure-block(caption: [Bad], uses: ("cetz",), %s)]\n' "$figure_source" >"$figure_layer/design.typ"
+  assert_failure 1 invalid-figure-source ./scripts/design-context "$figure_layer"
+  assert_failure 1 invalid-figure-render typst compile --root "$WORK" "$figure_layer/render.typ" "$WORK/bad-figure.pdf"
+done
 
 svg_layer="$WORK/svg-layer"
 mkdir -p "$svg_layer/.render"

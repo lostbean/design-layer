@@ -15,8 +15,9 @@ the layer is well-formed.
 
 This document is the format specification: what you may write, where it goes,
 and which rules a machine actually decides. It does not say when a system is
-worth designing, how deep to go, or whether a design is any good. Those are
-judgment calls made with the rendered document in hand.
+worth designing or whether its architecture is good. Use
+[document-design](../document-design/SKILL.md) for documentation scope, depth,
+and representation choices; this specification owns their exact notation.
 
 ## How to read this document
 
@@ -600,6 +601,30 @@ It is not a way to restyle a statement block, and never a second path for a
 node-and-edge graph — that belongs in `#diagram`, where the library
 validates every endpoint and the projected tokens colour it.
 
+For a figure that must also project to agent Markdown, pass its body as raw
+`typst` source. The PDF evaluates the source as markup; Markdown emits the same
+source in a fenced `typst` block, together with the caption and package names.
+Write a self-contained snippet: import any required vendored package inside it;
+caller-local bindings are not in its evaluation scope. Source errors fail both
+outputs. Ordinary content bodies still render to PDF but cannot project because
+Typst has already evaluated away their source. Embedded SVGs remain unsupported.
+
+````typst
+#figure-block(caption: [A circular region], uses: ("cetz",),
+  ```typst
+  #import "@preview/cetz:0.4.2"
+  #cetz.canvas({
+    import cetz.draw: *
+    circle((0, 0), radius: 1)
+  })
+  ```
+)
+````
+
+Use a longer outer raw delimiter when the snippet contains backticks. Explain
+what the drawing means in its caption or adjacent prose so the Markdown reader
+does not need to execute the source to understand the architectural claim.
+
 ### Inline pills, accents, and lenses
 
 `#lens-pill("depth")` renders that lens's pill mid-sentence. `#pill("state",
@@ -695,7 +720,7 @@ render — this is the shape a design usually takes, not a shape it must take.
 Foundation             goals · no-goals · invariants · principles, in that order
 Pending updates        immediately after the foundation; omitted when empty
 System at a glance     one diagram of the whole
-Progressive breakdown  gross to fine, recursing through subsections
+Progressive breakdown  major responsibilities, with selective deeper views
 End-to-end walkthrough one real usage path
 ```
 
@@ -803,9 +828,12 @@ domain document for a domain-scoped delta, the root for a cross-cutting one.
 
 ### Structural recursion
 
-A design is a recursively self-similar tree of units, and a unit is the same
-shape at every altitude: an overview, its child units, and a pointer to its
-parent. `context`, `component`, and a nested subsection are **depth labels on
+When a document needs deeper views, each documented unit has an overview,
+its documented child units, and a pointer to its parent. This structure permits
+recursion; it does not require documenting every implementation unit. Stop at
+the depth justified by [document-design](../document-design/SKILL.md).
+
+`context`, `component`, and a nested subsection are **depth labels on
 one node type**, not different things. The root indexes contexts, a context
 indexes its components, a component indexes its nested sub-parts. The same
 ladder names a diagram's altitude — `L1` boundary, `L2` contexts, `L3`

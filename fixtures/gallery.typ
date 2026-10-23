@@ -454,9 +454,10 @@
       caption: [A figure names the vendored packages it uses, so a render stays
         offline-reproducible.],
       uses: ("cetz",),
-    )[
+      ```typst
       #text(size: 8pt, fill: luma(110))[a drawing would sit here]
-    ]
+      ```,
+    )
 
     #embedded-svg(caption: [An external drawing], file: "diagram.svg")[]
   ],

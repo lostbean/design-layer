@@ -2,17 +2,17 @@
 
 A design layer is a small set of authored files — `design.typ`, `CONTEXT.typ`,
 an append-only `docs/adr/` — that describe a system's structure, vocabulary,
-and decisions, kept next to the code and reviewed like code. This repo is the
-**mechanical gate** for that layer: the renderer, the schema that declares its
-block vocabulary, and the scripts that decide pass or fail. It holds no design
-layer of its own.
+and decisions, kept next to the code and reviewed like code. This repo owns documentation guidance and the **mechanical gate** for that
+layer: the renderer, the schema that declares its block vocabulary, and the
+scripts that decide pass or fail. Its own [architecture overview](docs/design/design-layer.pdf)
+explains how these responsibilities cooperate; the [Typst source](docs/design/design.typ)
+is the authored version.
 
-## The one question this repo answers
+## Guidance and mechanical checks
 
-**Is this `design.typ` well-formed, and what does it render to?**
-
-That is the whole scope, and the answer comes in two severities, split by what
-a violation breaks.
+The `document-design` skill guides what to document and where to stop.
+The tools answer: **Is this `design.typ` well-formed, and what does it render to?**
+Their checks have two severities, split by what a violation breaks.
 
 **Referential integrity is fail-closed.** A reference that resolves to nothing
 is broken output, not a matter of taste: a `term()` no `CONTEXT.typ` declares
@@ -37,13 +37,13 @@ in kind — it produces a document that looks finished and is quietly wrong.
 
 This repo has **no opinion** about:
 
-- when a system is worth designing, or how deep to go
+- when a system is worth designing or which architecture it should use
 - what to build next, or how to prioritize it
 - whether a design is _good_ — only whether it is well-formed
 
-Those are judgment calls a human or an agent makes with the rendered document
-in front of them. This repo's job ends at "it renders" or "here is exactly
-what's wrong."
+Those decisions belong to the host. Documentation guidance helps humans and
+agents explain them; mechanical checks establish whether their representation
+is well-formed.
 
 ## Use
 
@@ -133,8 +133,9 @@ layer; nothing about it lives beside the source it describes.
 
 ## What this repo deliberately does not do
 
-- **It does not decide when to design, or how much.** That is a judgment
-  call made with a rendered document in hand, not a mechanical property.
+- **It does not choose or improve a system architecture.** It teaches how to
+  document an existing system and established intent. Documentation depth is
+  authoring guidance, not a mechanical correctness property.
 - **It does not hold a design layer of its own.** It is a tool. Its
   correctness is proven by the self-tests under `scripts/*.test.sh` and by
   `fixtures/gallery.typ`, the fixture that exercises every function the
@@ -160,14 +161,21 @@ skills/      the authoring guidance an agent loads to write a well-formed layer
 
 ## Writing a design document
 
-The gate tells you a document is malformed; it does not tell you how to write
-one. That is `skills/design-document-syntax/SKILL.md` — the format
-specification: the artifact set and where each file lives, the term and ADR
-anchors, block anatomy and the `title` contract, the whole block vocabulary,
-the section spine, the pending ledger's fields, the behavior and entity census
-blocks, and which rules are machine-checked rather than convention. It is a
-plain markdown file; read it in the browser, in a clone, or point an agent
-at it.
+Two skills travel with the gate bundle:
+
+- [document-design](skills/document-design/SKILL.md) guides what to document,
+  where to stop, and how to represent the system for humans and code agents.
+  It starts from the use case and explains the principal abstractions and how
+  they cooperate. Code remains authoritative for implementation detail.
+- [design-document-syntax](skills/design-document-syntax/SKILL.md) specifies
+  file homes, Typst calls, block contracts, anchors, and mechanical checks.
+
+Read `document-design` to create or revise the architectural explanation.
+Read `design-document-syntax` for the exact notation. Both are available under
+`skills/` in the `gate-bundle` store path; a host can expose those directories
+through its agent's skill discovery mechanism. No separate design workflow is
+required to use them. Architecture selection and improvement remain outside
+this repository's responsibility.
 
 ### Diagram node tints
 
@@ -283,7 +291,11 @@ intent and control flow.
 Agents read an ephemeral semantic Markdown projection instead of loading the
 rendered PDF or parsing Typst source. The projection preserves authored order,
 design fields, relationships, transitions, formulas, pseudocode control flow,
-and references. It omits presentation-only furniture and fails when a public
+and references. Custom figures authored with raw `typst` bodies retain their
+source in fenced code blocks, with captions and package names; the PDF evaluates
+the same source as a drawing. Explain the drawing's meaning in its caption or
+adjacent prose. Evaluated figure bodies and embedded SVGs remain unsupported.
+The projection omits presentation-only furniture and fails when a public
 construct has no complete Markdown representation.
 
 Estimate the projection before loading it:

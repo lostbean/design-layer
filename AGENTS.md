@@ -1,8 +1,12 @@
 # Working in this repo
 
-The mechanical half of the design layer: the renderer, the projector, the block
-contracts, and the gate. It answers one question — is this design layer
-well-formed, and what does it render to.
+This repository owns design documentation guidance and its mechanical tools:
+the renderer, the projector, the block contracts, and the gate.
+`skills/document-design/SKILL.md` guides what to document and where to stop.
+`skills/design-document-syntax/SKILL.md` owns notation and mechanical contracts.
+Code remains authoritative for implemented detail; the layer explains purpose,
+boundaries, principal abstractions, and their cooperation. Choosing or improving
+a system's architecture is outside this repository's scope.
 
 ## One authoring surface
 
@@ -86,8 +90,9 @@ to emit an exact heading subtree. Section addresses belong to the manifest that
 produced them; use its projection digest with --expect-digest when several
 section calls must share one source snapshot.
 
-The self-tests are the correctness proof — this repo has no design layer of its
-own by decision, so nothing here is verified by dogfooding:
+The self-tests establish tool correctness. This repository also carries a
+concise architectural overview in `docs/design/`; rendering and checking that
+layer exercises integration but does not replace the self-tests:
 
 ```sh
 nix develop --command bash scripts/layer-integrity.test.sh

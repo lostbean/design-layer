@@ -33,6 +33,17 @@
 #      schema's layer_layout.homing: the layer lives entirely under docs/,
 #      never colocated into source directories. A layer file outside its home
 #      is a mishomed stray. (ADR homing is check 2's concern via the ADR dir.)
+#   9. Host instruction files — every README.md and AGENTS.md outside docs/
+#      (schema layer_layout.instruction_files; git ls-files in a git repo,
+#      symlinks skipped). A link resolving under the layer directory or the
+#      ADR directory resolves by check 1's rules, section slugs included, or
+#      at least names an existing file; every bold title under the README's
+#      "## Designed, not built" list names a pending-entry some design
+#      document declares. Reported as path:line.
+#
+# Plus one ADVISORY beside check 9: a host instruction file linking an ADR a
+# successor supersedes is named with the successor (decision_citation_advisory
+# supersession_patterns), the same severity supersession has everywhere here.
 #
 # Plus one ADVISORY (never a check; exit codes untouched): when the repo has
 # moved schema-threshold+ commits since any layer artifact last changed, one
@@ -190,6 +201,10 @@ class Schema:
     # None when the schema copy predates the key (tolerate-absent); an empty
     # tuple would mean "declared, but no pattern", which is a different thing.
     supersession_res: Optional[tuple]
+    # The host's code-folder instruction files (check 9). None when the schema
+    # copy predates layer_layout.instruction_files (tolerate-absent).
+    instruction_basenames: Optional[tuple] = None
+    pending_heading: Optional[str] = None
 
 
 def locate_schema(argv0: str) -> str:
@@ -293,6 +308,14 @@ def load_schema(path: str) -> Schema:
             re.compile(p) for p in cite_adv["supersession_patterns"]
         )
 
+    # The instruction-file check is tolerate-absent the same way.
+    instruction_basenames = None
+    pending_heading = None
+    instr = layout.get("instruction_files")
+    if isinstance(instr, dict) and instr.get("basenames"):
+        instruction_basenames = tuple(instr["basenames"])
+        pending_heading = instr.get("pending_heading")
+
     return Schema(
         term_id_re=re.compile(term_id_src),
         section_id_re=re.compile(section_src) if section_src else None,
@@ -312,6 +335,8 @@ def load_schema(path: str) -> Schema:
         context_segment_re=re.compile(homing["context_segment"]),
         staleness_threshold=threshold,
         supersession_res=supersession_res,
+        instruction_basenames=instruction_basenames,
+        pending_heading=pending_heading,
     )
 
 
@@ -356,6 +381,7 @@ class FileIndex:
     lines: list = field(default_factory=list)  # every line, fences included
     stripped: list = field(default_factory=list)  # fenced code blocks removed
     link_dests: list = field(default_factory=list)  # raw destinations, stripped text
+    link_lines: list = field(default_factory=list)  # markdown: line of each link_dest
     click_dests: list = field(default_factory=list)  # mermaid `click` targets
     term_anchor_ids: list = field(default_factory=list)  # declared term slugs
     adr_elements: list = field(default_factory=list)  # lines matching element_regex
@@ -367,6 +393,8 @@ class FileIndex:
     adr_calls: list = field(default_factory=list)  # (line_no, N) from #adr(N)
     term_cites: list = field(default_factory=list)  # (line_no, slug) #term("…")
     ctx_cites: list = field(default_factory=list)  # (line_no, name) #ctx("…")
+    pending_titles: set = field(default_factory=set)  # pending-entry(title: "…")
+    pending_calls: int = 0  # pending-entry( call heads, titled or not
 
 
 def read_lines(path: str) -> list:
@@ -415,6 +443,7 @@ def index_markdown(path: str, rel: str, schema: Schema) -> FileIndex:
 
         for m in LINK_DEST_RE.finditer(line):
             idx.link_dests.append(m.group(1))
+            idx.link_lines.append(lineno)
 
         if HEADING_RE.match(line):
             for m in ANCHOR_BRACE_RE.finditer(line):
@@ -491,6 +520,18 @@ TYPST_LINE_COMMENT_RE = re.compile(r"//.*$")
 # name is checkable at the citing line.
 TYPST_TERM_CITE_RE = re.compile(r'#term\(\s*"([^"]*)"\s*\)')
 TYPST_CTX_CITE_RE = re.compile(r'#ctx\(\s*"([^"]*)"')
+# A PENDING ENTRY's title, matched against the joined source for the same
+# reason a section is: the real style opens the call across lines. `title:` is
+# a named argument, so it may follow another one; the tempered dot stops the
+# match at the next entry rather than borrowing that entry's title for an
+# untitled one.
+TYPST_PENDING_HEAD_RE = re.compile(r"\bpending-entry\(")
+TYPST_PENDING_TITLE_RE = re.compile(
+    r"\bpending-entry\((?:(?!\bpending-entry\().)*?"
+    r'\btitle:\s*"((?:[^"\\]|\\.)*)"',
+    re.DOTALL,
+)
+TYPST_STRING_ESCAPE_RE = re.compile(r"\\(.)")
 
 
 def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
@@ -534,10 +575,18 @@ def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
     # section call spans lines and its slug needs no line number. The comment-
     # stripped lines are joined rather than the raw ones, so a commented-out
     # section is no more an anchor here than it is anywhere else.
-    for m in TYPST_SECTION_RE.finditer("\n".join(idx.stripped)):
+    joined = "\n".join(idx.stripped)
+    for m in TYPST_SECTION_RE.finditer(joined):
         slug = section_slug(m.group(1))
         if slug:
             idx.section_ids.add(slug)
+
+    # Pending-entry titles, which a host README's "Designed, not built" list
+    # names (check 9). The title is a Typst string, so its escapes are undone
+    # to compare it with the plain text a README writes.
+    idx.pending_calls = len(TYPST_PENDING_HEAD_RE.findall(joined))
+    for m in TYPST_PENDING_TITLE_RE.finditer(joined):
+        idx.pending_titles.add(TYPST_STRING_ESCAPE_RE.sub(r"\1", m.group(1)))
 
     return idx
 
@@ -797,99 +846,132 @@ def classify_designish(
     return designish, designish_re, in_marker_dir
 
 
+def link_target(dest: str, src_dir: str, repo: Repo):
+    """(filepart, frag, abspath) for a cleaned destination; abspath is None for
+    a pure fragment."""
+    filepart, _, frag = dest.partition("#")
+    if not filepart:
+        return filepart, frag, None
+    if filepart.startswith("/"):
+        abspath = os.path.normpath(os.path.join(repo.root, filepart[1:]))
+    else:
+        abspath = os.path.normpath(os.path.join(src_dir, filepart))
+    return filepart, frag, abspath
+
+
 def check_links(
     src: FileIndex, repo: Repo, schema: Schema, targets: TargetIndexes, report: Report
 ) -> None:
-    rel = src.rel
     src_dir = os.path.dirname(src.path)
     for raw in src.link_dests + src.click_dests:
         dest = clean_dest(raw)
         if is_ignorable(dest):
             continue
-        filepart, _, frag = dest.partition("#")
-        if not filepart:
+        filepart, frag, abspath = link_target(dest, src_dir, repo)
+        if abspath is None:
             continue  # pure fragment
-        base = filepart.rsplit("/", 1)[-1]
-
-        if filepart.startswith("/"):
-            abspath = os.path.normpath(os.path.join(repo.root, filepart[1:]))
-        else:
-            abspath = os.path.normpath(os.path.join(src_dir, filepart))
-
         designish, designish_re, in_marker_dir = classify_designish(
-            dest, base, abspath, repo, schema.markers
+            dest, filepart.rsplit("/", 1)[-1], abspath, repo, schema.markers
         )
         if not (designish or designish_re or in_marker_dir):
             continue  # matches no schema marker — not design-ish
         report.matched("links resolved")
+        resolve_designish(
+            src.rel,
+            dest,
+            filepart,
+            frag,
+            abspath,
+            (designish, designish_re, in_marker_dir),
+            schema,
+            targets,
+            report,
+        )
 
-        if not frag:
-            if not os.path.exists(abspath):
-                report.violation(rel, "dangling link", f"target not found: {dest}")
-            elif designish_re and not designish and not in_marker_dir:
-                # Classified adr-ish by filename shape alone, yet the target
-                # lives outside every schema directory marker: a stray adr-ish
-                # file, not a canonical ADR. (Inside the ADR dir, check 2 owns
-                # lockstep.)
-                report.violation(
-                    rel,
-                    "stray adr-ish file",
-                    f"{dest} matches an adr-ish schema marker but resolves "
-                    f"outside {schema.adr_dir_rel}/",
-                )
-            continue
 
-        if not os.path.isfile(abspath):
-            report.violation(rel, "dangling link", f"target file not found: {dest}")
-            continue
-
-        if schema.term_id_re.search(frag):
-            kind = "term"
-        elif schema.adr_id_re.search(frag):
-            kind = "adr"
-        elif schema.section_id_re is not None and schema.section_id_re.search(frag):
-            # A pointer into a SECTION of a design document — the form
-            # design_doc.generation.link_rewrite documents. Accepted alongside
-            # term and adr so the schema and this gate agree; before it was
-            # declared, the one blessed form for cross-document section
-            # pointers was the one the gate rejected.
-            kind = "section"
-        else:
+def resolve_designish(
+    rel: str,
+    dest: str,
+    filepart: str,
+    frag: str,
+    abspath: str,
+    classified: tuple,
+    schema: Schema,
+    targets: TargetIndexes,
+    report: Report,
+) -> None:
+    """Resolve ONE design-ish destination: the file exists and any fragment is
+    a valid, present term, adr or section anchor. `rel` is the location a
+    violation names — a bare path for a layer artifact, path:line for a host
+    instruction file."""
+    designish, designish_re, in_marker_dir = classified
+    if not frag:
+        if not os.path.exists(abspath):
+            report.violation(rel, "dangling link", f"target not found: {dest}")
+        elif designish_re and not designish and not in_marker_dir:
+            # Classified adr-ish by filename shape alone, yet the target
+            # lives outside every schema directory marker: a stray adr-ish
+            # file, not a canonical ADR. (Inside the ADR dir, check 2 owns
+            # lockstep.)
             report.violation(
                 rel,
-                "malformed anchor",
-                f"design-ish fragment '#{frag}' in {dest} matches neither the "
-                "term, adr, nor section id pattern",
+                "stray adr-ish file",
+                f"{dest} matches an adr-ish schema marker but resolves "
+                f"outside {schema.adr_dir_rel}/",
             )
-            continue
+        return
 
-        target = targets.get(abspath)
-        if abspath.endswith(".html"):
-            if frag not in target.html_ids:
-                report.violation(
-                    rel, f"dangling {kind} anchor", f'no id "{frag}" in {filepart}'
-                )
-        elif kind == "term":
-            if frag not in target.declared_terms:
-                report.violation(
-                    rel,
-                    "dangling term anchor",
-                    f'{filepart} declares no term with slug "{frag}"',
-                )
-        elif kind == "section":
-            if frag not in target.section_ids:
-                report.violation(
-                    rel,
-                    "dangling section anchor",
-                    f'no heading renders id "{frag}" in {filepart}',
-                )
-        else:
-            if frag not in target.adr_anchor_frags:
-                report.violation(
-                    rel,
-                    "dangling adr anchor",
-                    f'no <a id="{frag}"></a> in {filepart}',
-                )
+    if not os.path.isfile(abspath):
+        report.violation(rel, "dangling link", f"target file not found: {dest}")
+        return
+
+    if schema.term_id_re.search(frag):
+        kind = "term"
+    elif schema.adr_id_re.search(frag):
+        kind = "adr"
+    elif schema.section_id_re is not None and schema.section_id_re.search(frag):
+        # A pointer into a SECTION of a design document — the form
+        # design_doc.generation.link_rewrite documents. Accepted alongside
+        # term and adr so the schema and this gate agree; before it was
+        # declared, the one blessed form for cross-document section
+        # pointers was the one the gate rejected.
+        kind = "section"
+    else:
+        report.violation(
+            rel,
+            "malformed anchor",
+            f"design-ish fragment '#{frag}' in {dest} matches neither the "
+            "term, adr, nor section id pattern",
+        )
+        return
+
+    target = targets.get(abspath)
+    if abspath.endswith(".html"):
+        if frag not in target.html_ids:
+            report.violation(
+                rel, f"dangling {kind} anchor", f'no id "{frag}" in {filepart}'
+            )
+    elif kind == "term":
+        if frag not in target.declared_terms:
+            report.violation(
+                rel,
+                "dangling term anchor",
+                f'{filepart} declares no term with slug "{frag}"',
+            )
+    elif kind == "section":
+        if frag not in target.section_ids:
+            report.violation(
+                rel,
+                "dangling section anchor",
+                f'no heading renders id "{frag}" in {filepart}',
+            )
+    else:
+        if frag not in target.adr_anchor_frags:
+            report.violation(
+                rel,
+                "dangling adr anchor",
+                f'no <a id="{frag}"></a> in {filepart}',
+            )
 
 
 # --- Check 2: ADR lockstep ----------------------------------------------------
@@ -1258,6 +1340,225 @@ def check_homing(files: list, schema: Schema, report: Report) -> None:
             )
 
 
+# --- Check 9: host instruction files point into the layer correctly ----------
+#
+# A host keeps a README.md and an AGENTS.md beside its code, and they point
+# into the layer: "governed by design.typ § Domain model", "see ADR-0024",
+# "designed, not built: <pending entry>". Those pointers rot exactly like a
+# coverage row does when a section is renamed or an entry clears, and nothing
+# read them, so a README naming a section that no longer exists passed.
+#
+# Scope is every basename in layer_layout.instruction_files OUTSIDE docs/ —
+# files under docs/ keep their existing handling, so nothing is reported twice
+# — and only links that resolve under the layer's directory or the ADR
+# directory. A link anywhere else is the host's business, not the layer's.
+
+INSTRUCTION_WALK_PRUNE = {".git", "node_modules", "build", "_build", ".render"}
+LIST_ITEM_RE = re.compile(r"^[-*+][ \t]")
+BOLD_LEAD_RE = re.compile(r"^[-*+][ \t]+\*\*(.+?)\*\*")
+SECTION_BREAK_RE = re.compile(r"^#{1,2}[ \t]")
+
+
+def list_instruction_files(
+    repo: Repo, schema: Schema, excluded: tuple, docs_root: str
+) -> list:
+    """Every instruction file outside docs/, gitignore and symlinks respected.
+
+    In a git repo the candidate list is `git ls-files` (tracked plus untracked,
+    ignored excluded), so a vendored or ignored tree never enters. Outside git
+    the walk prunes dot-dirs and the usual build and vendor trees. A symlink is
+    skipped either way: a CLAUDE.md linked to AGENTS.md, or an AGENTS.md linked
+    to a sibling, is one file and is read once, at its real path.
+    """
+    wanted = set(schema.instruction_basenames or ())
+    candidates = []
+    if repo.is_git:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                repo.root,
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            die(f"error: git ls-files failed in {repo.root}: {proc.stderr.strip()}")
+        for rel in sorted(set(proc.stdout.split("\0"))):
+            if rel and rel.rsplit("/", 1)[-1] in wanted:
+                candidates.append(os.path.join(repo.root, rel))
+    else:
+        for dirpath, dirnames, filenames in os.walk(repo.root):
+            dirnames[:] = [
+                d
+                for d in dirnames
+                if not d.startswith(".")
+                and d not in INSTRUCTION_WALK_PRUNE
+                and not d.startswith("result")
+            ]
+            for fname in filenames:
+                if fname in wanted:
+                    candidates.append(os.path.join(dirpath, fname))
+        candidates.sort()
+
+    kept = []
+    for path in candidates:
+        if os.path.islink(path) or not os.path.isfile(path):
+            continue
+        if path_is_within(path, docs_root):
+            continue  # a layer file: checks 1-8 own it
+        if any(path_is_within(os.path.realpath(path), p) for p in excluded):
+            continue  # a nested project's own instruction files
+        kept.append(path)
+    return kept
+
+
+def pending_claims(idx: FileIndex, heading: str) -> tuple:
+    """The (line, title) pairs a README's pending list names, and the lines of
+    items that name nothing.
+
+    Under `## <heading>`, until the next level-one or level-two heading, every
+    TOP-LEVEL list item must begin `- **<title>**`. An item without the bold
+    lead is returned as unrecognised rather than skipped: a list the check
+    cannot read is a list it would otherwise pass in silence.
+    """
+    claims, unrecognised = [], []
+    target = re.compile(r"^##[ \t]+" + re.escape(heading) + r"[ \t]*#*[ \t]*$")
+    inside = False
+    in_fence = False
+    for lineno, line in enumerate(idx.lines, 1):
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if SECTION_BREAK_RE.match(line):
+            inside = bool(target.match(line))
+            continue
+        if not inside or not LIST_ITEM_RE.match(line):
+            continue
+        m = BOLD_LEAD_RE.match(line)
+        if m:
+            claims.append((lineno, m.group(1).strip()))
+        else:
+            unrecognised.append(lineno)
+    return claims, unrecognised
+
+
+def superseded_by(adr_files: list, schema: Schema) -> dict:
+    """{superseded ADR number: sorted successor numbers}, derived from the
+    successors' own prose by the schema's supersession_patterns. Empty when
+    the schema copy predates the key."""
+    out: dict = {}
+    if schema.supersession_res is None:
+        return out
+    for idx in adr_files:
+        m = re.match(r"^(\d+)-", idx.base)
+        body = "\n".join(idx.lines)
+        for rx in schema.supersession_res:
+            for hit in rx.finditer(body):
+                successors = out.setdefault(int(hit.group(1)), set())
+                if m:
+                    successors.add(int(m.group(1)))
+    return {n: sorted(s) for n, s in out.items()}
+
+
+def check_instruction_files(
+    files: list,
+    repo: Repo,
+    schema: Schema,
+    targets: TargetIndexes,
+    layer_dirs: tuple,
+    adr_dir: str,
+    pending_titles: set,
+    pending_calls: int,
+    superseded: dict,
+    report: Report,
+) -> None:
+    for idx in files:
+        report.matched("instruction files")
+        src_dir = os.path.dirname(idx.path)
+        for raw, lineno in zip(idx.link_dests, idx.link_lines):
+            where = f"{idx.rel}:{lineno}"
+            dest = clean_dest(raw)
+            if is_ignorable(dest):
+                continue
+            filepart, frag, abspath = link_target(dest, src_dir, repo)
+            if abspath is None:
+                continue
+            if not any(path_is_within(abspath, d) for d in layer_dirs):
+                continue  # points outside the layer: out of scope
+            report.matched("instruction links resolved")
+
+            classified = classify_designish(
+                dest, filepart.rsplit("/", 1)[-1], abspath, repo, schema.markers
+            )
+            if any(classified):
+                # A design source, a glossary, or an ADR: the same resolution
+                # every layer artifact's links get, section slugs included.
+                resolve_designish(
+                    where,
+                    dest,
+                    filepart,
+                    frag,
+                    abspath,
+                    classified,
+                    schema,
+                    targets,
+                    report,
+                )
+            elif not os.path.exists(abspath):
+                report.violation(where, "dangling link", f"target not found: {dest}")
+
+            if path_is_within(abspath, adr_dir) and os.path.isfile(abspath):
+                m = re.match(r"^(\d+)-", os.path.basename(abspath))
+                if m and int(m.group(1)) in superseded:
+                    successors = (
+                        ", ".join(f"ADR-{n:04d}" for n in superseded[int(m.group(1))])
+                        or "a later ADR"
+                    )
+                    print(
+                        f"advisory: {where}: links ADR-{int(m.group(1)):04d}, "
+                        f"which {successors} supersedes — link the successor"
+                    )
+
+        if not schema.pending_heading:
+            continue
+        claims, unrecognised = pending_claims(idx, schema.pending_heading)
+        for lineno in unrecognised:
+            report.violation(
+                f"{idx.rel}:{lineno}",
+                "unreadable pending item",
+                f'a list item under "## {schema.pending_heading}" must begin '
+                "with the bold title of a pending entry: - **<title>** — …",
+            )
+        for lineno, title in claims:
+            report.matched("pending titles")
+            if title not in pending_titles:
+                report.violation(
+                    f"{idx.rel}:{lineno}",
+                    "unknown pending entry",
+                    f'"{title}" is the title of no pending-entry in any '
+                    "design document",
+                )
+
+    # ANTI-VACUITY: a README naming pending entries against a layer whose
+    # pending-entry() calls the scan indexed no title from would report every
+    # claim unknown for the wrong reason; name the real fault instead.
+    if report.counts.get("pending titles") and pending_calls and not pending_titles:
+        report.violation(
+            "layer-integrity",
+            "vacuous pending index",
+            f"the design documents hold {pending_calls} pending-entry() "
+            "call(s) and the scan indexed no title",
+        )
+
+
 # --- Staleness advisory (schema layer_layout.staleness_advisory) --------------
 #
 # Advisory only — exit codes untouched. When the repo has moved threshold+
@@ -1321,19 +1622,10 @@ def staleness_advisory(repo: Repo, schema: Schema, files: list) -> None:
 
 
 def decision_citation_advisory(
-    adr_numbers: set, adr_files: list, cited: set, schema: Schema
+    adr_numbers: set, superseded: set, cited: set, schema: Schema
 ) -> None:
     if schema.supersession_res is None or not adr_numbers:
         return
-
-    superseded = set()
-    for idx in adr_files:
-        try:
-            body = open(idx.path, encoding="utf-8", errors="replace").read()
-        except OSError:
-            continue
-        for rx in schema.supersession_res:
-            superseded.update(int(m.group(1)) for m in rx.finditer(body))
 
     dormant = sorted(adr_numbers - cited - superseded)
     if not dormant:
@@ -1674,6 +1966,32 @@ def main(argv: list) -> int:
         report,
     )
 
+    # Check 9: the host's instruction files. Run after the layer's own checks
+    # so its pending-title and section indexes are complete.
+    superseded = superseded_by(adr_files, schema)
+    if schema.instruction_basenames:
+        docs_root = os.path.join(root, schema.root_design_rel.split("/", 1)[0])
+        layer_dirs = (os.path.dirname(root_design_abs), adr_dir)
+        pending_titles = set()
+        for idx in design_docs:
+            pending_titles.update(idx.pending_titles)
+        instruction_files = [
+            index_markdown(p, repo.rel_of(p), schema)
+            for p in list_instruction_files(repo, schema, excluded, docs_root)
+        ]
+        check_instruction_files(
+            instruction_files,
+            repo,
+            schema,
+            targets,
+            layer_dirs,
+            adr_dir,
+            pending_titles,
+            sum(idx.pending_calls for idx in design_docs),
+            superseded,
+            report,
+        )
+
     staleness_advisory(
         repo,
         schema,
@@ -1684,7 +2002,7 @@ def main(argv: list) -> int:
     # the advisory and the check can never disagree about what was cited.
     decision_citation_advisory(
         adr_numbers,
-        adr_files,
+        set(superseded),
         {n for idx in design_docs + contexts for _, n in idx.adr_calls},
         schema,
     )

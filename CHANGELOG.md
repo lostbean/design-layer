@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The layer-integrity gate now checks every host `README.md` and `AGENTS.md`
+  outside `docs/`: links into `docs/design/` and `docs/adr/` must resolve
+  (section anchors included), each bold title under `## Designed, not built`
+  must name a pending entry, and a link to a superseded ADR is an advisory.
+  Violations name the file and line.
+
 - The agent-context projector now exposes a deterministic manifest, depth-limited
   preview, exact heading-subtree selection, token metrics, SHA-256 digests, and
   digest guards while preserving the complete projection as the default.

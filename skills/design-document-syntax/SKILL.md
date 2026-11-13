@@ -200,6 +200,36 @@ What earns a part one status rather than another is a judgment call this
 specification does not make. The file is optional; a layer without one is
 well-formed.
 
+### Host `README.md` and `AGENTS.md` files
+
+A host may keep a `README.md` and an `AGENTS.md` beside its code that point
+into the layer. The gate reads every such file outside `docs/` — enumerated
+with `git ls-files` in a git repo, so ignored and vendored trees never enter,
+and with symlinks skipped, so a `CLAUDE.md` linked to `AGENTS.md` is read
+once. Only links that resolve under `docs/design/` or `docs/adr/` are
+checked; a link anywhere else is the host's business. Each violation names
+the file and line.
+
+- A link into a design source with a fragment,
+  `docs/design/design.typ#<slug>` or `docs/design/<context>/design.typ#<slug>`,
+  must name a section's rendered id, by the same slug rule as any section link.
+- A link into `docs/adr/` must open an existing ADR. A link to an ADR that a
+  successor supersedes is reported as an **advisory** naming the successor;
+  the exit code is untouched.
+- Any other link into `docs/design/` or `docs/adr/` must open an existing file.
+- Under a level-two heading `## Designed, not built`, every top-level list
+  item begins with the exact title of a pending entry in bold, and that title
+  must equal the `title:` of a `pending-entry` in some design document:
+
+  ```md
+  ## Designed, not built
+
+  - **Release withdraws a confirmed booking** — the transition has no caller.
+  ```
+
+  An item without the bold title fails as unreadable. A README without that
+  heading is not read for titles.
+
 ### The context map declares relationships
 
 `docs/CONTEXT-MAP.md` is more than a link index. Each context entry carries a

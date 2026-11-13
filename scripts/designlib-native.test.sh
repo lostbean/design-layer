@@ -384,6 +384,33 @@ assert_invariant table-missing-header "md-table: cells must include a header row
 assert_invariant table-cells-type "md-table: cells must be an array" \
   '#md-table(2, [not an array])'
 
+# A foundation statement whose `]` goes missing is closed by a later stray `]`,
+# and the statements in between become its body. The compile used to succeed
+# and the order and cardinality trails still saw every kind, so the nesting
+# was invisible. Both nested positions fail, naming the host.
+assert_invariant statement-nested-unclosed 'is written inside the body of invariant \"First\"' \
+  '#invariant(title: "First", enforcement: "mechanism")[First body.
+#invariant(title: "Second", enforcement: "mechanism")[Second body.]
+#invariant(title: "Third", enforcement: "mechanism")[Third body.]
+]'
+assert_invariant statement-nested-in-behavior 'is written inside the body of behavior \"Outer\"' \
+  '#behavior(title: "Outer", area: "Area", level: "interface")[#given[A.] #when[B.] #then[C.] #goal(title: "Inner")[Inner body.]]'
+
+# Siblings, a statement after a closed one, and clauses inside a behavior stay
+# valid: the host stack pops when each body ends.
+fixture statement-siblings '#goal(title: "One")[One.]
+#invariant(title: "Two", enforcement: "mechanism")[Two.]
+#behavior(title: "Three", area: "Area", level: "interface")[#given[A.] #when[B.] #then[C.]]
+#principle(title: "Four")[Four.]'
+out="$(compile statement-siblings plain)"
+if [ -f "$WORK/statement-siblings.pdf" ]; then
+  pass_line "sibling foundation statements compile"
+  rm -f "$WORK/statement-siblings.pdf"
+else
+  fail_line "sibling foundation statements were reported as nested"
+  printf '%s\n' "$out" | head -3 | sed 's/^/       /'
+fi
+
 # A long table repeats its declared header after every page break. This checks
 # the rendered pages rather than only the logical PDF structure, because one
 # semantic header could exist while later pages omit its visible repetition.

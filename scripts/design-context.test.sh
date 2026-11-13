@@ -967,6 +967,65 @@ for figure_source in '```typst #missing-figure-function()```' '```python print("
   assert_failure 1 invalid-figure-render typst compile --root "$WORK" "$figure_layer/render.typ" "$WORK/bad-figure.pdf"
 done
 
+# Layout-only wrappers project their body. A landscape page also inserts
+# `flush` and `pagebreak` markers, and the invariant below omits enforcement=,
+# so a silent guideline note sits beside it; neither is document content.
+layout_docs="$WORK/layout-docs"
+layout_layer="$layout_docs/design"
+mkdir -p "$layout_layer/.render"
+printf '# Coverage\n\n| Part | Status |\n| --- | --- |\n| root | captured |\n' >"$layout_docs/COVERAGE.md"
+cp -R "$LAYER/.render/." "$layout_layer/.render/"
+cat >"$layout_layer/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Layout wrappers]
+#let body = [#section(title: "Wide figure", body: [Before the page.
+#page(flipped: true)[
+#figure-block(caption: [Landscape figure.], uses: ("cetz",), ```typst
+#import "@preview/cetz:0.4.2"
+#cetz.canvas({ cetz.draw.line((0, 0), (1, 1)) })
+```)
+]
+#rotate(-90deg, reflow: true)[Rotated #strong[prose].]
+#scale(80%)[Scaled.] #move(dx: 1pt)[Moved.] #pad(x: 2pt)[Padded.] #align(right)[Aligned.] #colbreak() #place(top)[Placed.] #columns(2)[Columned.] #stack([Stacked.])
+After the page. #invariant(title: "Inside a wrapper")[#rotate(0deg)[Wrapped statement.]]])]
+EOF
+layout_output="$WORK/layout.md"
+./scripts/design-context "$layout_layer" --output "$layout_output"
+python3 - "$layout_output" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+expected = [
+    "Before the page.",
+    "Figure: Landscape figure.",
+    '#import "@preview/cetz:0.4.2"',
+    "Rotated **prose**.",
+    "Scaled. Moved. Padded. Aligned.",
+    "Placed. Columned. Stacked.",
+    "After the page.",
+    "### invariant: Inside a wrapper",
+    "Wrapped statement.",
+]
+position = 0
+for needle in expected:
+    found = text.find(needle, position)
+    assert found >= 0, f"layout wrapper projection lost or reordered {needle!r}:\n{text}"
+    position = found + len(needle)
+PY
+
+# Hidden content is not layout: the reader never sees it, so the projection
+# neither invents it nor drops it silently.
+hidden_layer="$WORK/hidden-layer"
+mkdir -p "$hidden_layer/.render"
+cp -R "$LAYER/.render/." "$hidden_layer/.render/"
+cat >"$hidden_layer/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Hidden content]
+#let body = [Visible. #hide[Never on the page.]]
+EOF
+assert_failure 1 hidden-content ./scripts/design-context "$hidden_layer"
+
 svg_layer="$WORK/svg-layer"
 mkdir -p "$svg_layer/.render"
 cp -R "$LAYER/.render/." "$svg_layer/.render/"

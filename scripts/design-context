@@ -28,7 +28,37 @@ USAGE = (
     "[--output PATH] [--expect-digest DIGEST]"
 )
 LABEL = "<design-semantic>"
+# A guideline note is a diagnostic the compile records for `lint`; it is never
+# document content, and `render` and `check` accept a layer that carries one.
+GUIDELINE_LABEL = "<design-guideline>"
 MANIFEST_FORMAT = "design-context-manifest/v1"
+
+# Layout-only wrappers. They place, rotate, or paginate content without adding
+# meaning, so the projection walks through them to the content they carry. A
+# landscape page written as `#page(flipped: true)[...]` arrives here as a
+# `page` around the body plus the `flush` and `pagebreak` markers the page
+# change introduces; neither marker has content.
+LAYOUT_CARRIERS = frozenset(
+    {
+        "align",
+        "block",
+        "box",
+        "columns",
+        "move",
+        "pad",
+        "page",
+        "place",
+        "rotate",
+        "scale",
+        "stack",
+    }
+)
+LAYOUT_MARKERS = frozenset({"colbreak", "flush", "pagebreak", "v", "h"})
+
+
+def layout_child(value: dict[str, object]) -> object:
+    return value.get("body", value.get("children", value.get("child")))
+
 
 SEMANTIC_FIELDS = {
     "document": {"name", "level", "title", "body"},
@@ -510,6 +540,8 @@ def content_text(
             raise ProjectionError(f"reference target is invalid at {path}")
         label = target[1:-1]
         return f"[{label}](#{label})"
+    if function == "metadata" and value.get("label") == GUIDELINE_LABEL:
+        return ""
     if function == "metadata" and value.get("label") == LABEL:
         return semantic_markdown(
             value.get("value"),
@@ -543,8 +575,8 @@ def content_text(
             if child is not None
             else ""
         )
-    if function in {"block", "list", "grid", "table", "align", "box"}:
-        child = value.get("body", value.get("children"))
+    if function in LAYOUT_CARRIERS or function in {"list", "grid", "table"}:
+        child = layout_child(value)
         return (
             content_text(
                 child,
@@ -557,7 +589,7 @@ def content_text(
             if child is not None
             else ""
         )
-    if function in {"heading", "show", "set", "v", "h", "line", "pagebreak", "state-update", "context"}:
+    if function in LAYOUT_MARKERS or function in {"heading", "show", "set", "line", "state-update", "context"}:
         return ""
     raise ProjectionError(
         f"unsupported Typst content function {function!r} at {path}; "
@@ -736,6 +768,8 @@ def projection_visual(
     if not isinstance(value, dict):
         raise ProjectionError(f"section visual is not representable at {path}")
     function = value.get("func")
+    if function == "metadata" and value.get("label") == GUIDELINE_LABEL:
+        return ""
     if function == "metadata" and value.get("label") == LABEL:
         semantic_value = value.get("value")
         if not isinstance(semantic_value, dict):
@@ -760,11 +794,11 @@ def projection_visual(
             for index, child in enumerate(children)
             if not (
                 isinstance(child, dict)
-                and child.get("func") in {"space", "state-update"}
+                and child.get("func") in {"space", "state-update", *LAYOUT_MARKERS}
             )
         )
-    if function in {"block", "cell", "align", "box", "grid", "styled"}:
-        child = value.get("body", value.get("children", value.get("child")))
+    if function in LAYOUT_CARRIERS or function in {"cell", "grid", "styled"}:
+        child = layout_child(value)
         if child is None:
             raise ProjectionError(
                 f"section visual carrier {function!r} has no content at {path}"
@@ -791,6 +825,8 @@ def projection_notes(
     if not isinstance(value, dict):
         raise ProjectionError(f"section notes are not representable at {path}")
     function = value.get("func")
+    if function == "metadata" and value.get("label") == GUIDELINE_LABEL:
+        return ""
     if function == "metadata" and value.get("label") == LABEL:
         semantic_value = value.get("value")
         if not isinstance(semantic_value, dict) or semantic_value.get("kind") != "notes":
@@ -817,11 +853,11 @@ def projection_notes(
             for index, child in enumerate(children)
             if not (
                 isinstance(child, dict)
-                and child.get("func") in {"space", "state-update"}
+                and child.get("func") in {"space", "state-update", *LAYOUT_MARKERS}
             )
         )
-    if function in {"block", "cell", "align", "box", "grid", "styled"}:
-        child = value.get("body", value.get("children", value.get("child")))
+    if function in LAYOUT_CARRIERS or function in {"cell", "grid", "styled"}:
+        child = layout_child(value)
         if child is None:
             raise ProjectionError(
                 f"section notes carrier {function!r} has no content at {path}"

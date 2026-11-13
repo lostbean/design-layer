@@ -464,6 +464,45 @@
 )
 
 #section(
+  title: "A wide figure on a landscape page",
+  lead: "A drawing too wide for the column takes a landscape page; the shell's footer stays.",
+  body: [
+    The figure below is drawn from explicit coordinates in a raw `typst` body.
+    Nothing the caller defines reaches that body, so its colours are literals.
+
+    #page(flipped: true)[
+      #figure-block(
+        caption: [Requests cross the gateway before reaching either store.],
+        uses: ("cetz",),
+        ```typst
+        #import "@preview/cetz:0.4.2"
+        #cetz.canvas({
+          import cetz.draw: *
+          let box-at(pos, name, label, fill) = {
+            rect((pos.at(0) - 1.1, pos.at(1) - 0.4), (pos.at(0) + 1.1, pos.at(1) + 0.4),
+              name: name, fill: fill, stroke: 0.6pt + rgb("#475569"), radius: 0.1)
+            content(name, text(size: 8pt, label))
+          }
+          box-at((0, 0), "client", [Client], rgb("#e0f2f1"))
+          box-at((3.5, 0), "gateway", [Gateway], rgb("#ede9fe"))
+          box-at((7, 1), "orders", [Orders store], rgb("#fef3c7"))
+          box-at((7, -1), "ledger", [Ledger store], rgb("#fef3c7"))
+          line("client.east", "gateway.west", mark: (end: ">"))
+          line("gateway.east", "orders.west", mark: (end: ">"))
+          line("gateway.east", "ledger.west", mark: (end: ">"))
+        })
+        ```,
+      )
+    ]
+
+    Portrait pages resume after the landscape page. A block can also turn in
+    place without a page break:
+
+    #rotate(-90deg, reflow: true)[#text(size: 8pt)[rotated in place]]
+  ],
+)
+
+#section(
   title: "Equations and formulas",
   lead: "Native mathematics carries the same hierarchy and reading aids as every other design unit.",
   visual: block(width: 100%, breakable: false)[

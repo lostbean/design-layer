@@ -36,6 +36,8 @@ flowchart TD
 
 Read repository instructions, existing documentation, public entry points, tests, and configuration. Trace a representative consumer use case through the implementation; investigate further only where a missing fact changes the explanation. Record supported claims, their evidence, and consequential uncertainties without creating a second implementation ledger.
 
+Before minting an ADR number or a CONTEXT term, read `git worktree list` and the local branches for unmerged design-layer changes: new ADR numbers, new terms, or edits to the same sections. Reconcile with that line of work, or renumber, before writing; two branches that mint the same numbers or name one concept differently collide at merge.
+
 Ask only for missing owner intent that materially changes the explanation; continue supported work meanwhile. When code contradicts accepted intent, describe the implemented state and preserve the discrepancy through the existing pending mechanism. Preserve decision history and do not invent rationale or ADRs.
 
 ### 2. Establish the system view
@@ -97,5 +99,7 @@ Walk a representative use case across the completed views. Resolve inconsistent 
 - Confirm **Use cases and scope** and **Domain model** appear in both PDF and Markdown. A newcomer should be able to connect consumer outcomes to domain concepts and cooperating abstractions, including significant state and failure boundaries.
 - Check claims against evidence and label remaining uncertainty. Review each deeper view's named question and stopping point; remove duplicate or implementation-level detail without losing consequential meaning.
 - Render with the pinned tools and run the declared gate. Inspect affected PDF pages for legibility, clipping, and broken relationships; inspect Markdown for the same claims, directions, boundaries, and transitions. Use manifests and exact sections for large projections.
+- During a run of many small accepted deltas, save the sources after each delta and render, gate, and inspect at checkpoints: after a coherent group of deltas and before reporting. A host whose pre-commit hook requires a fresh rendered artifact needs a render before each commit.
+- After resolving a merge conflict in `design.typ` or `CONTEXT.typ`, re-check bracket balance and entry separators around every resolved hunk, and compare term and statement counts with both sides. Cutting text at conflict markers can drop a `]` or a `),` `(`, and not every such slip fails the gate.
 - Report authored sources, rendered outputs, checks performed, and limitations. An unavailable check is not a pass; well-formed documentation neither accepts the architecture nor proves the code implements its claims.
 - On later changes, revisit affected views and their parent interactions when purpose, ownership, abstractions, constraints, or important cooperation changes. Ordinary refactoring should usually leave the layer unchanged. Keep current architecture, proposals, and history distinct through existing artifacts.

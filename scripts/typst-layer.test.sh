@@ -471,6 +471,36 @@ case "$out" in
 esac
 rm -f "$LAYER/drop.pdf" "$LAYER/beta/CONTEXT.typ"
 
+# --- 3d'. TWO ENTRIES FUSED INTO ONE DICTIONARY ARE LOUD ---------------------
+# Losing the `),` `(` between two entries leaves one dictionary carrying slug,
+# title, and body twice. Typst rejects the repeated keys, but the scan reads
+# each slug/title/body run alone, so both terms parsed, the slug count agreed,
+# and the gate exited 0 on a CONTEXT.typ that is not valid Typst.
+cat >"$LAYER/beta/CONTEXT.typ" <<'EOF'
+#let terms = (
+  (slug: "term-zbeta", title: [Zbeta], body: [A Zbeta.]),
+  (slug: "term-zfirst", title: [Zfirst], body: [The first definition.],
+  slug: "term-zsecond", title: [Zsecond], body: [The second definition.]),
+  (slug: "term-zlast", title: [Zlast], body: [Closed // a trailing comment
+  ],),
+)
+EOF
+out="$(python3 ./scripts/design-aggregate "$LAYER" "$LAYER/fused.pdf" 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  pass_line "two term entries fused into one dictionary fail the build"
+else
+  fail_line "a fused term dictionary passed the build"
+fi
+case "$out" in
+*"beta/CONTEXT.typ:4: term 'term-zfirst' is not closed"*) pass_line "the error names the file, line, and term" ;;
+*)
+  fail_line "the fused-entry error does not name the file, line, and term"
+  printf '%s\n' "$out" | head -3 | sed 's/^/       /'
+  ;;
+esac
+rm -f "$LAYER/fused.pdf" "$LAYER/beta/CONTEXT.typ"
+
 # --- 3c. GUIDELINES ALWAYS PRINT, and never block ----------------------------
 # The guidelines used to be SILENT unless DESIGN_STRICT was set, which made them
 # invisible in practice: a rule nobody reads is the same defect as a check that

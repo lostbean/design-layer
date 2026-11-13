@@ -486,6 +486,26 @@ def typst_glossary_terms(root, docs):
                     "%s: term %r declares a body the scan cannot read. A body "
                     "is a content block `[...]` or a quoted string."
                     % (rel, m.group("slug")))
+            # THE ENTRY MUST CLOSE AFTER ITS BODY. The scan reads each
+            # slug/title/body run on its own, so two entries fused into one
+            # dictionary (the `),` `(` between them lost, typically while
+            # resolving a merge) still parse as two terms and match the slug
+            # count. Typst rejects the repeated keys, but nothing here
+            # evaluates CONTEXT.typ as written, so the fault is caught here.
+            close = re.compile(
+                r'(?:\s|//[^\n]*)*(?:,(?:\s|//[^\n]*)*)?\)').match(
+                    src, body["end"])
+            if close is None:
+                rest = src[body["end"]:]
+                stray = body["end"] + len(rest) - len(rest.lstrip(" \t\n,"))
+                line = src.count("\n", 0, stray) + 1
+                ahead = src[stray:stray + 24]
+                raise TermParseError(
+                    "%s:%d: term %r is not closed after its body; found %r "
+                    "where the `)` ending the entry belongs. Two entries have "
+                    "probably fused into one dictionary with repeated keys, "
+                    "which Typst rejects. Restore the `),` `(` between them."
+                    % (rel, line, m.group("slug"), ahead))
             parsed.append(m.group("slug"))
             found.append({
                 "slug": m.group("slug"),

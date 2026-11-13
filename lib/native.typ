@@ -908,7 +908,8 @@
       }
       if groups.len() > 0 {
         if "group" not in node {
-          panic("diagram node is missing group while the diagram declares groups")
+          panic("diagram node " + repr(node.id) + " is missing group while the "
+            + "diagram declares groups; every node must name a declared group")
         }
       }
     }

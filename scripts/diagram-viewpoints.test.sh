@@ -734,7 +734,7 @@ assert_invariant parent-self "cannot parent itself" \
   '#diagram(altitude: "L2", groups: ((id: "g", label: "G", kind: "domain", parent: "g"),), nodes: ())'
 assert_invariant parent-cycle "diagram group parent cycle" \
   '#diagram(altitude: "L2", groups: ((id: "a", label: "A", kind: "domain", parent: "b"), (id: "b", label: "B", kind: "subdomain", parent: "a")), nodes: ())'
-assert_invariant node-membership-missing "diagram node is missing group" \
+assert_invariant node-membership-missing "is missing group while the diagram declares groups" \
   '#diagram(altitude: "L2", groups: ((id: "g", label: "G", kind: "domain"),), nodes: ((id: "a", label: "A", kind: "system"),))'
 assert_invariant node-membership-unknown "not a declared diagram group" \
   '#diagram(altitude: "L2", groups: ((id: "g", label: "G", kind: "domain"),), nodes: ((id: "a", label: "A", kind: "system", group: "ghost"),))'

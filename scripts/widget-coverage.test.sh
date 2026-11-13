@@ -349,7 +349,7 @@ PY
       # one mark per structure that could silently render empty: the diagram's
       # own labels, a coverage reason, a stat value, a pending entry.
       for mark in designlib "called directly" LICENSE "2.4M" "Pending updates" \
-        "ADR-0065"; do
+        "ADR-0065" "Ledger store" "rotated in place"; do
         case "$ngtext" in
         *"$mark"*) ;;
         *) ngmissing="$ngmissing [$mark]" ;;
@@ -359,6 +359,14 @@ PY
         pass_line "the gallery's diagram, table, and ledger reach the page"
       else
         fail_line "the gallery rendered but these marks are absent:$ngmissing"
+      fi
+      # The landscape page is asserted from the page sizes, because the figure's
+      # text reaches the page whether or not the page turned.
+      if pdfinfo -f 1 -l 999 "$NG_TMP/out.pdf" 2>/dev/null |
+        awk '/^Page +[0-9]+ size:/ { if ($4 > $6) found = 1 } END { exit !found }'; then
+        pass_line "the gallery's landscape page is wider than tall"
+      else
+        fail_line "the gallery has no landscape page"
       fi
     else
       fail_line "no pdftotext: the gallery's marks could not be asserted"

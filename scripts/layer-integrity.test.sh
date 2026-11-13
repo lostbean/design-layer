@@ -50,6 +50,11 @@ unset GIT_SHALLOW_FILE GIT_COMMON_DIR
 #   (y2) decision-citation advisory counts the LIVE uncited decisions, excludes
 #        a superseded one, stays silent on a fully-cited layer, tolerate-absent
 #   (md) a layer still authored in markdown -> exit 2 (refused, names the file)
+#   (instr) host README.md / AGENTS.md links into the layer and pending titles
+#           resolve -> exit 0; a renamed section, a missing ADR or layer file,
+#           an unknown or unreadable pending item -> exit 1 with path:line; a
+#           superseded ADR -> advisory; docs/, symlinks, ignored and vendored
+#           trees are out of scope
 #   (nested) exact nested projects are checked independently by design-check;
 #            stale/broken nested layers and invalid declarations fail loud
 #
@@ -1418,6 +1423,181 @@ The one thing beta owns.
 EOF
 assert_exit 2 "a leftover markdown glossary is refused" -- "$CHECK" "$SMIX2"
 assert_contains "docs/design/beta/CONTEXT.md" "report names the markdown glossary leftover"
+
+# --- Scenario (instr): host README.md / AGENTS.md point into the layer -------
+# A host keeps instruction files beside its code that name design sections,
+# ADRs and pending entries. Each pointer rots like a coverage row, so check 9
+# resolves every link that lands under the layer or the ADR directory and every
+# bold title in a README's "Designed, not built" list — passing and failing
+# cases for each rule, plus the scope rules: docs/ keeps its own handling,
+# symlinks are read once, ignored and vendored trees never enter.
+#
+# build_instr <root> -- build_single plus a pending ledger, a superseding ADR,
+# and one clean README.md + AGENTS.md pair under src/billing/.
+build_instr() {
+  local root="$1"
+  build_single "$root"
+  cat >"$root/docs/design/design.typ" <<'EOF'
+#let title = [Design]
+#let body = [
+  #section(title: "Foundation")[
+    The system tracks #term("term-drift") between the layer and the system.
+    The ledger holds the argument, #adr(1).
+  ]
+  #pending-ledger(
+    pending-entry(
+      title: "Refunds reach the \"ledger\"",
+      kind: "build",
+      since: "2026-08-16",
+      adr: [#adr(1)],
+    )[Designed, not built.],
+    pending-entry(kind: "ruling", since: "2026-08-20", title: "Who owns a refund")[],
+  )
+  #section(
+    title: "Billing",
+  )[
+    Billing sends invoices.
+  ]
+]
+EOF
+  cat >"$root/docs/adr/0002-the-successor.md" <<'EOF'
+# 0002 — The successor
+
+<a id="adr-0002"></a>
+
+Supersedes [ADR-0001](0001-first-decision.md#adr-0001) whole.
+EOF
+  mkdir -p "$root/src/billing"
+  cat >"$root/src/billing/README.md" <<'EOF'
+# billing
+
+Governed by [§ Billing](../../docs/design/design.typ#billing) and
+[ADR-0002](../../docs/adr/0002-the-successor.md); vocabulary in
+[drift](../../docs/design/CONTEXT.typ#term-drift); the rendered
+[layer](../../docs/design/design-layer.pdf). Outside the layer, and so out of
+scope: [notes](../../notes/missing.md), [spec](https://example.com/spec).
+
+## Designed, not built
+
+- **Refunds reach the "ledger"** — not started.
+  Continuation lines and nested items are not entries:
+  - a nested remark
+- **Who owns a refund** (ruling).
+
+```md
+- an example inside a fence is not an item
+```
+
+## Verification
+
+- `make test`
+EOF
+  cat >"$root/src/billing/AGENTS.md" <<'EOF'
+# billing: local rules
+
+Read [README.md](README.md) and [§ Foundation](/docs/design/design.typ#foundation).
+EOF
+}
+
+SIN="$TMP/instr-clean"
+build_instr "$SIN"
+assert_exit 0 "instruction files that resolve pass" -- "$CHECK" "$SIN"
+assert_contains "2 instruction files" "both instruction files are scanned"
+assert_contains "5 instruction links resolved" \
+  "only the links into the layer are resolved"
+assert_contains "2 pending titles" "both pending titles are checked"
+assert_not_contains "advisory: src/" "a link to a live ADR raises no advisory"
+
+# Rule 1: a design-source fragment names a rendered section id.
+SIN1="$TMP/instr-section"
+build_instr "$SIN1"
+sed -i.bak 's|design.typ#billing|design.typ#invoicing|' "$SIN1/src/billing/README.md"
+assert_exit 1 "a README naming a renamed section fails" -- "$CHECK" "$SIN1"
+assert_contains 'src/billing/README.md:3: dangling section anchor: no heading renders id "invoicing"' \
+  "the violation names the README, its line, and the missing id"
+
+# Rule 2: an ADR link opens an existing ADR; a superseded one is an advisory.
+SIN2="$TMP/instr-adr"
+build_instr "$SIN2"
+sed -i.bak 's|0002-the-successor.md|0007-never-written.md|' "$SIN2/src/billing/README.md"
+assert_exit 1 "a README linking a missing ADR fails" -- "$CHECK" "$SIN2"
+assert_contains "src/billing/README.md:4: dangling link: target not found: ../../docs/adr/0007-never-written.md" \
+  "the missing ADR is named with its line"
+SIN3="$TMP/instr-superseded"
+build_instr "$SIN3"
+sed -i.bak 's|0002-the-successor.md|0001-first-decision.md|' "$SIN3/src/billing/README.md"
+assert_exit 0 "a link to a superseded ADR keeps the exit clean" -- "$CHECK" "$SIN3"
+assert_contains "advisory: src/billing/README.md:4: links ADR-0001, which ADR-0002 supersedes" \
+  "a superseded ADR is named with its successor"
+
+# Rule 3: a bold pending title names a pending entry; an item without one fails.
+SIN4="$TMP/instr-pending"
+build_instr "$SIN4"
+sed -i.bak 's|\*\*Who owns a refund\*\*|**Who owns a chargeback**|' "$SIN4/src/billing/README.md"
+assert_exit 1 "a README naming an unknown pending entry fails" -- "$CHECK" "$SIN4"
+assert_contains 'src/billing/README.md:14: unknown pending entry: "Who owns a chargeback"' \
+  "the unknown title is named with its line"
+SIN5="$TMP/instr-unreadable"
+build_instr "$SIN5"
+sed -i.bak 's|^- \*\*Who owns a refund\*\* (ruling).|- "Who owns a refund" (ruling).|' \
+  "$SIN5/src/billing/README.md"
+assert_exit 1 "a pending item without a bold title fails" -- "$CHECK" "$SIN5"
+assert_contains "src/billing/README.md:14: unreadable pending item" \
+  "the unreadable item is named with its line"
+# A README with no such heading names nothing and is not asked to.
+SIN6="$TMP/instr-no-heading"
+build_instr "$SIN6"
+sed -i.bak 's|^## Designed, not built|## Roadmap|' "$SIN6/src/billing/README.md"
+sed -i.bak 's|^- "|- |' "$SIN6/src/billing/README.md"
+printf -- '- Free-form roadmap text.\n' >>"$SIN6/src/billing/README.md"
+assert_exit 0 "a README without the pending heading is not read for titles" -- "$CHECK" "$SIN6"
+assert_not_contains "pending titles" "no pending title is counted without the heading"
+
+# Rule 4: any other link into the layer must open an existing file.
+SIN7="$TMP/instr-other"
+build_instr "$SIN7"
+printf 'See [the diagram](../../docs/design/figures/billing.svg).\n' \
+  >>"$SIN7/src/billing/AGENTS.md"
+assert_exit 1 "a README linking a missing layer file fails" -- "$CHECK" "$SIN7"
+assert_contains "src/billing/AGENTS.md:4: dangling link: target not found: ../../docs/design/figures/billing.svg" \
+  "the missing layer file is named with its line"
+
+# Scope: docs/ keeps its existing handling, a symlink is read once at its real
+# path, and ignored or vendored trees never enter.
+SIN8="$TMP/instr-scope"
+build_instr "$SIN8"
+printf 'A [broken](design/design.typ#nowhere) docs README.\n' >"$SIN8/docs/README.md"
+mkdir -p "$SIN8/vendor/lib" "$SIN8/node_modules/pkg" "$SIN8/build" "$SIN8/notes"
+for d in vendor/lib node_modules/pkg build; do
+  printf '[x](../../docs/design/design.typ#nowhere)\n' >"$SIN8/$d/README.md"
+done
+printf '[x](../docs/design/design.typ#nowhere)\n' >"$SIN8/notes/broken.md"
+mkdir -p "$SIN8/src/linked"
+ln -s ../../notes/broken.md "$SIN8/src/linked/AGENTS.md"
+ln -s AGENTS.md "$SIN8/src/billing/CLAUDE.md"
+(
+  cd "$SIN8"
+  git init -q .
+  printf 'vendor/\nnode_modules/\nbuild/\n' >.gitignore
+  git add -A
+)
+assert_exit 0 "docs/, symlinks, and ignored trees are out of scope (git)" -- "$CHECK" "$SIN8"
+assert_contains "2 instruction files" "only the real, unignored instruction files are scanned"
+rm -rf "$SIN8/.git" "$SIN8/vendor"
+assert_exit 0 "the non-git walk prunes vendored and build trees" -- "$CHECK" "$SIN8"
+assert_contains "2 instruction files" "the walk scans the same two files"
+
+# Tolerate-absent: a schema copy without instruction_files skips check 9.
+NOINSTR="$TMP/schema-no-instruction-files.json"
+python3 -c '
+import json, sys
+s = json.load(open(sys.argv[1]))
+del s["layer_layout"]["instruction_files"]
+json.dump(s, open(sys.argv[2], "w"))' \
+  "$HERE/../schema/design-schema.json" "$NOINSTR"
+assert_exit 0 "a pre-instruction-files schema copy skips the check" -- \
+  env DESIGN_SCHEMA="$NOINSTR" "$CHECK" "$SIN1"
+assert_not_contains "instruction files" "no instruction file is scanned without the key"
 
 # --- Scenario (perf): a run finishes well under a wall-clock ceiling ----------
 # The parse-once invariant: the checker reads each layer file ONCE into an

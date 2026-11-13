@@ -97,6 +97,33 @@
   }
 }
 
+// ---- foundation statements are siblings, never nested ---------------------
+// A statement whose closing `]` goes missing is closed by the next stray `]`
+// further down, and every statement in between becomes part of its BODY. The
+// document still compiles, each inner card renders inside the outer one, and
+// the trail still records every kind, so neither order nor cardinality
+// notices. The host stack makes the nesting visible: each statement pushes
+// itself while its body is laid out, and a foundation statement that finds a
+// host on the stack is inside another statement's body.
+//
+// It is a FAILURE, not a guideline. A foundation statement inside another one
+// is not a style the author may prefer: the outer card now claims the inner
+// one's meaning, and the projection reads it as part of that body.
+#let _statement-host = state("statement-host", ())
+
+#let _label(kind, title) = kind + " " + (
+  if type(title) == str { repr(title) } else { "(untitled)" })
+
+#let _assert-not-nested(kind, title) = context {
+  let hosts = _statement-host.get()
+  if hosts.len() > 0 {
+    _fail(kind, _label(kind, title) + " is written inside the body of "
+          + hosts.last() + ". Foundation statements are siblings; this "
+          + "usually means the earlier statement's closing `]` is missing and "
+          + "a later `]` closed it. Close that body before this statement")
+  }
+}
+
 // A clause's body is markdown already routed through cmarker.render, so its
 // content tree is a call, not literal text — this walks it down to the
 // characters the author actually wrote, the same structural walk _len (below)
@@ -162,13 +189,17 @@
   // one from a previous behavior block.
   if kind == "behavior" { _behavior-level.update(level) }
   let visual = {
+    if FOUNDATION-ORDER.contains(kind) { _assert-not-nested(kind, title) }
     block(width: 100%, inset: (x: 9pt, top: 7pt, bottom: 8pt), fill: c.lighten(95%),
           stroke: (top: 1.4pt + c, rest: 0.45pt + c.lighten(52%)),
           radius: 2pt, breakable: false,
       [
         #text(size: RENDERER-META, fill: c, weight: "bold", tracking: 0.4pt, upper(kind))
         #linebreak() #text(weight: "bold", size: RENDERER-TITLE, title)
-        #linebreak() #body
+        #linebreak()
+        #_statement-host.update(h => h + (_label(kind, title),))
+        #body
+        #_statement-host.update(h => h.slice(0, -1))
         #if furniture.len() > 0 [ #v(4pt) #furniture.join(h(3pt)) ]
       ])
     if kind == "behavior" { _behavior-level.update(none) }

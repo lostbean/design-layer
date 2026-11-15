@@ -2,12 +2,14 @@
 
 #let title = [Design Layer]
 #let accent = "blue"
+#let context_command = "nix run .#context --"
 
 #let body = [
   Design Layer helps a project explain its architecture to people and code
   agents from one authored source. It combines documentation guidance with a
-  checked Typst library, a PDF renderer, a Markdown projector, and a document
-  gate. The project being described remains responsible for its architecture.
+  checked Typst library, a PDF renderer, a Markdown projector, a folder-contract
+  generator, and a document gate. The project being described remains
+  responsible for its architecture.
 
   #section(title: "Foundation", lead: "Shared understanding with explicit limits.", body: [
     #goal(title: "Orient a newcomer")[
@@ -35,20 +37,23 @@
     altitude: "L3",
     title: "The document pipeline",
     caption: [The host supplies authored content. The library checks it and
-      exposes visual output or semantic metadata. The PDF renderer and Markdown
-      projector consume those respective views. The separate gate also checks
-      references across the host's artifacts.],
+      exposes visual output or semantic metadata. The PDF renderer consumes the
+      visual view; the Markdown projector and the folder-contract generator
+      consume the semantic one. The separate gate also checks references and
+      folder contracts across the host's artifacts.],
     flow: "top-to-bottom",
     nodes: (
       (id: "source", label: "Host sources", sub: "Typst + vocabulary", kind: "external-system"),
       (id: "library", label: "Checked library", sub: "schema-backed contracts", kind: "component"),
       (id: "pdf", label: "PDF renderer", sub: "human reading", kind: "component"),
       (id: "markdown", label: "Markdown projector", sub: "agent reading", kind: "component"),
+      (id: "contracts", label: "Folder contracts", sub: "AGENTS.md per code folder", kind: "component"),
     ),
     edges: (
       (from: "source", to: "library", relation: "call", label: "calls authoring functions"),
       (from: "library", to: "pdf", relation: "dataflow", label: "visual content"),
       (from: "library", to: "markdown", relation: "dataflow", label: "semantic metadata"),
+      (from: "library", to: "contracts", relation: "dataflow", label: "unit contracts"),
     ),
   ), body: [
     *Host boundary.* A host owns its `design.typ`, glossary `CONTEXT.typ`, and
@@ -62,48 +67,186 @@
     source files call its functions directly. There is no Markdown authoring
     conversion between those calls and their contracts.
 
-    *State boundary.* Authored sources and the host's committed PDF persist.
-    Library copies, compile workspaces, and agent Markdown are derived outputs.
-    The system owns no application database or long-running service.
+    *State boundary.* Authored sources, the host's committed PDF, and the
+    generated region of each listed folder's `AGENTS.md` persist. Library
+    copies, compile workspaces, and agent Markdown are derived outputs. The
+    system owns no application database or long-running service.
   ])
 
   #section(title: "Progressive breakdown", lead: "Responsibilities follow the evidence each part can see.", body: [
-    *Documentation guidance* selects what a newcomer needs and where explanation
-    stops. `skills/document-design/` owns that judgment; the syntax skill owns
-    exact notation. These skills accompany the same bundle as the tools.
-
-    *The checked library* reads the schema at compile time. A block contract
-    gives a recurring concept one structured authoring call and one visual
-    representation. Schema vocabularies and semantic tokens keep those calls
-    consistent. Library code is handwritten; assembling a library copies it
-    with its schema rather than generating a second implementation.
+    Each part below is a #term("term-design-unit"). It answers the same five
+    questions at every depth and lists the directories that realize it. A
+    listed directory carries the unit as a #term("term-folder-contract").
 
     *Validation has three scopes.* Individual calls check their own values.
     Compile-local trails collect facts across calls, then document assertions
     check the completed scope; this can detect an omitted statement as well as
     a malformed one. Artifact integrity resolves links, glossary ownership,
-    and declared file homes across the repository.
+    declared file homes, unit paths, and folder contracts across the repository.
 
     An #term("term-invariant") rejects invalid meaning. A #term("term-guideline")
     reports a structural or style expectation without blocking an ordinary
     render. Strict mode promotes guidelines to errors. Reports stay outside
     the PDF so readers see the authored design rather than authoring diagnostics.
 
-    *The PDF renderer* discovers the layer, combines its chapters and vocabulary,
-    and supplies the shared document shell. Rendering and validation use the
-    same Typst calls. The aggregate reads guideline metadata and reports it to
-    the author.
+    #unit(
+      id: "documentation-guidance",
+      title: "Documentation guidance",
+      overview: [Two skills travel in the bundle. `document-design` selects
+        what a newcomer needs and where explanation stops.
+        `design-document-syntax` owns exact notation and mechanical contracts.],
+      interface: (
+        [`skills/document-design/SKILL.md` states the baseline unit contract
+          and when each optional block applies.],
+        [`skills/design-document-syntax/SKILL.md` states file homes, calls,
+          vocabularies, and commands.],
+      ),
+      invariants: (
+        [The syntax skill describes only what the library, the schema, or a
+          gate script decides.],
+        [Neither skill names a sibling framework or a host workflow.],
+      ),
+      side-effects: (),
+      verification: [None mechanical. The gallery and the self-tests hold the
+        contracts the skills describe.],
+      paths: ("skills",),
+    )
 
-    *The Markdown projector* queries #term("term-semantic-metadata") emitted by
-    those calls. It preserves decision-bearing fields and relationships while
-    omitting presentation. Complete output and section output use the same
-    projection. A manifest gives section addresses and a digest; a caller can
-    require that digest when loading sections from one snapshot.
+    #unit(
+      id: "checked-library",
+      title: "Checked library",
+      overview: [Hand-written Typst that reads the schema at compile time. One
+        function per block kind validates its own call, then draws it for the
+        PDF or emits #term("term-semantic-metadata") for the projection.],
+      interface: (
+        [`designlib.typ` is the one import a `design.typ` makes.],
+        [`schema/design-schema.json` declares every vocabulary, the unit
+          contract, and the anchor patterns.],
+        [The compile input `strict=1` promotes every guideline to an error;
+          `context=1` switches every call to semantic metadata.],
+      ),
+      invariants: (
+        [A value outside a declared vocabulary, an unresolved reference, and a
+          unit missing a required field fail the compile.],
+        [A guideline never reaches the page and never blocks an ordinary
+          render.],
+        [Every declared block kind resolves to a callable function of the same
+          name, and the gallery calls it.],
+      ),
+      side-effects: (),
+      verification: [`nix develop --command bash scripts/designlib-native.test.sh`
+        and `scripts/widget-coverage.test.sh`.],
+      paths: ("lib", "schema", "fixtures"),
+    )
 
-    *The document gate* regenerates and compares the committed PDF, checks
-    semantic token coverage, and checks cross-artifact integrity. The gallery
-    and self-tests separately exercise the tools, including rejected inputs.
-    This layer exercises integration; the self-tests prove individual contracts.
+    #unit(
+      id: "pdf-renderer",
+      title: "PDF renderer",
+      overview: [`design-aggregate` discovers the root and context documents,
+        declares the layer's vocabulary, and compiles one PDF under a shared
+        shell. `render-project` assembles the library directory it compiles
+        against.],
+      interface: (
+        [`render <layer-root> <out.pdf>` writes the document.],
+        [`render <layer-root> <out.pdf> --check` regenerates and compares, and
+          writes nothing.],
+        [`project <schema> <out-dir>` assembles a library directory.],
+      ),
+      invariants: (
+        [Two renders of one source are byte-identical.],
+        [A layer-local library that differs from the one in use is refused
+          before anything renders.],
+        [A compiler warning fails the render.],
+      ),
+      side-effects: (
+        [Writes the PDF and a compile workspace under `.render`, which it
+          removes.],
+        [The public app refreshes the layer's `.render` library copy.],
+      ),
+      verification: [`nix develop --command bash scripts/typst-layer.test.sh`],
+      paths: ("scripts",),
+    )
+
+    #unit(
+      id: "markdown-projector",
+      title: "Markdown projector",
+      overview: [`design-context` queries the semantic metadata the authoring
+        calls emit and writes Markdown for an agent. It preserves
+        decision-bearing fields and relationships and omits presentation.],
+      interface: (
+        [`context <layer-root>` prints the complete projection.],
+        [`--manifest` and `--preview` list section addresses, unit ids, sizes,
+          and a digest.],
+        [`--section <address>`, `--unit <id>`, and `--path <repo-path>` print
+          one part; `--expect-digest` refuses a part from another snapshot.],
+      ),
+      invariants: (
+        [A construct with no Markdown form fails the projection instead of
+          disappearing.],
+        [Complete output and selected output come from one projection.],
+      ),
+      side-effects: (
+        [Writes a file only under `--output`, and never over an existing one.],
+      ),
+      verification: [`nix develop --command bash scripts/design-context.test.sh`],
+      paths: ("scripts",),
+    )
+
+    #unit(
+      id: "folder-contracts",
+      title: "Folder contracts",
+      overview: [`design-units` writes each unit's contract into the
+        `AGENTS.md` of every directory that unit lists. An agent working in a
+        folder then reads its governing contract without loading the layer.],
+      interface: (
+        [`units <layer-root> [repo-root]` writes the contracts.],
+        [`units <layer-root> [repo-root] --check` regenerates and compares.],
+      ),
+      invariants: (
+        [Text outside the generated region is never changed.],
+        [An existing `CLAUDE.md` is never replaced.],
+        [A region no unit lists is removed, and its file only when nothing
+          else remains in it.],
+      ),
+      side-effects: (
+        [Creates, rewrites, or deletes `AGENTS.md` in listed directories.],
+        [Creates a `CLAUDE.md` symlink where none exists.],
+      ),
+      verification: [`nix develop --command bash scripts/design-units.test.sh`],
+      paths: ("scripts",),
+    )
+
+    #unit(
+      id: "document-gate",
+      title: "Document gate",
+      overview: [The `check` app decides whether a layer is well-formed. It
+        proves the PDF fresh, checks semantic token coverage, resolves
+        cross-artifact references, and checks every unit path and folder
+        contract.],
+      interface: (
+        [`check <layer-root> [repo-root]` exits 0 when clean, 1 on a violation,
+          and 2 on an error. `--nested-project <path>` adds an independently
+          checked project.],
+        [`lint <layer-root>` reports the first guideline as an error. It is
+          never part of `check`.],
+      ),
+      invariants: (
+        [A stale generated artifact is reported and never rewritten.],
+        [A check that examined nothing does not report a pass.],
+        [The report of directories no unit covers never changes the exit
+          code.],
+      ),
+      side-effects: (
+        [Refreshes the `.render` library copy of the checked layer and of each
+          nested project's layer.],
+      ),
+      verification: [`nix flake check`],
+      paths: ("scripts",),
+    )
+
+    The gallery and self-tests separately exercise the tools, including
+    rejected inputs. This layer exercises integration; the self-tests prove
+    individual contracts.
   ])
 
   #section(title: "End-to-end walkthrough", lead: "An architecture change becomes a shared reading surface.", body: [
@@ -120,8 +263,13 @@
       For a large layer, an agent first reads the manifest and then requests
       the relevant section subtree with its expected digest.
 
+    *Link.* The units app writes each unit's contract into the folders that
+      unit lists. A folder's `AGENTS.md` then names the unit, links its Typst
+      source, and prints the command that loads the full unit.
+
     *Check.* The author inspects both reading forms and runs the gate. A stale PDF
-      fails freshness; a broken cross-artifact link fails integrity. Passing
+      fails freshness; a broken cross-artifact link fails integrity; a missing
+      unit path or a stale folder contract fails the unit checks. Passing
       these checks does not establish that the host implements its claims.
 
     *Representation limits.* Semantic diagrams preserve nodes and relationships
@@ -139,6 +287,7 @@
     *Where to investigate.* `lib/designlib.typ` maps the library responsibilities;
     `schema/design-schema.json` declares the vocabulary. `scripts/design-aggregate`
     and `scripts/design-context` own the two reading outputs.
+    `scripts/design-units` owns the folder contracts.
     `scripts/layer-integrity` owns cross-artifact checks. `flake.nix` assembles
     the bundle and public apps. The gallery and self-tests provide executable
     examples and failure cases.

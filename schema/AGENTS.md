@@ -1,0 +1,30 @@
+<!-- design-units:begin -->
+<!-- Generated from the design layer by design-units. Do not edit between these markers: change the unit in its Typst source and regenerate. -->
+<!-- prettier-ignore-start -->
+
+## Design unit: Checked library
+
+Overview: Hand-written Typst that reads the schema at compile time. One function per block kind validates its own call, then draws it for the PDF or emits Semantic metadata for the projection.
+
+Interface:
+
+- `designlib.typ` is the one import a `design.typ` makes.
+- `schema/design-schema.json` declares every vocabulary, the unit contract, and the anchor patterns.
+- The compile input `strict=1` promotes every guideline to an error; `context=1` switches every call to semantic metadata.
+
+Invariants:
+
+- A value outside a declared vocabulary, an unresolved reference, and a unit missing a required field fail the compile.
+- A guideline never reaches the page and never blocks an ordinary render.
+- Every declared block kind resolves to a callable function of the same name, and the gallery calls it.
+
+Side effects: None
+
+Verification: `nix develop --command bash scripts/designlib-native.test.sh` and `scripts/widget-coverage.test.sh`.
+
+Source: [docs/design/design.typ#unit-checked-library](../docs/design/design.typ#unit-checked-library)
+
+Full unit: `nix run .#context -- docs/design --unit checked-library`
+
+<!-- prettier-ignore-end -->
+<!-- design-units:end -->

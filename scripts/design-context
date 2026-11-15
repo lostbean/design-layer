@@ -24,9 +24,13 @@ from typst_policy import environment as typst_environment
 
 USAGE = (
     "usage: design-context <layer-root> "
-    "[--estimate | --manifest | --preview [--depth N] | --section PATH] "
+    "[--estimate | --manifest | --preview [--depth N] | --section PATH "
+    "| --unit ID | --path REPO-PATH] "
     "[--output PATH] [--expect-digest DIGEST]"
 )
+# The modes that emit one selected part of the projection. They share the
+# output and digest-guard behaviour, so every rule about them names this set.
+SELECTOR_MODES = frozenset({"section", "unit", "path"})
 LABEL = "<design-semantic>"
 # A guideline note is a diagnostic the compile records for `lint`; it is never
 # document content, and `render` and `check` accept a layer that carries one.
@@ -61,7 +65,7 @@ def layout_child(value: dict[str, object]) -> object:
 
 
 SEMANTIC_FIELDS = {
-    "document": {"name", "level", "title", "body"},
+    "document": {"name", "level", "title", "body", "context-command"},
     "term": {"owner", "slug", "title", "body"},
     "section": {"title", "lead", "visual", "notes", "body"},
     "answers": {"title", "accent", "answers"},
@@ -105,7 +109,23 @@ SEMANTIC_FIELDS = {
     "lens-pill": {"name"},
     "pill": {"names"},
     "term-reference": {"slug"},
+    "unit": {
+        "id",
+        "title",
+        "sections",
+        "empty-label",
+        "overview",
+        "interface",
+        "invariants",
+        "side-effects",
+        "verification",
+        "paths",
+        "body",
+    },
 }
+# Markdown has six heading levels, and a unit's heading level is its depth. A
+# unit nested past the sixth level has no heading the section index can read.
+MAX_HEADING_LEVEL = 6
 
 
 class ProjectionError(Exception):
@@ -124,6 +144,8 @@ class CliOptions:
     depth: int
     section: str | None
     expect_digest: str | None
+    unit: str | None = None
+    path: str | None = None
 
 
 def fail(message: str, code: int = 2) -> NoReturn:
@@ -136,6 +158,8 @@ def parse_args(argv: list[str]) -> CliOptions:
     output: Path | None = None
     depth: int | None = None
     section: str | None = None
+    unit: str | None = None
+    path: str | None = None
     expect_digest: str | None = None
     positionals: list[str] = []
     index = 0
@@ -165,6 +189,18 @@ def parse_args(argv: list[str]) -> CliOptions:
                 fail("--section requires a path")
             section = argv[index]
             select_mode("section")
+        elif arg == "--unit":
+            index += 1
+            if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
+                fail("--unit requires a unit id")
+            unit = argv[index]
+            select_mode("unit")
+        elif arg == "--path":
+            index += 1
+            if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
+                fail("--path requires a repo-relative path")
+            path = normalize_query_path(argv[index])
+            select_mode("path")
         elif arg == "--depth":
             index += 1
             if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
@@ -199,8 +235,8 @@ def parse_args(argv: list[str]) -> CliOptions:
         fail(f"--{mode} and --output are mutually exclusive")
     if mode != "preview" and depth is not None:
         fail("--depth is only valid with --preview")
-    if mode != "section" and expect_digest is not None:
-        fail("--expect-digest is only valid with --section")
+    if mode not in SELECTOR_MODES and expect_digest is not None:
+        fail("--expect-digest is only valid with --section, --unit, or --path")
     if mode != "section" and section is not None:
         fail("--section requires a section path")
     if mode == "section" and section is None:
@@ -217,7 +253,42 @@ def parse_args(argv: list[str]) -> CliOptions:
         depth=depth or 2,
         section=section,
         expect_digest=expect_digest,
+        unit=unit,
+        path=path,
     )
+
+
+# The characters a repo-relative path may not carry: a path names one exact
+# place, never a pattern. The same set the schema declares for a unit's own
+# `paths`; a query is held to it so a typo is refused instead of matching
+# nothing.
+PATH_FORBIDDEN = frozenset("*?[]{}\\")
+
+
+def normalize_query_path(raw: str) -> str:
+    """A `--path` value as the repo-relative path it names.
+
+    A leading `./` and a trailing `/` are spelling, so they are dropped. What
+    remains must be one exact repo-relative path: a query that is absolute,
+    that climbs with `..`, or that carries a glob cannot be compared with a
+    unit's declared paths, and is a usage error rather than an empty result.
+    """
+    value = raw
+    while value.startswith("./"):
+        value = value[2:]
+    value = value.rstrip("/")
+    segments = value.split("/") if value else []
+    if (
+        not value
+        or raw.startswith("/")
+        or any(character in PATH_FORBIDDEN for character in value)
+        or any(not segment or segment in {".", ".."} for segment in segments)
+    ):
+        fail(
+            f"--path requires one repo-relative path with no '.', '..', or "
+            f"glob segment, got {raw!r}"
+        )
+    return value
 
 
 def typst_string(path: Path) -> str:
@@ -320,7 +391,10 @@ def semantic_probe(layer: Path, scratch: Path, library: Path) -> Path:
                 f"#import {typst_string(relative)} as {module}",
                 f"#let values_{index} = dictionary({module})",
                 f'#let title_{index} = if "title" in values_{index} {{ values_{index}.title }} else {{ [{name} context] }}',
-                f'#metadata((kind: "document", name: "{name}", level: {1 if index == 0 else 2}, title: title_{index}, body: {module}.body)) <design-semantic>',
+                # `context_command` is the one binding the folder-contract
+                # generator reads off a design module. It travels in the
+                # document record so that generator needs no second probe.
+                f'#metadata((kind: "document", name: "{name}", level: {1 if index == 0 else 2}, title: title_{index}, body: {module}.body, "context-command": values_{index}.at("context_command", default: none))) <design-semantic>',
             ]
         )
     lines.append("")
@@ -714,6 +788,148 @@ def expect_keys(value: dict[str, object], allowed: set[str], path: str) -> None:
         raise ProjectionError(
             f"unrepresentable field(s) at {path}: {', '.join(sorted(surplus))}"
         )
+
+
+@dataclass
+class UnitSection:
+    """One answered section of a design unit's contract."""
+
+    field: str
+    label: str
+    shape: str
+    text: str
+    items: list[str]
+
+
+def design_unit_sections(
+    value: dict[str, object],
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> list[UnitSection]:
+    """Read a unit node's sections in the order the library declared them.
+
+    The node carries the section table the library rendered it with, so the
+    labels and the order here are the schema's by way of the one reader that
+    owns it, and this projection cannot disagree with the PDF about them.
+    """
+    declared = value.get("sections")
+    if not isinstance(declared, list) or not declared:
+        raise ProjectionError(f"unit declares no sections at {path}")
+    sections: list[UnitSection] = []
+    for index, entry in enumerate(declared):
+        if not isinstance(entry, dict):
+            raise ProjectionError(f"unit section is not an object at {path}.sections[{index}]")
+        field, label, shape = entry.get("field"), entry.get("label"), entry.get("shape")
+        if not isinstance(field, str) or not isinstance(label, str) or shape not in ("text", "list"):
+            raise ProjectionError(f"unit section is malformed at {path}.sections[{index}]")
+        if field not in value:
+            raise ProjectionError(f"unit is missing section {field!r} at {path}")
+        raw = value[field]
+        if shape == "list":
+            if not isinstance(raw, list):
+                raise ProjectionError(f"unit section {field!r} is not a list at {path}")
+            # An item is one line of a Markdown list, so its line breaks fold
+            # to spaces. Each fragment is normalized HERE, the way the whole
+            # projection is normalized later, so a folder contract — which is
+            # never part of that later pass — carries the same text.
+            items = [
+                re.sub(
+                    r"\s*\n\s*",
+                    " ",
+                    _normalize_fragment(
+                        content_text(
+                            item, f"{path}.{field}[{position}]", term_titles, context_names
+                        )
+                    ).strip(),
+                )
+                for position, item in enumerate(raw)
+            ]
+            if any(not item for item in items):
+                raise ProjectionError(f"unit section {field!r} holds an empty item at {path}")
+            sections.append(UnitSection(field, label, shape, "", items))
+        else:
+            text = _normalize_fragment(
+                content_text(raw, f"{path}.{field}", term_titles, context_names)
+            ).strip()
+            if not text:
+                raise ProjectionError(f"unit section {field!r} is empty at {path}")
+            sections.append(UnitSection(field, label, shape, text, []))
+    return sections
+
+
+def design_unit_empty_label(value: dict[str, object], path: str) -> str:
+    label = value.get("empty-label")
+    if not isinstance(label, str) or not label:
+        raise ProjectionError(f"unit declares no empty label at {path}")
+    return label
+
+
+def design_unit_paths(value: dict[str, object], path: str) -> list[str]:
+    paths = value.get("paths")
+    if not isinstance(paths, list) or not all(isinstance(item, str) and item for item in paths):
+        raise ProjectionError(f"unit paths are not a list of paths at {path}")
+    return list(paths)
+
+
+def design_unit_contract_markdown(sections: list[UnitSection], empty_label: str) -> str:
+    """The sections of one unit as Markdown.
+
+    This is the one rendering of a unit's contract. The projection places it
+    under the unit's heading and the folder-contract generator places the same
+    text in a folder's AGENTS.md, so the two cannot drift apart.
+    """
+    blocks: list[str] = []
+    for section in sections:
+        if section.shape == "list":
+            if section.items:
+                blocks.append(
+                    f"{section.label}:\n\n" + "\n".join(f"- {item}" for item in section.items)
+                )
+            else:
+                blocks.append(f"{section.label}: {empty_label}")
+        else:
+            blocks.append(f"{section.label}: {section.text}")
+    return "\n\n".join(blocks)
+
+
+def design_unit_markdown(
+    value: dict[str, object],
+    level: int,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+    allow_clauses: bool,
+) -> str:
+    if level > MAX_HEADING_LEVEL:
+        raise ProjectionError(
+            f"unit {value.get('id')!r} at {path} is nested past Markdown's "
+            f"{MAX_HEADING_LEVEL} heading levels and cannot be addressed"
+        )
+    unit_id = value.get("id")
+    if not isinstance(unit_id, str) or not unit_id:
+        raise ProjectionError(f"unit id is invalid at {path}")
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    if not title:
+        raise ProjectionError(f"unit {unit_id!r} has no title at {path}")
+    empty_label = design_unit_empty_label(value, path)
+    paths = design_unit_paths(value, path)
+    contract = design_unit_contract_markdown(
+        design_unit_sections(value, path, term_titles, context_names), empty_label
+    )
+    body = content_text(
+        value.get("body"),
+        f"{path}.body",
+        term_titles,
+        context_names,
+        level + 1,
+        allow_clauses,
+    ).strip()
+    listed = ", ".join(f"`{item}`" for item in paths) if paths else empty_label
+    parts = [f"{'#' * level} unit: {title}", f"ID: {unit_id}", f"Paths: {listed}", contract]
+    if body:
+        parts.append(body)
+    return "\n\n" + "\n\n".join(parts) + "\n\n"
 
 
 def unit_markdown(
@@ -1445,6 +1661,11 @@ def semantic_markdown(
         return unit_markdown(
             value, "contract", level, path, term_titles, context_names
         )
+    if kind == "unit":
+        level = heading_level if heading_level is not None else 3
+        return design_unit_markdown(
+            value, level, path, term_titles, context_names, allow_clauses
+        )
     if kind == "entity":
         level = heading_level if heading_level is not None else 3
         title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
@@ -1941,7 +2162,158 @@ def validate_state_links(records: list[object]) -> None:
             raise ProjectionError(f"state links: state type {state_type!r} variants do not equal state machine {machine_id!r} states")
 
 
+@dataclass
+class UnitRecord:
+    """One design unit found in the layer, in document order."""
+
+    id: str
+    title: str
+    paths: list[str]
+    parent: str | None
+    document: str
+    # The unit's sections as Markdown: the text the projection places under the
+    # unit's heading and a folder contract repeats.
+    contract: str
+    node: dict[str, object]
+
+
+@dataclass
+class LayerUnits:
+    """The units a layer declares, with the facts a folder contract names.
+
+    This is read WITHOUT the Markdown projection. The gate checks folder
+    contracts for every layer, and a layer is well-formed without the corpus
+    maps the projection requires and with constructs the projection cannot
+    represent — so the unit checks must not inherit either requirement.
+    """
+
+    units: list[UnitRecord]
+    # (name, source path) per design document, root first.
+    documents: list[tuple[str, Path]]
+    # The `context_command` each design module exports, by document name.
+    context_commands: dict[str, object]
+
+
+@dataclass
+class Projection:
+    """One Markdown projection of a layer, with the units its selectors read."""
+
+    markdown: bytes
+    units: list[UnitRecord]
+
+
+@dataclass
+class _LayerSemantics:
+    """The queried semantic tree, resolved once for whichever reader asks."""
+
+    expected_names: list[str]
+    documents: list[tuple[str, Path]]
+    by_name: dict[object, dict[str, object]]
+    terms: list[dict[str, object]]
+    term_titles: dict[str, str]
+    context_names: frozenset[str]
+    units: list[UnitRecord]
+
+
+def collect_units(
+    records: list[object],
+    term_titles: Mapping[str, str] | None = None,
+    context_names: frozenset[str] | None = None,
+) -> list[UnitRecord]:
+    """Every unit the layer declares, with its parent unit and its document.
+
+    Nesting is read off the semantic tree: a unit found while walking another
+    unit's fields is that unit's child. Ids are checked here because the
+    projection never lays the document out, so the renderer's own duplicate
+    check — which reads a layout-time trail — does not run in this mode.
+    """
+    found: list[UnitRecord] = []
+    seen: dict[str, str] = {}
+
+    def walk(current: object, parent: str | None, document: str) -> None:
+        if isinstance(current, list):
+            for item in current:
+                walk(item, parent, document)
+            return
+        if not isinstance(current, dict):
+            return
+        if current.get("func") == "metadata" and current.get("label") == LABEL:
+            node = current.get("value")
+            if not isinstance(node, dict):
+                raise ProjectionError("semantic metadata value is not an object")
+            visit(node, parent, document)
+            return
+        for child in current.values():
+            walk(child, parent, document)
+
+    def visit(node: dict[str, object], parent: str | None, document: str) -> None:
+        inner = parent
+        if node.get("kind") == "unit":
+            unit_id = node.get("id")
+            if not isinstance(unit_id, str) or not unit_id:
+                raise ProjectionError("unit id is invalid")
+            if not document:
+                raise ProjectionError(
+                    f"unit {unit_id!r} is declared outside a design document"
+                )
+            if unit_id in seen:
+                raise ProjectionError(
+                    f"unit id {unit_id!r} is declared twice (in {seen[unit_id]} "
+                    f"and {document}); a unit id is unique across the layer"
+                )
+            seen[unit_id] = document
+            found.append(
+                UnitRecord(
+                    id=unit_id,
+                    title=field_text(
+                        node.get("title"),
+                        f"unit {unit_id}.title",
+                        term_titles,
+                        context_names,
+                    ),
+                    paths=design_unit_paths(node, f"unit {unit_id}"),
+                    parent=parent,
+                    document=document,
+                    contract=design_unit_contract_markdown(
+                        design_unit_sections(
+                            node, f"unit {unit_id}", term_titles, context_names
+                        ),
+                        design_unit_empty_label(node, f"unit {unit_id}"),
+                    ),
+                    node=node,
+                )
+            )
+            inner = unit_id
+        for key, child in node.items():
+            if key != "kind":
+                walk(child, inner, document)
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        name = record.get("name") if record.get("kind") == "document" else ""
+        visit(record, None, name if isinstance(name, str) else "")
+    return found
+
+
 def project(layer: Path) -> bytes:
+    return project_layer(layer).markdown
+
+
+def layer_units(layer: Path) -> LayerUnits:
+    """The layer's units, read without projecting its documents to Markdown."""
+    semantics = _read_layer(layer)
+    return LayerUnits(
+        units=semantics.units,
+        documents=semantics.documents,
+        context_commands={
+            str(name): record.get("context-command")
+            for name, record in semantics.by_name.items()
+        },
+    )
+
+
+def _read_layer(layer: Path) -> _LayerSemantics:
     documents_expected = corpus_documents(layer)
     records = query_semantics(layer)
     validate_state_links(records)
@@ -1961,11 +2333,26 @@ def project(layer: Path) -> bytes:
         for record in terms
         if isinstance(record.get("slug"), str)
     }
+    return _LayerSemantics(
+        expected_names=expected_names,
+        documents=documents_expected,
+        by_name=by_name,
+        terms=terms,
+        term_titles=term_titles,
+        context_names=context_names,
+        units=collect_units(records, term_titles, context_names),
+    )
+
+
+def project_layer(layer: Path) -> Projection:
+    semantics = _read_layer(layer)
+    by_name, terms = semantics.by_name, semantics.terms
+    term_titles, context_names = semantics.term_titles, semantics.context_names
     parts = [
         semantic_markdown(
             by_name[name], term_titles=term_titles, context_names=context_names
         )
-        for name in expected_names
+        for name in semantics.expected_names
     ]
     owners = sorted({record.get("owner") for record in terms})
     for owner in owners:
@@ -1998,7 +2385,8 @@ def project(layer: Path) -> bytes:
             raise ProjectionError(f"cannot read semantic map {path}: {error}") from error
         parts.append(f"<!-- source: docs/{filename} -->\n\n{raw}")
 
-    return ("\n\n".join(part.rstrip("\n") for part in parts) + "\n").encode("utf-8")
+    markdown = ("\n\n".join(part.rstrip("\n") for part in parts) + "\n").encode("utf-8")
+    return Projection(markdown=markdown, units=semantics.units)
 
 
 def estimate(markdown: bytes) -> dict[str, int | str]:
@@ -2126,7 +2514,81 @@ def metrics(markdown: bytes) -> dict[str, int | str]:
     return result
 
 
-def section_manifest(markdown: bytes, index: SectionIndex) -> dict[str, object]:
+_UNIT_HEADING_PREFIX = "unit: "
+_UNIT_ID_LINE_RE = re.compile(r"^ID: (\S+)\s*$")
+
+
+def locate_units(index: SectionIndex, units: list[UnitRecord]) -> dict[str, str]:
+    """Map each declared unit id to the address of its heading.
+
+    A unit projects as a `unit: <title>` heading whose first line is
+    `ID: <id>`. The id is unique across the layer, so that pair names one
+    heading. Every declared unit must be found exactly once: a unit the index
+    cannot locate would be a unit no selector can return, and that fails here
+    instead of at the first caller who asks for it.
+    """
+    declared = {unit.id for unit in units}
+    located: dict[str, str] = {}
+    for address in index.order:
+        node = index.nodes[address]
+        if not node.title.startswith(_UNIT_HEADING_PREFIX):
+            continue
+        for line in index.lines[node.start_line + 1 : node.direct_end_line]:
+            if not line.strip():
+                continue
+            match = _UNIT_ID_LINE_RE.match(line)
+            if match is not None and match.group(1) in declared:
+                unit_id = match.group(1)
+                if unit_id in located:
+                    raise ProjectionError(
+                        f"unit {unit_id!r} projects to two headings "
+                        f"({located[unit_id]} and {address})"
+                    )
+                located[unit_id] = address
+            break
+    missing = sorted(declared - set(located))
+    if missing:
+        raise ProjectionError(
+            "unit(s) have no addressable heading in the projection: "
+            + ", ".join(missing)
+        )
+    return located
+
+
+def path_governed_by(query: str, unit_path: str) -> bool:
+    """Whether a unit path is the queried path or a parent directory of it."""
+    return query == unit_path or query.startswith(unit_path + "/")
+
+
+def units_for_path(units: list[UnitRecord], query: str) -> list[UnitRecord]:
+    return [
+        unit
+        for unit in units
+        if any(path_governed_by(query, unit_path) for unit_path in unit.paths)
+    ]
+
+
+def unit_manifest(
+    units: list[UnitRecord], located: Mapping[str, str]
+) -> list[dict[str, object]]:
+    return [
+        {
+            "id": unit.id,
+            "title": unit.title,
+            "address": located[unit.id],
+            "parent": unit.parent,
+            "document": unit.document,
+            "paths": list(unit.paths),
+        }
+        for unit in units
+    ]
+
+
+def section_manifest(
+    markdown: bytes,
+    index: SectionIndex,
+    units: list[UnitRecord] | None = None,
+) -> dict[str, object]:
     sections: list[dict[str, object]] = []
     for address in index.order:
         node = index.nodes[address]
@@ -2156,6 +2618,11 @@ def section_manifest(markdown: bytes, index: SectionIndex) -> dict[str, object]:
         result["preamble"] = metrics(
             section_bytes(index, 0, index.nodes[index.order[0]].start_line)
         )
+    # A layer that declares no unit keeps the manifest it always had. The key
+    # appears with the first unit, so an existing consumer sees no new field
+    # until its layer gives the field something to say.
+    if units:
+        result["units"] = unit_manifest(units, locate_units(index, units))
     return result
 
 
@@ -2199,6 +2666,25 @@ def digest_matches(expected: str, actual: str) -> bool:
     )
 
 
+def guard_digest(
+    markdown: bytes, selected: bytes, what: str, expect_digest: str | None
+) -> None:
+    """Refuse a selection taken from a different snapshot than the caller's."""
+    if expect_digest is None:
+        return
+    projection_digest = digest(markdown)
+    section_digest = digest(selected)
+    if not (
+        digest_matches(expect_digest, projection_digest)
+        or digest_matches(expect_digest, section_digest)
+    ):
+        raise ProjectionOperationalError(
+            "digest mismatch for "
+            f"{what}: expected {expect_digest}, projection is {projection_digest}, "
+            f"section is {section_digest}"
+        )
+
+
 def selected_section(
     markdown: bytes,
     index: SectionIndex,
@@ -2209,19 +2695,93 @@ def selected_section(
     if node is None:
         raise ProjectionOperationalError(f"section not found: {address}")
     subtree = section_bytes(index, node.start_line, node.end_line)
-    if expect_digest is not None:
-        projection_digest = digest(markdown)
-        section_digest = digest(subtree)
-        if not (
-            digest_matches(expect_digest, projection_digest)
-            or digest_matches(expect_digest, section_digest)
-        ):
-            raise ProjectionOperationalError(
-                "digest mismatch for "
-                f"{address}: expected {expect_digest}, projection is {projection_digest}, "
-                f"section is {section_digest}"
-            )
+    guard_digest(markdown, subtree, address, expect_digest)
     return subtree
+
+
+_SOURCE_COMMENT_RE = re.compile(r"^<!-- source: .* -->\s*$")
+
+
+def unit_subtree(index: SectionIndex, located: Mapping[str, str], unit_id: str) -> bytes:
+    """A unit's heading subtree, ending where the unit does.
+
+    This is the subtree `--section` returns at the unit's address, with one
+    exception. A heading subtree runs to the next heading of the same or a
+    higher level, and for the last unit of the last document that reaches past
+    the document into the `<!-- source: ... -->` line introducing the next
+    corpus file. That line belongs to no unit, so it is dropped with the blank
+    lines around it.
+    """
+    node = index.nodes[located[unit_id]]
+    end = node.end_line
+    last = end
+    while last > node.start_line + 1 and not index.lines[last - 1].strip():
+        last -= 1
+    if _SOURCE_COMMENT_RE.match(index.lines[last - 1]):
+        end = last - 1
+        while end > node.start_line + 1 and not index.lines[end - 1].strip():
+            end -= 1
+    return section_bytes(index, node.start_line, end)
+
+
+def selected_unit(
+    markdown: bytes,
+    index: SectionIndex,
+    units: list[UnitRecord],
+    unit_id: str,
+    expect_digest: str | None,
+) -> bytes:
+    """One unit's whole subtree: its contract, its body, and its nested units."""
+    located = locate_units(index, units)
+    if unit_id not in located:
+        known = ", ".join(unit.id for unit in units) or "none"
+        raise ProjectionOperationalError(
+            f"unit not found: {unit_id} (declared units: {known})"
+        )
+    subtree = unit_subtree(index, located, unit_id)
+    guard_digest(markdown, subtree, f"unit {unit_id}", expect_digest)
+    return subtree
+
+
+def selected_path(
+    markdown: bytes,
+    index: SectionIndex,
+    units: list[UnitRecord],
+    query: str,
+    expect_digest: str | None,
+) -> bytes:
+    """Every unit governing a path, each as its whole subtree, in layer order.
+
+    A unit already inside another selected unit's subtree is not repeated: its
+    text is part of that subtree, and emitting it twice would hand the reader
+    one contract as though it were two.
+    """
+    located = locate_units(index, units)
+    governing = units_for_path(units, query)
+    if not governing:
+        raise ProjectionOperationalError(
+            f"no unit lists {query} or a parent directory of it"
+        )
+    chosen = {unit.id for unit in governing}
+    parents = {unit.id: unit.parent for unit in units}
+
+    def nested_in_chosen(unit_id: str) -> bool:
+        parent = parents.get(unit_id)
+        while parent is not None:
+            if parent in chosen:
+                return True
+            parent = parents.get(parent)
+        return False
+
+    outermost = [unit for unit in governing if not nested_in_chosen(unit.id)]
+    subtrees = [unit_subtree(index, located, unit.id) for unit in outermost]
+    selected = (
+        subtrees[0]
+        if len(subtrees) == 1
+        else b"\n\n".join(subtree.rstrip(b"\n") for subtree in subtrees) + b"\n"
+    )
+    guard_digest(markdown, selected, f"path {query}", expect_digest)
+    return selected
 
 
 def write_new_output(output: Path, markdown: bytes) -> None:
@@ -2244,7 +2804,8 @@ def write_new_output(output: Path, markdown: bytes) -> None:
 def main(argv: list[str]) -> int:
     options = parse_args(argv)
     try:
-        markdown = project(options.layer)
+        projection = project_layer(options.layer)
+        markdown, units = projection.markdown, projection.units
     except ProjectionOperationalError as error:
         sys.stderr.write(f"design-context: error: {error}\n")
         return 2
@@ -2257,7 +2818,7 @@ def main(argv: list[str]) -> int:
     if options.mode == "estimate":
         sys.stdout.write(json.dumps(estimate(markdown), sort_keys=True) + "\n")
         return 0
-    if options.mode in {"manifest", "preview", "section"}:
+    if options.mode in {"manifest", "preview"} | SELECTOR_MODES:
         try:
             index = index_sections(markdown)
             if not index.order:
@@ -2267,7 +2828,9 @@ def main(argv: list[str]) -> int:
             if options.mode == "manifest":
                 sys.stdout.write(
                     json.dumps(
-                        section_manifest(markdown, index), indent=2, sort_keys=True
+                        section_manifest(markdown, index, units),
+                        indent=2,
+                        sort_keys=True,
                     )
                     + "\n"
                 )
@@ -2275,10 +2838,21 @@ def main(argv: list[str]) -> int:
             if options.mode == "preview":
                 sys.stdout.write(preview(markdown, index, options.depth))
                 return 0
-            assert options.section is not None
-            selected = selected_section(
-                markdown, index, options.section, options.expect_digest
-            )
+            if options.mode == "unit":
+                assert options.unit is not None
+                selected = selected_unit(
+                    markdown, index, units, options.unit, options.expect_digest
+                )
+            elif options.mode == "path":
+                assert options.path is not None
+                selected = selected_path(
+                    markdown, index, units, options.path, options.expect_digest
+                )
+            else:
+                assert options.section is not None
+                selected = selected_section(
+                    markdown, index, options.section, options.expect_digest
+                )
         except ProjectionOperationalError as error:
             sys.stderr.write(f"design-context: error: {error}\n")
             return 2

@@ -205,6 +205,10 @@ class Schema:
     # copy predates layer_layout.instruction_files (tolerate-absent).
     instruction_basenames: Optional[tuple] = None
     pending_heading: Optional[str] = None
+    # The prefix a unit id renders its anchor under. None when the schema copy
+    # predates the unit block (tolerate-absent): such a copy can gate no layer
+    # that authors a unit, so there is no unit anchor to index.
+    unit_anchor_prefix: Optional[str] = None
 
 
 def locate_schema(argv0: str) -> str:
@@ -315,8 +319,13 @@ def load_schema(path: str) -> Schema:
     if isinstance(instr, dict) and instr.get("basenames"):
         instruction_basenames = tuple(instr["basenames"])
         pending_heading = instr.get("pending_heading")
+    unit_anchor_prefix = None
+    unit_contract = (raw.get("design_doc") or {}).get("unit_contract")
+    if isinstance(unit_contract, dict):
+        unit_anchor_prefix = unit_contract.get("anchor_prefix") or None
 
     return Schema(
+        unit_anchor_prefix=unit_anchor_prefix,
         term_id_re=re.compile(term_id_src),
         section_id_re=re.compile(section_src) if section_src else None,
         adr_id_re=re.compile(adr_id_src),
@@ -512,6 +521,13 @@ TYPST_TERM_OK_RE = re.compile(r"^term-[a-z0-9]+(?:-[a-z0-9]+)*$")
 # one index is built off the joined source while everything that does need a
 # line number stays in the per-line loop.
 TYPST_SECTION_RE = re.compile(r'(?:sub)?section\(\s*title:\s*"([^"]*)"')
+# A UNIT, by its id. `#unit(id: "billing-ledger", ...)` renders the anchor
+# `unit-billing-ledger`, which a link into the design document may carry the
+# way it carries a section slug. Matched off the joined source for the same
+# reason a section is: the call opens across lines. The id is the unit's FIRST
+# argument by convention, as a section's title is, and that is the spelling
+# this reads.
+TYPST_UNIT_RE = re.compile(r'\bunit\(\s*id:\s*"([^"]*)"')
 TYPST_LINK_RE = re.compile(r'link\(\s*"([^"]*)"')
 TYPST_LINE_COMMENT_RE = re.compile(r"//.*$")
 # A CITATION, as opposed to a declaration. `#term("term-x")` names a term
@@ -580,6 +596,12 @@ def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
         slug = section_slug(m.group(1))
         if slug:
             idx.section_ids.add(slug)
+    # A unit's anchor joins the same id set a section's does: both are ids the
+    # rendered document carries, and a link's fragment resolves against either.
+    if schema.unit_anchor_prefix:
+        for m in TYPST_UNIT_RE.finditer(joined):
+            if m.group(1):
+                idx.section_ids.add(schema.unit_anchor_prefix + m.group(1))
 
     # Pending-entry titles, which a host README's "Designed, not built" list
     # names (check 9). The title is a Typst string, so its escapes are undone

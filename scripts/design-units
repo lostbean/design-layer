@@ -1,0 +1,780 @@
+#!/usr/bin/env python3
+"""design-units — the folder contracts a design layer's units declare.
+
+A `unit` lists the directories that realize it. Each listed directory carries
+that unit's contract in its `AGENTS.md`, so an agent working in the folder
+reads the governing contract without loading the layer. The contract is
+GENERATED from the Typst, never authored a second time: this script writes it,
+and the gate regenerates it and compares, the way it proves the rendered PDF
+fresh.
+
+What is generated, for every directory a unit lists:
+
+  * ONE machine-owned region in `<dir>/AGENTS.md`, delimited by the two marker
+    lines the schema declares. It holds, for each governing unit in layer
+    order: the unit's title, its sections as Markdown, a relative link to the
+    unit in its Typst source, and the exact command printing the full unit.
+    Text outside the region is never changed. The file is created when absent.
+  * `<dir>/CLAUDE.md` as a symlink to `AGENTS.md`, only when no `CLAUDE.md`
+    exists. An existing one is never replaced.
+
+And what is removed: a region in a directory no unit lists. The file is deleted
+only when nothing else remains in it.
+
+Usage:
+  design-units <layer-root> [repo-root]            write the folder contracts
+  design-units <layer-root> [repo-root] --check    regenerate and compare
+      [--exclude-project <repo-relative-project-root>]...
+
+  <layer-root>  the directory holding the root design.typ (docs/design)
+  [repo-root]   the root unit paths are relative to; defaults to the layer's
+                enclosing git repository, else two levels above the layer
+  --exclude-project
+                repeatable; a nested project whose folder contracts belong to
+                its own layer and are not judged against this one
+
+THREE CHECKS decide the exit code, in both modes:
+
+  1. every unit path exists in the repository, is a directory, and resolves
+     inside the repository root;
+  2. every folder contract is fresh (--check only: write mode makes it so);
+  3. no folder contract exists in a directory no unit lists (--check only:
+     write mode removes it).
+
+ONE REPORT never does: the git-tracked directories no unit path covers, so a
+host sees what the design does not claim.
+
+The schema is located via $DESIGN_SCHEMA, else the script-sibling
+design-schema.json, else ../schema/design-schema.json.
+
+Exit: 0 clean, 1 at least one violation (one report line each), 2 usage or IO
+error.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+USAGE = (
+    "usage: design-units <layer-root> [repo-root] [--check] "
+    "[--exclude-project <repo-relative-project-root>]..."
+)
+NAME = "design-units"
+
+
+class UsageError(Exception):
+    """The invocation or its inputs cannot be used (exit 2)."""
+
+
+# --- reporting ----------------------------------------------------------------
+
+
+@dataclass
+class Report:
+    """Violations, plus what each check actually examined.
+
+    The counts are the anti-vacuity guard: a check that looked at nothing
+    prints the same clean line as a check that passed, so the summary states
+    how many units, paths and files were read.
+    """
+
+    found: bool = False
+    counts: dict[str, int] = field(default_factory=dict)
+
+    def violation(self, where: str, what: str, why: str) -> None:
+        print(f"violation: {where}: {what}: {why}")
+        self.found = True
+
+    def count(self, what: str, n: int = 1) -> None:
+        self.counts[what] = self.counts.get(what, 0) + n
+
+
+def note(message: str) -> None:
+    print(f"{NAME}: {message}")
+
+
+# --- the projection, shared with design-context --------------------------------
+
+
+def context_module() -> object:
+    """Load design-context: the one reader of the layer's semantic tree.
+
+    The unit records, their Markdown, and the document corpus all come from
+    it, so a folder contract carries the same text `design-context --unit`
+    prints and the two cannot describe one unit differently.
+    """
+    path = Path(__file__).with_name("design-context")
+    loader = SourceFileLoader("design_context_for_units", str(path))
+    spec = importlib.util.spec_from_loader("design_context_for_units", loader)
+    if spec is None or spec.loader is None:
+        raise UsageError("cannot load design-context")
+    module = importlib.util.module_from_spec(spec)
+    # A dataclass resolves its own module while the class body runs, so the
+    # module must be registered before it executes.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+# --- the schema ---------------------------------------------------------------
+
+
+def locate_schema() -> Path:
+    override = os.environ.get("DESIGN_SCHEMA")
+    if override:
+        return Path(override)
+    here = Path(os.path.realpath(__file__)).parent
+    sibling = here / "design-schema.json"
+    if sibling.is_file():
+        return sibling
+    return here.parent / "schema" / "design-schema.json"
+
+
+@dataclass
+class Contract:
+    filename: str
+    alias: str
+    begin: str
+    end: str
+    notice: str
+    guard: tuple[str, str]
+    anchor_prefix: str
+    command_binding: str
+    command_default: str
+    adr_dir: str
+
+
+def load_contract(path: Path) -> Contract | None:
+    """The folder-contract declaration, or None when the schema has none.
+
+    A host may gate with its OWN schema copy. A copy that predates the unit
+    block declares no contract, and a layer checked with it can author no unit
+    — the library refuses the call — so there is nothing to generate or to
+    compare. That case is reported by the caller, never passed over silently.
+    """
+    if not path.is_file():
+        raise UsageError(
+            f"design schema not found: {path} (set DESIGN_SCHEMA to the "
+            "framework's schema/design-schema.json)"
+        )
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise UsageError(f"cannot read the design schema {path}: {error}") from error
+    unit_contract = raw.get("design_doc", {}).get("unit_contract")
+    if unit_contract is None:
+        return None
+    try:
+        folder = unit_contract["folder_contract"]
+        command = unit_contract["context_command"]
+        guard = folder["formatter_guard"]
+        contract = Contract(
+            filename=folder["filename"],
+            alias=folder["alias"],
+            begin=folder["begin"],
+            end=folder["end"],
+            notice=folder["notice"],
+            guard=(guard[0], guard[1]),
+            anchor_prefix=unit_contract["anchor_prefix"],
+            command_binding=command["binding"],
+            command_default=command["default"],
+            adr_dir=raw.get("layer_layout", {}).get("adr_dir", "docs/adr"),
+        )
+    except (KeyError, IndexError, TypeError) as error:
+        raise UsageError(
+            f"the design schema {path} declares an incomplete "
+            f"design_doc.unit_contract: missing {error}"
+        ) from error
+    for name in (
+        "filename",
+        "alias",
+        "begin",
+        "end",
+        "notice",
+        "anchor_prefix",
+        "command_binding",
+        "command_default",
+    ):
+        value = getattr(contract, name)
+        if not isinstance(value, str) or not value or "\n" in value:
+            raise UsageError(
+                f"the design schema {path} declares an unusable "
+                f"design_doc.unit_contract value for {name}"
+            )
+    if contract.begin == contract.end:
+        raise UsageError(
+            f"the design schema {path} declares one marker for both ends of "
+            "the folder contract region"
+        )
+    return contract
+
+
+# --- arguments ----------------------------------------------------------------
+
+
+@dataclass
+class Options:
+    layer: Path
+    repo: Path
+    check: bool
+    excluded: tuple[Path, ...]
+
+
+FORBIDDEN_PATH_CHARACTERS = frozenset("*?[]{}\\")
+
+
+def is_within(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def git_toplevel(directory: Path) -> Path | None:
+    process = subprocess.run(
+        ["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+    )
+    if process.returncode != 0 or not process.stdout.strip():
+        return None
+    return Path(process.stdout.strip())
+
+
+def parse_args(argv: list[str]) -> Options:
+    positionals: list[str] = []
+    excluded_values: list[str] = []
+    check = False
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in ("--help", "-h"):
+            raise UsageError(USAGE)
+        if arg == "--check":
+            check = True
+        elif arg == "--exclude-project":
+            index += 1
+            if index >= len(argv):
+                raise UsageError("--exclude-project requires a value")
+            excluded_values.append(argv[index])
+        elif arg.startswith("-"):
+            raise UsageError(f"unknown option: {arg}")
+        else:
+            positionals.append(arg)
+        index += 1
+    if not 1 <= len(positionals) <= 2:
+        raise UsageError(USAGE)
+    layer = Path(positionals[0])
+    if not layer.is_dir():
+        raise UsageError(f"layer root not found: {layer}")
+    if not (layer / "design.typ").is_file():
+        raise UsageError(f"root design.typ not found: {layer / 'design.typ'}")
+    layer = layer.resolve()
+    if len(positionals) == 2:
+        repo = Path(positionals[1])
+        if not repo.is_dir():
+            raise UsageError(f"repo root not found: {repo}")
+        repo = repo.resolve()
+    else:
+        # The same derivation the composite gate uses: the layer's own
+        # enclosing repository, never the caller's working directory.
+        repo = git_toplevel(layer) or layer.parent.parent
+        repo = repo.resolve()
+    if not is_within(layer, repo):
+        raise UsageError(f"layer root {layer} is not inside the repo root {repo}")
+
+    excluded: list[Path] = []
+    for value in excluded_values:
+        segments = value.split("/") if value else []
+        if (
+            not value
+            or value.startswith("/")
+            or any(character in FORBIDDEN_PATH_CHARACTERS for character in value)
+            or any(not segment or segment in {".", ".."} for segment in segments)
+        ):
+            raise UsageError(f"invalid --exclude-project value: {value!r}")
+        project = repo / value
+        if not project.is_dir():
+            raise UsageError(f"excluded project is not a directory: {value}")
+        project = project.resolve()
+        if project == repo or not is_within(project, repo):
+            raise UsageError(
+                f"excluded project escapes the repo root or is the repo root: {value}"
+            )
+        if project in excluded:
+            raise UsageError(f"duplicate --exclude-project value: {value}")
+        excluded.append(project)
+    return Options(layer=layer, repo=repo, check=check, excluded=tuple(excluded))
+
+
+# --- the region ---------------------------------------------------------------
+
+
+class MalformedRegion(Exception):
+    """A file's markers do not delimit exactly one region."""
+
+
+def split_region(text: str, contract: Contract) -> tuple[str, str, str] | None:
+    """Split a file into (before, region, after) around its one region.
+
+    A marker is recognized as a WHOLE LINE, so prose that mentions a marker
+    inside a sentence is not mistaken for one. Returns None when the file
+    carries no region. The region includes both marker lines and the newline
+    ending the closing one.
+    """
+    lines = text.splitlines(keepends=True)
+    begins = [i for i, line in enumerate(lines) if line.strip() == contract.begin]
+    ends = [i for i, line in enumerate(lines) if line.strip() == contract.end]
+    if not begins and not ends:
+        return None
+    if len(begins) != 1 or len(ends) != 1 or ends[0] < begins[0]:
+        raise MalformedRegion(
+            f"expected one `{contract.begin}` line followed by one "
+            f"`{contract.end}` line, found {len(begins)} and {len(ends)}"
+        )
+    return (
+        "".join(lines[: begins[0]]),
+        "".join(lines[begins[0] : ends[0] + 1]),
+        "".join(lines[ends[0] + 1 :]),
+    )
+
+
+def with_region(existing: str | None, region: str, contract: Contract) -> str:
+    """The file's text carrying `region`, every other byte as it was."""
+    if existing is None or not existing.strip():
+        return region
+    parts = split_region(existing, contract)
+    if parts is not None:
+        before, _old, after = parts
+        return before + region + after
+    # No region yet: it goes at the end, one blank line below what is there.
+    separator = "\n" if existing.endswith("\n") else "\n\n"
+    return existing + separator + region
+
+
+def without_region(existing: str, contract: Contract) -> str:
+    """The file's text with its region removed.
+
+    The blank line the generator placed above the region goes with it, so
+    adding a region and removing it again restores the file it was added to.
+    """
+    parts = split_region(existing, contract)
+    if parts is None:
+        return existing
+    before, _old, after = parts
+    if before.endswith("\n\n"):
+        before = before[:-1]
+    elif not before.strip():
+        after = after.lstrip("\n")
+    return before + after
+
+
+def region_text(units: list["Governing"], contract: Contract) -> str:
+    blocks = [contract.begin, contract.notice, contract.guard[0], ""]
+    for unit in units:
+        blocks.extend(
+            [
+                f"## Design unit: {unit.title}",
+                "",
+                unit.contract,
+                "",
+                f"Source: [{unit.source}#{unit.anchor}]({unit.link}#{unit.anchor})",
+                "",
+                f"Full unit: `{unit.command}`",
+                "",
+            ]
+        )
+    blocks.extend([contract.guard[1], contract.end])
+    return "\n".join(blocks) + "\n"
+
+
+@dataclass
+class Governing:
+    """One unit as a folder contract names it, for one directory."""
+
+    title: str
+    contract: str
+    source: str
+    link: str
+    anchor: str
+    command: str
+
+
+# --- discovery ----------------------------------------------------------------
+
+
+def is_git_work_tree(root: Path) -> bool:
+    process = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+    )
+    return process.returncode == 0 and process.stdout.strip() == "true"
+
+
+def git_files(root: Path, *flags: str) -> list[str]:
+    process = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", *flags],
+        capture_output=True,
+    )
+    if process.returncode != 0:
+        raise UsageError(
+            f"cannot list files in {root}: "
+            + process.stderr.decode("utf-8", "replace").strip()
+        )
+    return [
+        name for name in process.stdout.decode("utf-8", "replace").split("\0") if name
+    ]
+
+
+def contract_files(root: Path, filename: str, excluded: tuple[Path, ...]) -> list[Path]:
+    """Every file named `filename` under the root that is part of the repo.
+
+    In a git work tree that is the tracked files plus the untracked ones git
+    does not ignore, so a build directory's vendored checkout is not scanned.
+    Outside git the tree is walked, pruning `.git` and `node_modules`.
+    """
+    found: list[Path] = []
+    if is_git_work_tree(root):
+        names = git_files(root, "--cached", "--others", "--exclude-standard")
+        for name in names:
+            if name.rsplit("/", 1)[-1] == filename:
+                found.append(root / name)
+    else:
+        for directory, subdirectories, filenames in os.walk(root):
+            subdirectories[:] = sorted(
+                d for d in subdirectories if d not in {".git", "node_modules"}
+            )
+            if filename in filenames:
+                found.append(Path(directory) / filename)
+    kept = []
+    for path in sorted(set(found)):
+        if not path.is_file():
+            continue  # tracked, but deleted in the work tree
+        resolved_parent = path.parent.resolve()
+        if any(is_within(resolved_parent, project) for project in excluded):
+            continue
+        kept.append(path)
+    return kept
+
+
+# --- the report: what the design does not claim ----------------------------------
+
+
+def uncovered_report(
+    options: Options, contract: Contract, unit_paths: set[str], unit_count: int
+) -> None:
+    """List the tracked directories no unit path covers. Never a check.
+
+    A directory is covered when a unit path is it or an ancestor of it. The
+    listing names the HIGHEST uncovered directory holding no unit path, so one
+    unclaimed subtree is one line. A directory that does hold a unit path and
+    also tracked files of its own is listed for those files alone.
+    """
+    if not is_git_work_tree(options.repo):
+        note(
+            "report: uncovered directories not listed — "
+            f"{options.repo} is not a git work tree"
+        )
+        return
+    layer_home = os.path.relpath(options.layer, options.repo).replace(os.sep, "/")
+    not_source = [layer_home, contract.adr_dir.strip("/")]
+    excluded = [
+        os.path.relpath(project, options.repo).replace(os.sep, "/")
+        for project in options.excluded
+    ]
+
+    def under(path: str, roots: list[str]) -> bool:
+        return any(path == root or path.startswith(root + "/") for root in roots)
+
+    directories: dict[str, int] = {}
+    tracked = 0
+    for name in git_files(options.repo, "--cached"):
+        directory = name.rsplit("/", 1)[0] if "/" in name else ""
+        if not directory or under(directory, not_source) or under(directory, excluded):
+            continue
+        tracked += 1
+        directories[directory] = directories.get(directory, 0) + 1
+    if unit_count == 0:
+        note(
+            f"report: the layer declares no unit, so no directory is claimed "
+            f"({len(directories)} tracked director{'y' if len(directories) == 1 else 'ies'})"
+        )
+        return
+
+    def holds_unit_path(directory: str) -> bool:
+        return any(path.startswith(directory + "/") for path in unit_paths)
+
+    listed: dict[str, int] = {}
+    own_files: dict[str, int] = {}
+    for directory, count in directories.items():
+        if under(directory, sorted(unit_paths)):
+            continue
+        if holds_unit_path(directory):
+            own_files[directory] = own_files.get(directory, 0) + count
+            continue
+        segments = directory.split("/")
+        top = directory
+        for depth in range(1, len(segments) + 1):
+            candidate = "/".join(segments[:depth])
+            if not holds_unit_path(candidate):
+                top = candidate
+                break
+        listed[top] = listed.get(top, 0) + count
+    total = len(listed) + len(own_files)
+    if total == 0:
+        note(
+            f"report: every tracked directory is covered by a unit path "
+            f"({len(directories)} director{'y' if len(directories) == 1 else 'ies'}, "
+            f"{tracked} file(s))"
+        )
+        return
+    note(
+        f"report: {total} tracked director{'y is' if total == 1 else 'ies are'} "
+        "covered by no unit path (a report, not a check):"
+    )
+    for directory in sorted(listed):
+        print(f"  {directory}/ ({listed[directory]} file(s))")
+    for directory in sorted(own_files):
+        print(
+            f"  {directory}/ ({own_files[directory]} file(s) directly in it; "
+            "a subdirectory is claimed)"
+        )
+
+
+# --- main ---------------------------------------------------------------------
+
+
+def context_command(projection: object, contract: Contract, report: Report) -> str:
+    """The command prefix a folder contract prints for loading a full unit."""
+    commands = projection.context_commands
+    root_name = projection.documents[0][0]
+    for name, value in commands.items():
+        if name != root_name and value is not None:
+            report.violation(
+                f"{name}/design.typ",
+                f"{contract.command_binding} outside the root",
+                "only the root design.typ exports it; one layer prints one command",
+            )
+    value = commands.get(root_name)
+    if value is None:
+        return contract.command_default
+    if not isinstance(value, str) or not value.strip() or "\n" in value or "`" in value:
+        report.violation(
+            "design.typ",
+            f"unusable {contract.command_binding}",
+            "expected a one-line string such as "
+            f"{contract.command_default!r}, got {value!r}",
+        )
+        return contract.command_default
+    return value.strip()
+
+
+def run(options: Options, contract: Contract) -> int:
+    ctx = context_module()
+    try:
+        # The units alone, not the Markdown projection: the gate holds a layer
+        # that has no corpus map, which the projection requires.
+        projection = ctx.layer_units(options.layer)
+    except ctx.ProjectionOperationalError as error:
+        raise UsageError(str(error)) from error
+    except ctx.ProjectionError as error:
+        # The layer itself is not well-formed. That is a violation of the
+        # layer, not a failure of this tool to run.
+        print(f"{NAME}: error: {error}", file=sys.stderr)
+        return 1
+
+    report = Report()
+    units = projection.units
+    sources = {name: path for name, path in projection.documents}
+    layer_rel = os.path.relpath(options.layer, options.repo).replace(os.sep, "/")
+    command = context_command(projection, contract, report)
+
+    # --- check 1: every unit path exists, is a directory, stays inside --------
+    governing: dict[str, list[Governing]] = {}
+    reserved = {contract.begin, contract.end, *contract.guard}
+    for unit in units:
+        report.count("units")
+        source = sources[unit.document]
+        source_rel = os.path.relpath(source, options.repo).replace(os.sep, "/")
+        # A unit whose own text holds a marker line would close the region
+        # early, and every later run would read the file as malformed. Refuse
+        # it here, where the cause is still the unit's text.
+        if any(line.strip() in reserved for line in unit.contract.splitlines()):
+            report.violation(
+                f"{source_rel} unit {unit.id}",
+                "unit text holds a folder contract marker",
+                "a line of the unit's contract is one of the region's own "
+                "marker lines; reword it",
+            )
+            continue
+        for path in unit.paths:
+            report.count("unit paths")
+            directory = options.repo / path
+            where = f"{source_rel} unit {unit.id}"
+            if not directory.exists():
+                report.violation(
+                    where,
+                    "missing unit path",
+                    f"{path} does not exist in the repository",
+                )
+                continue
+            if not directory.is_dir():
+                report.violation(
+                    where,
+                    "unit path is not a directory",
+                    f"{path} is a file; a unit path names the folder that "
+                    f"carries its {contract.filename}",
+                )
+                continue
+            if not is_within(directory.resolve(), options.repo):
+                report.violation(
+                    where,
+                    "unit path escapes the repository",
+                    f"{path} resolves outside {options.repo}",
+                )
+                continue
+            governing.setdefault(path, []).append(
+                Governing(
+                    # One line: the title heads the unit inside the region.
+                    title=" ".join(unit.title.split()),
+                    contract=unit.contract,
+                    source=source_rel,
+                    link=os.path.relpath(source, directory).replace(os.sep, "/"),
+                    anchor=contract.anchor_prefix + unit.id,
+                    command=f"{command} {layer_rel} --unit {unit.id}",
+                )
+            )
+
+    # --- checks 2 and 3: every region fresh, none where no unit lists it ------
+    expected = {
+        options.repo / path: units_here for path, units_here in governing.items()
+    }
+    wrote = removed = linked = 0
+    for directory in sorted(expected):
+        target = directory / contract.filename
+        rel = os.path.relpath(target, options.repo).replace(os.sep, "/")
+        region = region_text(expected[directory], contract)
+        try:
+            existing = target.read_text(encoding="utf-8") if target.is_file() else None
+        except (OSError, UnicodeDecodeError) as error:
+            raise UsageError(f"cannot read {rel}: {error}") from error
+        report.count("folder contracts")
+        try:
+            current = None if existing is None else split_region(existing, contract)
+        except MalformedRegion as error:
+            report.violation(rel, "malformed folder contract region", str(error))
+            continue
+        alias = directory / contract.alias
+        if options.check:
+            if current is None:
+                report.violation(
+                    rel,
+                    "missing folder contract",
+                    f"{len(expected[directory])} unit(s) list this directory and "
+                    f"it carries no generated region; run the units app",
+                )
+            elif current[1] != region:
+                report.violation(
+                    rel,
+                    "stale folder contract",
+                    "the region does not match a fresh generation; run the units app",
+                )
+            if not os.path.lexists(alias):
+                note(
+                    f"note: {os.path.relpath(alias, options.repo)} is absent; the "
+                    f"units app links it to {contract.filename}"
+                )
+            continue
+        updated = with_region(existing, region, contract)
+        if updated != existing:
+            target.write_text(updated, encoding="utf-8")
+            wrote += 1
+        if not os.path.lexists(alias):
+            os.symlink(contract.filename, alias)
+            linked += 1
+
+    expected_files = {directory / contract.filename for directory in expected}
+    for target in contract_files(options.repo, contract.filename, options.excluded):
+        report.count("scanned files")
+        if target in expected_files:
+            continue
+        rel = os.path.relpath(target, options.repo).replace(os.sep, "/")
+        try:
+            existing = target.read_text(encoding="utf-8")
+            current = split_region(existing, contract)
+        except (OSError, UnicodeDecodeError) as error:
+            raise UsageError(f"cannot read {rel}: {error}") from error
+        except MalformedRegion as error:
+            report.violation(rel, "malformed folder contract region", str(error))
+            continue
+        if current is None:
+            continue
+        if options.check:
+            report.violation(
+                rel,
+                "stale folder contract",
+                "no unit lists this directory, and it still carries a "
+                "generated region; run the units app to remove it",
+            )
+            continue
+        remaining = without_region(existing, contract)
+        removed += 1
+        if remaining.strip():
+            target.write_text(remaining, encoding="utf-8")
+            continue
+        target.unlink()
+        alias = target.parent / contract.alias
+        # The link this generator made points at a file that is now gone.
+        if alias.is_symlink() and os.readlink(alias) == contract.filename:
+            alias.unlink()
+
+    uncovered_report(options, contract, set(governing), len(units))
+
+    counts = (
+        f"{report.counts.get('units', 0)} unit(s), "
+        f"{report.counts.get('unit paths', 0)} unit path(s), "
+        f"{report.counts.get('folder contracts', 0)} folder contract(s), "
+        f"{report.counts.get('scanned files', 0)} {contract.filename} file(s) scanned"
+    )
+    if report.found:
+        print(f"{NAME}: violations found ({counts})")
+        return 1
+    if options.check:
+        print(f"{NAME}: OK — every folder contract is fresh ({counts})")
+    else:
+        print(
+            f"{NAME}: wrote {wrote} folder contract(s), linked {linked} "
+            f"{contract.alias}, removed {removed} stale region(s) ({counts})"
+        )
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    try:
+        options = parse_args(argv)
+        schema_path = locate_schema()
+        contract = load_contract(schema_path)
+        if contract is None:
+            # Said aloud, because a check that stops looking still reports OK.
+            note(
+                f"the schema in use ({schema_path}) declares no "
+                "design_doc.unit_contract, so no folder contract is generated "
+                "or checked — a layer gated with this schema can author no unit"
+            )
+            return 0
+        return run(options, contract)
+    except UsageError as error:
+        print(f"{NAME}: error: {error}", file=sys.stderr)
+        return 2
+    except OSError as error:
+        print(f"{NAME}: error: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -5,13 +5,26 @@
 - Added the `#unit` block: one required shape for every design unit — `id`,
   `title`, `overview`, `interface`, `invariants`, `side-effects`,
   `verification`, and `paths` — with an optional body that holds any other
-  block and nested units. A missing field, a malformed or duplicate id, and an
-  illegal path fail the render; an empty list renders as `None`.
+  block and nested units. A missing field, a malformed or duplicate id, an
+  illegal path, and a list written inside a field fail the render; an empty
+  list renders as `None`. Units nest down to the sixth heading level — five
+  directly in the root document's body, four inside a section, three inside a
+  subsection, one fewer in a context document — and one deeper fails the
+  render and the projection alike.
 - Added the `units` app. It writes each unit's contract into a generated region
   of `AGENTS.md` in every directory the unit lists, and links `CLAUDE.md` where
   none exists. `check` now also fails on a unit path that does not exist, a
   stale region, and a region no unit lists, and reports the tracked directories
   no unit path covers.
+- `units` writes only what it owns. A region is recognized by its whole
+  generated shape, so a marker shown in a code block is never read and any
+  other stray marker is reported with the file left as it is. Text outside the
+  region keeps its line endings and its final newline. A target that is a
+  symbolic link, a directory, or not UTF-8 text, and a unit path that is not
+  the path the file system stores, are violations. A run writes every folder
+  contract or none, each through a temporary file and a rename.
+- `units` takes `--nested-project`, the argument `check` takes, and never
+  touches an undeclared nested project's contracts.
 - `context` gains `--unit ID` and `--path REPO-PATH`, and the manifest lists
   units when a layer declares them.
 - The foundation minimum now binds the root design document only. A context
@@ -21,10 +34,11 @@
 - A foundation statement written inside a unit's body is not read as part of
   the document's foundation order or minimum.
 - A link may target a unit as `design.typ#unit-<id>`; `layer-integrity`
-  resolves it.
+  resolves it wherever `id:` stands among the unit's arguments.
 - Rendered output changes by a sub-point amount where text directly follows a
   `#section` or `#subsection` call on the same line of flow, so a host
-  re-renders its PDF on upgrade.
+  re-renders its PDF on upgrade. A heading written in markup inside a section
+  or subsection body now nests below that heading.
 - The migration is documented in [Unit contracts and folder contracts](docs/migrations/unit-contract.md).
 - The layer-integrity gate now checks every host `README.md` and `AGENTS.md`
   outside `docs/`: links into `docs/design/` and `docs/adr/` must resolve

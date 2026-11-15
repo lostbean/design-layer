@@ -1026,11 +1026,17 @@ render naming the unit and the field.
   `("one item")` as a string, and the render fails saying so.
 - **A list item is a string or a content block.** Use a content block when the
   item carries markup, a citation, or inline code.
+- **A field holds no list of its own.** A bullet, numbered, or term list
+  written inside `title:`, `overview:`, `verification:`, or one list item fails
+  the render, naming the field. The projection and a folder contract write a
+  text field as one paragraph and a list field as one line per item, so a list
+  inside a field has no form there. State each point as its own item of
+  `interface:`, `invariants:`, or `side-effects:`.
 - **An unknown argument fails the render**, naming it.
 - **`id:`** matches `^[a-z0-9]+(-[a-z0-9]+)*$`. A second unit with the same id
-  anywhere in the layer fails the render. Write `id:` as the first argument:
-  the gate resolves a link to a unit by reading it there. An id is never
-  repurposed for a different unit.
+  anywhere in the layer fails the render. `id:` may stand anywhere among the
+  arguments; the gate reads it wherever it stands. An id is never repurposed
+  for a different unit.
 - **The body is optional.** `#unit(...)` with no trailing block is complete.
 
 **Guidelines**: a title over 64 characters, a list item over three sentences,
@@ -1047,10 +1053,19 @@ by the renderer**:
 - no empty, `.`, or `..` segment, so no leading, trailing, or doubled slash;
 - listed at most once in one unit.
 
-**Machine-checked by the gate**: the path exists in the repository, is a
-directory, and resolves inside the repository root. Paths are relative to the
-root the gate is given — the repository root, or a nested project's own root
-for that project's layer.
+**Machine-checked by the gate and by `units`**:
+
+- the path exists in the repository and is a directory;
+- it is the path the file system stores: it resolves inside the repository
+  root, through no symbolic link, in the spelling its parent directory lists.
+  `src/link` where `link` points at `src/a`, and `src/A` for a directory
+  stored as `src/a`, each fail naming both paths, so one directory has one
+  folder contract;
+- it is not `.git` or inside it, and not the layer directory or inside it;
+- it is not inside a nested project the run was given.
+
+Paths are relative to the root the gate is given — the repository root, or a
+nested project's own root for that project's layer.
 
 A unit that only groups other units has no code of its own and writes
 `paths: ()`. Several units may list one directory, and one unit may list
@@ -1062,8 +1077,15 @@ several.
   the nesting: a unit directly in a document body is a section-level heading,
   a unit inside a `#section` body is one level below it, and each nested unit
   is one level below its parent.
-- The Markdown projection supports six heading levels. A unit nested past the
-  sixth fails the projection, naming the unit.
+- A document has six heading levels and the chapter is the first. In the
+  root design document the deepest nesting is five units directly in the
+  body, four inside a `#section`, and three inside a `#subsection`.
+- The Markdown projection writes the root as the document title and each
+  context document as a heading below it, so a context document nests one
+  unit fewer: four in the body, three inside a section, two inside a
+  subsection.
+- One unit deeper fails the render and the projection alike, naming the unit
+  and its level. The two never disagree about which units a layer may hold.
 - A unit's anchor is `unit-<id>`. `@unit-billing-ledger` references it inside
   the rendered document. `design.typ#unit-billing-ledger` links to it from
   `COVERAGE.md` or another layer file, and the gate's integrity check resolves
@@ -1115,8 +1137,23 @@ Full unit: `nix run github:lostbean/design-layer#context -- docs/design --unit b
 - The region holds every unit that lists the directory, in layer order.
 - **Text outside the region is never changed.** A file with other content
   keeps it; a new region is appended below it. The file is created when absent.
-- A marker counts only as a whole line. A file with one marker and not the
-  other, or with either twice, is reported and left as it is.
+  The region takes the line ending the file already uses, and a file that ends
+  without a newline still ends without one. Removing a region restores the
+  file it was added to, byte for byte.
+- **A region is recognized by its whole shape**: the begin marker, the
+  generated notice, and the opening `prettier-ignore` line on three
+  consecutive lines, closed by the closing `prettier-ignore` line and the end
+  marker. Each is compared exactly and stands alone on its line.
+- A marker inside a fenced or indented code block is an example and is never
+  read. A marker line anywhere else that is not part of that shape, a region
+  that is never closed, and a second region each make the file **malformed**:
+  it is reported and left exactly as it is.
+- **The target is a regular file in the listed directory.** An `AGENTS.md`
+  that is a symbolic link, a directory, or not UTF-8 text is a violation; the
+  generator never writes through a link. Each file is replaced through a
+  temporary file and a rename.
+- **A run writes every folder contract or none.** Every unit path and every
+  target is examined first, and one violation leaves every file untouched.
 - When `<directory>/CLAUDE.md` does not exist, it is created as a symlink to
   `AGENTS.md`. An existing `CLAUDE.md` is never replaced.
 - Removing a path from a unit removes that unit from the directory's region.
@@ -1137,12 +1174,30 @@ exports it.
 `units` exits 0 after writing, 1 on a violation, and 2 on an error. With
 `--check` it writes nothing. The gate runs it with `--check` (§6).
 
+**Nested projects.** A directory holding its own `docs/design/design.typ` is a
+nested project, and the folder contracts below it belong to its own layer.
+`units` never touches one by default: a region found there is reported and
+left in place, in both modes. Pass the argument `check` takes:
+
+```sh
+nix run github:lostbean/design-layer#units -- docs/design . --nested-project packages/api
+```
+
+| Argument                   | Effect                                                                                                    |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `--nested-project <path>`  | leaves the project out of the outer run, then writes or checks its own layer against the project's root   |
+| `--exclude-project <path>` | leaves the project out and does not process it; the gate passes it, because it checks each project itself |
+
+Both are repeatable and take one exact repo-relative path under the rules of
+`paths:`. A unit path of the outer layer inside either is a violation.
+
 `units` and the gate both print a **report** of the git-tracked directories no
 unit path covers. A directory is listed at the highest level that holds no
 unit path; a directory holding files of its own beside a claimed subdirectory
-is listed for those files. The layer's own directory and the ADR directory are
-not listed. The report never changes an exit code, and it is skipped, with a
-line saying so, outside a git work tree.
+is listed for those files. The layer is not source and is never listed: the
+layer directory, the ADR directory, and `CONTEXT-MAP.md` and `COVERAGE.md`
+beside the layer directory. The report never changes an exit code, and it is
+skipped, with a line saying so, outside a git work tree.
 
 ### `#behavior` — the conditional rule
 
@@ -1508,8 +1563,9 @@ nix run github:lostbean/design-layer#context -- docs/design --path src/ledger/en
   and `--path` are mutually exclusive. The three selectors accept `--output`
   and `--expect-digest`.
 - `--path` takes one repo-relative path. A leading `./` and a trailing `/` are
-  dropped; an absolute path, a `..` segment, or a glob is a usage error. The
-  path need not exist: matching compares path segments.
+  dropped; an absolute path, a `..` segment, or a character the schema's
+  `unit_contract.path_forbidden_characters` lists is a usage error. The path
+  need not exist: matching compares path segments.
 - A unit nested inside another selected unit is printed once, inside its
   parent.
 - An unknown unit id, and a path no unit governs, exit 2.

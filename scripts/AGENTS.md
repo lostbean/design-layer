@@ -62,17 +62,22 @@ Interface:
 
 - `units <layer-root> [repo-root]` writes the contracts.
 - `units <layer-root> [repo-root] --check` regenerates and compares.
+- `--nested-project <path>` leaves a nested project out, then handles its own layer against its own root.
 
 Invariants:
 
-- Text outside the generated region is never changed.
+- Text outside the generated region keeps every byte, its line endings and final newline included.
+- A region is recognized by its whole generated shape. A marker in a code block is never read, and any other stray marker leaves the file untouched.
+- A target is a regular file in a directory stored under the listed path. A symbolic link is never written through.
+- A run writes every folder contract or none.
 - An existing `CLAUDE.md` is never replaced.
-- A region no unit lists is removed, and its file only when nothing else remains in it.
+- A region no unit lists is removed, and its file only when nothing else remains in it. An undeclared nested project's region is reported and left in place.
 
 Side effects:
 
-- Creates, rewrites, or deletes `AGENTS.md` in listed directories.
+- Creates, replaces, or deletes `AGENTS.md` in listed directories, each through a temporary file and a rename.
 - Creates a `CLAUDE.md` symlink where none exists.
+- The public app refreshes the `.render` library copy of the layer and of each nested project's layer.
 
 Verification: `nix develop --command bash scripts/design-units.test.sh`
 

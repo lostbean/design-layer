@@ -23,10 +23,12 @@
 
 - Update the host repository's pinned design-layer input.
 - Regenerate `docs/design/design-layer.pdf` through the host's render wrapper.
-  The library now marks the start and end of each section body. Where prose
-  directly follows a `#section` or `#subsection` call without a blank line, one
-  line of text moves by a fraction of a point, so the committed PDF no longer
-  matches a fresh render even when no source changed.
+  The library now scopes a heading offset over each section and subsection
+  body, which is how a nested unit finds its level. Where prose directly
+  follows a `#section` or `#subsection` call without a blank line, one line of
+  text moves by a fraction of a point, so the committed PDF no longer matches a
+  fresh render even when no source changed. A heading written in markup inside
+  such a body nests below its section; the library's own blocks are unaffected.
 - A host that gates with its own schema copy adds `design_doc.blocks.unit`,
   `design_doc.unit_contract`, `design_doc.spine_scope`, the `unit` entry under
   `design_doc.agent_context.projection.classification.projected`, and the
@@ -43,10 +45,22 @@
 - Write one `#unit` per part of the design, and nest units to express the
   hierarchy. State an empty list as `()`; never leave a required field out.
 - List exact repo-relative directories in `paths`. A grouping unit lists none.
+  Write each path as the file system stores it: no symbolic link in it, and
+  the letter case its parent directory lists.
+- Keep lists out of a field. Write each point as its own item of `interface`,
+  `invariants`, or `side-effects`.
+- Nest at most to the sixth heading level: five units directly in the root
+  document's body, four inside a section, three inside a subsection, and one
+  fewer in a context document.
 - Export `#let context_command = "<the host's context app> --"` from the root
   `design.typ` so folder contracts print the host's own command. Without it
   they print `nix run github:lostbean/design-layer#context --`.
-- Run the `units` app, then the render app, then the gate.
+- Run the `units` app, then the render app, then the gate. A repository with
+  nested projects passes `units` the same `--nested-project <path>` arguments
+  it passes `check`; without them `units` reports a nested project's contracts
+  and writes nothing.
+- Replace an `AGENTS.md` that is a symbolic link with a regular file in each
+  listed directory. `units` does not write through a link.
 - Commit each generated `AGENTS.md` and each `CLAUDE.md` symlink with the
   design change that produced them.
 - Keep a Markdown formatter away from the generated region. It is wrapped in

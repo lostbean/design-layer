@@ -71,6 +71,7 @@ nix run .#snips -- --check --commands deny README.md  # check freshness only
 
 nix run .#render  -- <layer-root> <out.pdf> [--check]   # #aggregate: old name
 nix run .#units   -- <layer-root> <repo-root> [--check] # folder contracts
+nix run .#units   -- <layer-root> <repo-root> --nested-project <project-root>
 nix run .#check   -- <layer-root> <repo-root>
 nix run .#lint    -- <layer-root>            # the guideline sweep, never a gate
 nix run .#project -- schema/design-schema.json <out-dir>
@@ -145,6 +146,11 @@ nix run .#render -- docs/design docs/design/design-layer.pdf
 nix run .#check  -- docs/design .
 ```
 
+`fixtures/design-schema.before-units.json` is the schema as it stood before
+the unit block, kept byte for byte. `design-units.test.sh` gates with it to
+prove that a host which has not upgraded its schema copy still renders. It is
+a record, not a second schema: never edit it to follow `schema/`.
+
 `fixtures/gallery.typ` is the ONE gallery: it calls every function the
 library projects for authoring, and it is a DRIFT TRIPWIRE rather than
 documentation. `widget-coverage.test.sh` fails when a declared kind has no
@@ -180,9 +186,12 @@ unenforced:
 - **`layer-integrity`** crosses ARTIFACTS — links, anchors, homing, the
   coverage map's own citations.
 - **`design-units`** crosses from the layer into the SOURCE TREE — a unit's
-  paths exist, each listed folder's generated contract is fresh, and no folder
-  keeps a contract no unit lists. It is the one check that reads directories
-  outside `docs/`.
+  path is one real directory of the repository, each target is a regular file
+  holding at most one well-formed region, each listed folder's generated
+  contract is fresh, and no folder keeps a contract no unit lists. It is the
+  one check that reads directories outside `docs/`, and the one tool that
+  writes there, so it examines every path and every target before it writes
+  anything and writes all of them or none.
 
 A rule the schema declares and no home runs is worse than an undeclared one: the
 manual promises it, an author trusts it, and nothing objects.

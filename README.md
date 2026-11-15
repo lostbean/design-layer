@@ -79,9 +79,9 @@ violation, 2 on an error:
    reference, a section pointer), every ADR is in lockstep with its filename,
    every glossary term is unique, no layer file sits outside its declared
    home under `docs/`
-4. **unit folder contracts** — every path a unit lists exists, every generated
-   `AGENTS.md` region matches a fresh generation, and no folder carries a
-   region no unit lists
+4. **unit folder contracts** — every path a unit lists is one real directory
+   of the repository, every generated `AGENTS.md` region matches a fresh
+   generation, and no folder carries a region no unit lists
 
 The same step prints a **report** of the git-tracked directories no unit path
 covers. It shows what the design does not claim and never changes the exit
@@ -96,6 +96,37 @@ nix run github:lostbean/design-layer#units -- docs/design .
 `units` writes one generated region into the `AGENTS.md` of every directory a
 unit lists, and links `CLAUDE.md` to it where none exists. `check` only
 compares; it never rewrites a stale region.
+
+`units` shares each file with hand-written text, so it is strict about what it
+touches:
+
+- Text outside the region keeps every byte, including its line endings and
+  whether the file ends with a newline.
+- A region is recognized by its whole generated shape. A marker shown inside a
+  code block is an example and is never read; a marker line anywhere else
+  outside that shape is reported and the file is left as it is.
+- The target is a regular file in the listed directory. An `AGENTS.md` that is
+  a symbolic link, a directory, or not UTF-8 text is a violation.
+- A unit path is the path the file system stores. A path through a symbolic
+  link, or in another letter case on a case-insensitive file system, fails
+  naming both spellings. `.git` and the layer directory are not unit paths.
+- A run writes every folder contract or none: one violation leaves every file
+  untouched.
+
+A directory holding its own `docs/design/design.typ` is a **nested project**,
+and its folder contracts belong to its own layer. `units` never touches one by
+default; it reports a region found there and leaves it in place. Declare the
+project with the argument `check` takes:
+
+```sh
+nix run github:lostbean/design-layer#units -- docs/design . --nested-project packages/api
+nix run github:lostbean/design-layer#check -- docs/design . --nested-project packages/api
+```
+
+`--nested-project <path>` is repeatable. It leaves the project out of the
+outer run, then writes — or with `--check` compares — the project's own layer
+at `<path>/docs/design` against the project's root. `--exclude-project <path>`
+only leaves the project out, for a caller that processes it separately.
 
 One further entry point is advisory rather than a gate:
 
@@ -161,11 +192,14 @@ layer. One thing is generated beside the source it describes: a directory a
 - **It does not choose or improve a system architecture.** It teaches how to
   document an existing system and established intent. Documentation depth is
   authoring guidance, not a mechanical correctness property.
-- **It does not hold a design layer of its own.** It is a tool. Its
-  correctness is proven by the self-tests under `scripts/*.test.sh` and by
-  `fixtures/gallery.typ`, the fixture that exercises every function the
-  library projects for authoring — never by dogfooding a layer it would then
-  have an incentive to keep looking good.
+- **Its own design layer is not its proof of correctness.** The repository
+  carries a concise layer under `docs/design/` that describes its parts as
+  units, and `lib/`, `schema/`, `fixtures/`, `scripts/`, and `skills/` each
+  carry the generated folder contract. Rendering and gating that layer
+  exercises integration. Correctness is proven by the self-tests under
+  `scripts/*.test.sh` and by `fixtures/gallery.typ`, the fixture that
+  exercises every function the library projects for authoring — never by a
+  layer the repository would have an incentive to keep looking good.
 - **It does not render to anything but PDF.** One document, one artifact;
   no HTML output, no stylesheet theming layer to keep in sync.
 - **It is not a proof of good design.** The behavior-rule fence (see
@@ -180,9 +214,12 @@ layer. One thing is generated beside the source it describes: a directory a
 ```
 scripts/     the gate: design-aggregate, design-context, design-units, layer-integrity,
              token-coverage, render-project
+lib/         the hand-written Typst library the layer calls
 schema/      the ONE declared schema — block vocabulary, anchors, layout, enums
-fixtures/    the gallery: every projected function, and the renderer-drift tripwire
+fixtures/    the gallery: every projected function, and the renderer-drift tripwire;
+             and the schema as it stood before the unit block, for the old-schema test
 skills/      the authoring guidance an agent loads to write a well-formed layer
+docs/design/ this repository's own layer: its parts as units, and the rendered PDF
 ```
 
 ## Writing a design document
@@ -226,8 +263,12 @@ and goes in the unit's body, where a nested `unit` is the next level down.
 ```
 
 Every field is required. An empty list is a legal answer and renders as `None`;
-a field left out fails the render. `paths` holds exact repo-relative
-directories, and a unit that only groups other units lists none. The `id` is
+a field left out fails the render. A list written inside one field fails too:
+state each point as its own item of a list field. `paths` holds exact
+repo-relative directories, and a unit that only groups other units lists none.
+A unit's heading level is its depth, down to the sixth level: five units nest
+directly in the root document's body, four inside a section, three inside a
+subsection, and one fewer in a context document. The `id` is
 unique across the layer and is the unit's stable address: the reference
 `@unit-billing-ledger`, the link fragment `design.typ#unit-billing-ledger`, and
 the selector `--unit billing-ledger`.
@@ -528,9 +569,10 @@ apps.design-gate-units = design-layer.apps.${system}.units;
 
 These apps prepare or refresh the generated `.render` library beside the root
 `design.typ` before using it. The selected bundle owns this operation; consumers
-need no projection wrapper or copied bootstrap script. `check` also prepares each
-validated `--nested-project` layer. It still reports a stale PDF without rewriting
-that PDF. All preparation uses local bundled files, without network access.
+need no projection wrapper or copied bootstrap script. `check` and `units` also
+prepare each validated `--nested-project` layer. `check` still reports a stale
+PDF without rewriting that PDF. All preparation uses local bundled files,
+without network access.
 
 `DESIGN_LIB_DIR` remains an explicit library override: preparation uses that
 library when supplied. Direct script invocation retains its existing contract

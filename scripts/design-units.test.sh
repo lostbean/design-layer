@@ -836,6 +836,29 @@ run 1 "layer-integrity refuses a link to a unit nobody declares" -- \
   python3 ./scripts/layer-integrity "$REPO"
 has 'no heading renders id "unit-absent"' "the violation names the missing unit anchor"
 cp "$WORK/coverage.good" "$REPO/docs/COVERAGE.md"
+# The id is a named argument and may stand anywhere in the call. A unit written
+# title-first renders, so a link to it must resolve: the index used to read the
+# id only as the FIRST argument and reported this anchor as dangling. The call
+# also carries what a careless scan trips on — a quote and a parenthesis in
+# prose, a URL, and an `id:` belonging to something else.
+python3 - "$LAYER/alpha/design.typ" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+first = '    id: "shared-kernel",\n'
+last = '    paths: ("src/shared",),\n'
+assert first in s and last in s
+s = s.replace(first, "").replace(last, last + first)
+open(p, "w").write(s)
+PY
+printf '| Shared | captured | [Zshared](design/alpha/design.typ#unit-shared-kernel) |\n' \
+  >>"$REPO/docs/COVERAGE.md"
+run 0 "a unit whose id is not its first argument still renders" -- render
+run 0 "layer-integrity resolves a link to a unit written title-first" -- \
+  python3 ./scripts/layer-integrity "$REPO"
+run 0 "the folder contracts do not depend on argument order" -- units --check
+cp "$WORK/alpha.good" "$LAYER/alpha/design.typ"
+cp "$WORK/coverage.good" "$REPO/docs/COVERAGE.md"
 
 # The composite, through the public app: clean first, then one broken variant
 # per new check, each restored before the next.

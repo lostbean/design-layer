@@ -523,11 +523,82 @@ TYPST_TERM_OK_RE = re.compile(r"^term-[a-z0-9]+(?:-[a-z0-9]+)*$")
 TYPST_SECTION_RE = re.compile(r'(?:sub)?section\(\s*title:\s*"([^"]*)"')
 # A UNIT, by its id. `#unit(id: "billing-ledger", ...)` renders the anchor
 # `unit-billing-ledger`, which a link into the design document may carry the
-# way it carries a section slug. Matched off the joined source for the same
-# reason a section is: the call opens across lines. The id is the unit's FIRST
-# argument by convention, as a section's title is, and that is the spelling
-# this reads.
-TYPST_UNIT_RE = re.compile(r'\bunit\(\s*id:\s*"([^"]*)"')
+# way it carries a section slug. Read off the joined source for the same
+# reason a section is: the call opens across lines.
+#
+# The id is a NAMED argument, so it may stand anywhere in the call, and the
+# library accepts it wherever it stands. A pattern that wanted it first would
+# index `#unit(id: "a", title: …)` and miss `#unit(title: …, id: "a")`, and a
+# link to a unit that renders would be reported as dangling. So the pattern
+# finds only where a call OPENS, and `typst_unit_ids` reads that call's own
+# argument list for its `id:`.
+TYPST_UNIT_OPEN_RE = re.compile(r"(?<![\w-])unit\(")
+TYPST_UNIT_ID_ARG_RE = re.compile(r'\s*id\s*:\s*"([^"]*)"')
+# A line comment, but not the `//` of a URL. The argument walk has to keep
+# every bracket of the call, and the plain comment pattern above would cut a
+# field such as `[See https://example.org.]` off before its closing bracket.
+TYPST_UNIT_COMMENT_RE = re.compile(r"(?<!:)//.*$")
+_TYPST_CLOSERS = {"(": ")", "[": "]", "{": "}"}
+
+
+def typst_unit_ids(source: str) -> list:
+    """The id of every `unit(` call in comment-stripped Typst source.
+
+    Each call's argument list is walked once and its `id:` is taken only at the
+    list's own level: directly after the opening parenthesis or after a comma
+    there. An `id:` inside a nested call, a content block, or a string belongs
+    to something else and is not read. A nested unit is its own `unit(` and is
+    found by its own match.
+
+    The walk follows Typst's two modes, because they disagree about what is
+    structure. In code a double quote opens a string, and brackets nest. Inside
+    a content block only square brackets nest: a quote or a parenthesis there
+    is prose, a backslash escapes the next character, and a backtick run opens
+    raw text that ends at the same run.
+    """
+    ids = []
+    for opening in TYPST_UNIT_OPEN_RE.finditer(source):
+        position = opening.end()
+        stack = [")"]
+        at_argument_start = True
+        while position < len(source) and stack:
+            character = source[position]
+            if stack[-1] == "]":
+                if character == "\\":
+                    position += 2
+                    continue
+                if character == "`":
+                    run = len(source) - len(source[position:].lstrip("`")) - position
+                    close = source.find("`" * run, position + run)
+                    position = len(source) if close < 0 else close + run
+                    continue
+                if character == "[":
+                    stack.append("]")
+                elif character == "]":
+                    stack.pop()
+                position += 1
+                continue
+            if at_argument_start and len(stack) == 1:
+                named = TYPST_UNIT_ID_ARG_RE.match(source, position)
+                if named is not None:
+                    ids.append(named.group(1))
+                    break
+            if not character.isspace():
+                at_argument_start = False
+            if character == '"':
+                position += 1
+                while position < len(source) and source[position] != '"':
+                    position += 2 if source[position] == "\\" else 1
+            elif character in _TYPST_CLOSERS:
+                stack.append(_TYPST_CLOSERS[character])
+            elif character == stack[-1]:
+                stack.pop()
+            elif character == "," and len(stack) == 1:
+                at_argument_start = True
+            position += 1
+    return ids
+
+
 TYPST_LINK_RE = re.compile(r'link\(\s*"([^"]*)"')
 TYPST_LINE_COMMENT_RE = re.compile(r"//.*$")
 # A CITATION, as opposed to a declaration. `#term("term-x")` names a term
@@ -599,9 +670,10 @@ def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
     # A unit's anchor joins the same id set a section's does: both are ids the
     # rendered document carries, and a link's fragment resolves against either.
     if schema.unit_anchor_prefix:
-        for m in TYPST_UNIT_RE.finditer(joined):
-            if m.group(1):
-                idx.section_ids.add(schema.unit_anchor_prefix + m.group(1))
+        unit_source = "\n".join(TYPST_UNIT_COMMENT_RE.sub("", raw) for raw in idx.lines)
+        for unit_id in typst_unit_ids(unit_source):
+            if unit_id:
+                idx.section_ids.add(schema.unit_anchor_prefix + unit_id)
 
     # Pending-entry titles, which a host README's "Designed, not built" list
     # names (check 9). The title is a Typst string, so its escapes are undone

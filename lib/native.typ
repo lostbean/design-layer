@@ -192,17 +192,30 @@
 // THE HEADING A NESTED BLOCK SITS UNDER. A `unit` is the same shape at every
 // depth, so it cannot carry a fixed heading level the way `section` (2) and
 // `subsection` (3) do: its level is one below whatever encloses it. A function
-// cannot see its caller, so each heading-owning block pushes its own level
-// while its body is laid out and pops it after, and a unit reads the top of
-// the stack. Content is evaluated at layout time, in document order, so a
-// nested call sees exactly the hosts that enclose it.
-#let _heading-host = state("heading-host", ())
-
+// cannot see its caller, so each heading-owning block scopes its own level
+// over its body as the heading OFFSET, and a unit reads the offset in force
+// where it is called.
+//
+// THE CARRIER IS A STYLE, NOT A STATE. A style is resolved in the pass that
+// lays the content out, at any depth. A state holding the level would make
+// each nested unit's value depend on the read above it, and Typst settles one
+// such dependency per layout pass: three or four nested units then exhaust its
+// five passes and the render stops with "layout did not converge".
+//
+// Every heading the library draws names its level, so the offset moves none of
+// them. Two things do change for a layer that authors no unit. A heading
+// written in markup inside a hosted body nests below its host. And where prose
+// runs on from a hosted body into the same paragraph, that paragraph now
+// crosses a style boundary, and one justified line of it can move by a
+// fraction of a point.
 #let _hosted(level, body) = {
-  _heading-host.update(hosts => hosts + (level,))
+  set heading(offset: level)
   body
-  _heading-host.update(hosts => hosts.slice(0, -1))
 }
+
+// The level of the innermost host, read inside `context`. No host is the
+// document body, whose own heading is the chapter at level one.
+#let _host-level() = calc.max(heading.offset, 1)
 
 #let section(title: none, lead: none, visual: none, notes: none, body: none) = {
   _need("section", "title", title)

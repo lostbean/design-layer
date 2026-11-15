@@ -16,7 +16,8 @@
 #      duplicate id, an illegal path, an unknown attribute — each fail the
 #      compile; its GUIDELINES report and block only under strict
 #   2. the rendered page carries the contract, an empty list reads `None`, and
-#      nesting is the heading hierarchy
+#      nesting is the heading hierarchy down to the sixth heading level, in a
+#      document body, a section, and a subsection
 #   3. a context document is not held to the foundation minimum, and a
 #      statement inside a unit is not read as the document's foundation
 #   4. the projection, and selection by unit id and by code path
@@ -443,6 +444,107 @@ run 1 "a unit id repeated in another document fails the projection" -- context
 has "declared twice" "the projection names the duplicate id rule"
 cp "$WORK/alpha.good" "$LAYER/alpha/design.typ"
 run 0 "the fixture renders again" -- render
+
+# NESTING DEPTH. A unit's heading level is its depth, and a document has six
+# heading levels. The chapter is level one, so the deepest nesting is five
+# units directly in a document body, four inside a section, and three inside a
+# subsection. Each must render in ONE settled layout: a level derived through
+# a state costs a layout pass per nested unit, and four of them once stopped
+# the render with "layout did not converge". One unit deeper is past the sixth
+# level, and the render and the projection both refuse it, naming the unit.
+DEPTH="$WORK/depth"
+mkdir -p "$DEPTH/docs/design"
+cp -R "$LIB" "$DEPTH/docs/design/.render"
+printf '# Map\n' >"$DEPTH/docs/CONTEXT-MAP.md"
+printf '# Coverage\n' >"$DEPTH/docs/COVERAGE.md"
+depth_unit() { # <n> [body]
+  printf '#unit(id: "d%s", title: "Zdeep%s", overview: "O.", interface: (), invariants: (), side-effects: (), verification: "none", paths: ())%s' \
+    "$1" "$1" "${2:-}"
+}
+depth_nest() { # <count> [from] — <count> units, each in the body of the one before
+  local count="$1" at="${2:-1}"
+  if [ "$at" -eq "$count" ]; then
+    depth_unit "$at"
+  else
+    depth_unit "$at" "[ $(depth_nest "$count" $((at + 1))) ]"
+  fi
+}
+depth_layer() { # <what follows the foundation>
+  cat >"$DEPTH/docs/design/design.typ" <<EOF
+#import ".render/designlib.typ": *
+#let title = [Zdepth]
+#let body = [
+  #section(title: "Foundation", body: [
+    #goal(title: "Zdg")[g]
+    #invariant(title: "Zdi", enforcement: "convention")[i]
+    #principle(title: "Zdp")[p]
+  ])
+  $1
+]
+EOF
+}
+depth_render() {
+  DESIGN_LIB_DIR="$DEPTH/docs/design/.render" python3 ./scripts/design-aggregate \
+    "$DEPTH/docs/design" "$DEPTH/out.pdf"
+}
+depth_context() {
+  DESIGN_LIB_DIR="$DEPTH/docs/design/.render" python3 ./scripts/design-context \
+    "$DEPTH/docs/design"
+}
+# <where> <deepest count> <host template>. The template holds NEST where the
+# nested units go. In every host the deepest unit is the sixth heading level,
+# so the aggregate numbers it with six parts under chapter 1, section 2.
+depth_case() {
+  local where="$1" count="$2" host="$3" text
+  depth_layer "${host/NEST/$(depth_nest "$count")}"
+  rm -f "$DEPTH/out.pdf"
+  run 0 "$count nested units render $where" -- depth_render
+  lacks "did not converge" "$count nested units $where settle in the layout passes Typst allows"
+  has "0 guideline(s)" "$count nested units $where fire no guideline"
+  text="$(pdftotext -layout "$DEPTH/out.pdf" - 2>/dev/null)"
+  case "$text" in
+  *"1.2.1.1.1.1 Zdeep$count"*) pass_line "the deepest unit $where is the sixth heading level" ;;
+  *) fail_line "the deepest unit $where is not numbered 1.2.1.1.1.1" ;;
+  esac
+  run 0 "the projection accepts $count nested units $where" -- depth_context
+  has "###### unit: Zdeep$count" "the projection heads the deepest unit $where at level six"
+
+  depth_layer "${host/NEST/$(depth_nest $((count + 1)))}"
+  run 1 "$((count + 1)) nested units $where fail the render" -- depth_render
+  has "d$((count + 1))\\\" is nested at heading level 7" "the render names the unit past the sixth level"
+  lacks "did not converge" "the render fails on the depth rule, not on convergence"
+  run 1 "$((count + 1)) nested units $where fail the projection" -- depth_context
+  has "nested past Markdown's 6 heading levels" "the projection names the same limit"
+}
+depth_case "directly in a document body" 5 'NEST'
+depth_case "inside a section" 4 '#section(title: "Parts", body: [ NEST ])'
+depth_case "inside a subsection" 3 \
+  '#section(title: "Parts", body: [#subsection(title: "Sub")[ NEST ]])'
+# A CONTEXT DOCUMENT sits one level lower in the projection, which writes the
+# root as the Markdown title and each context as a heading below it. The limit
+# is judged there, so the render refuses exactly the unit the projection cannot
+# address, and names the level in both carriers.
+depth_layer ''
+mkdir -p "$DEPTH/docs/design/alpha"
+depth_context_document() { # <count>
+  cat >"$DEPTH/docs/design/alpha/design.typ" <<EOF
+#import "../.render/designlib.typ": *
+#let title = [Zdepth alpha]
+#let body = [ $(depth_nest "$1") ]
+EOF
+}
+depth_context_document 4
+run 0 "4 nested units render in a context document's body" -- depth_render
+lacks "did not converge" "4 nested units in a context document settle in the layout passes Typst allows"
+run 0 "the projection accepts 4 nested units in a context document's body" -- depth_context
+has "###### unit: Zdeep4" "the projection heads the deepest unit of a context document at level six"
+depth_context_document 5
+run 1 "5 nested units in a context document's body fail the render" -- depth_render
+has 'd5\" is nested at heading level 6 of a context document, which the Markdown projection writes at level 7' \
+  "the render names the page level and the projection level"
+run 1 "5 nested units in a context document's body fail the projection" -- depth_context
+has "nested past Markdown's 6 heading levels" "the projection names the same limit for a context document"
+rm -rf "$DEPTH/docs/design/alpha"
 
 # --- 4. THE PROJECTION AND ITS SELECTORS ----------------------------------------
 context >"$WORK/full.md" 2>"$WORK/full.err"

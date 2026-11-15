@@ -27,7 +27,7 @@
 #import "semantic.typ": *
 #import "statements.typ": _foundation-unit-close, _foundation-unit-open
 #import "native.typ": (
-  _answer-row, _answer-rows, _card, _card-anatomy, _heading-host, _hosted,
+  _answer-row, _answer-rows, _card, _card-anatomy, _host-level, _hosted,
   _sentences, _unit-furniture,
 )
 
@@ -40,6 +40,29 @@
 // someone has to remember to place. The trail is never reset: an id is unique
 // across the whole layer, not within one chapter.
 #let _unit-trail = state("unit-trail", ())
+
+// A heading has six levels, in the rendered document and in the Markdown
+// projection alike. The chapter is level one, so a unit directly in a document
+// body is level two and five units nest there; four nest inside a `section`,
+// three inside a `subsection`.
+//
+// The projection writes the layer as ONE Markdown document: the root design is
+// its level-one title and each context document is a level-two heading below
+// it. A unit in a context document is therefore one level lower in the
+// projection than on the page, and the limit is judged where it binds first,
+// so the render never accepts a unit the projection cannot address.
+#let _UNIT-LEVEL-MAX = 6
+
+// Whether the unit is being laid out in a context document's chapter. The
+// aggregate heads every document with a level-one heading labelled
+// `ctx-<name>`, and the root's name is `root`. A unit compiled outside the
+// aggregate has no chapter above it and is judged as the root is.
+#let _in-context-document() = {
+  let chapters = query(heading.where(level: 1).before(here()))
+  if chapters.len() == 0 or not chapters.last().has("label") { return false }
+  let name = str(chapters.last().label)
+  name.starts-with("ctx-") and name != "ctx-root"
+}
 
 #let _unit-fail(id, msg) = _fail(
   "unit",
@@ -245,8 +268,19 @@
   for s in UNIT-SECTIONS { shown.insert(s.field, _unit-value(s, data.at(s.field))) }
   let rows = _answer-rows(shown, fields: fields)
   context {
-    let hosts = _heading-host.get()
-    let level = if hosts.len() == 0 { 2 } else { hosts.last() + 1 }
+    let level = _host-level() + 1
+    let projected = level + if _in-context-document() { 1 } else { 0 }
+    if projected > _UNIT-LEVEL-MAX {
+      let lower = if projected > level {
+        (" of a context document, which the Markdown projection writes at "
+          + "level " + str(projected))
+      } else { "" }
+      _unit-fail(id, "is nested at heading level " + str(level) + lower
+        + " — a design document has " + str(_UNIT-LEVEL-MAX) + " heading "
+        + "levels, and the Markdown projection cannot address a unit below "
+        + "the last one. Flatten the nesting, or split the unit's subtree "
+        + "into sibling units")
+    }
     [#heading(level: level)[#title]#label(anchor)]
     _card(
       accent: _UNIT-ACCENT,

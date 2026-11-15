@@ -1,0 +1,480 @@
+{
+  "version": 3,
+  "description": "The declared contract for the design layer's MECHANICAL half: the block vocabulary the renderer validates, the anchors and layout the gate checks, and the enums those two resolve. Judgement — how deep to design, what earns coverage, how work is routed — is deliberately absent: it is not machine-decidable and lives with the authoring guidance instead.",
+  "anchors": {
+    "term": {
+      "heading_form": "### <Term> {#term-<slug>}",
+      "heading_regex": "^### .*\\{#term-[a-z0-9]+(-[a-z0-9]+)*\\}\\s*$",
+      "id_pattern": "^term-[a-z0-9]+(-[a-z0-9]+)*$",
+      "slug_rule": "lowercase; collapse runs of non-alphanumerics to single hyphens; strip leading/trailing hyphens",
+      "definition_rule": "1–2 sentences stating what the concept IS — never what the system does with it; project-specific concepts only, general engineering vocabulary never earns a term",
+      "avoid_line": "optional '_Avoid_: <word>, <word>' line under the definition naming rejected synonyms — the vocabulary is opinionated: one best word, the rest rejected by name, including a rejected metaphor-as-name",
+      "slug_retirement": "a term-<slug> id is never repurposed for a different concept — retire the term and mint a new slug, never rebind",
+      "coverage_rule": "every load-bearing vocabulary the system actually uses earns a term — in particular EVERY schema enum that governs behavior (cure_class, timing, drift_kind, enforcement, run_mode, work_order_state, triage_roles, recommendation_strength, lens). A behavior-governing enum with no CONTEXT term is an undocumented-vocabulary gap the probe flags; the design must not lean on a word it never defines."
+    },
+    "adr": {
+      "element_form": "<a id=\"adr-NNNN\"></a> under the ADR's first `# ` title",
+      "element_regex": "^<a id=\"adr-[0-9]{4}\"></a>$",
+      "id_pattern": "^adr-[0-9]{4}$",
+      "filename_pattern": "^[0-9]{4}-[a-z0-9-]+\\.md$",
+      "lockstep": "the NNNN appears identically in filename, anchor id, and every reference",
+      "evolution": "append-only ledger — a decision is superseded by a new ADR that links the old one, never rewritten; the design document and CONTEXT are present-tense snapshots, the ADR set is the history",
+      "body_rule": "the title IS the decision statement (no 'ADR-NNNN:' prefix in the title text — the number lives in filename and anchor); body is 1–3 sentences: context, decision, why — a single paragraph is a complete ADR; considered-options / consequences sections only when the rejected alternatives or non-obvious consequences are genuinely worth remembering, never template filler",
+      "qualifies": [
+        "hard-to-reverse structural choices",
+        "technology selections with real trade-offs or lock-in",
+        "explicit no-s and their reasons",
+        "constraints invisible in the system itself",
+        "surprising conventions a reader would otherwise 'fix'",
+        "boundary and ownership calls",
+        "reversals of earlier decisions (the superseding ADR)"
+      ]
+    },
+    "section": {
+      "heading_form": "a content-only heading — `#section(title: ...)`, `#subsection(title: ...)` — whose rendered id the renderer derives from heading text and whose chapter-local number the renderer derives from aggregate position: chapter, chapter.section, chapter.section.subsection",
+      "id_pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "slug_rule": "the heading text lowercased with runs of non-alphanumerics collapsed to single hyphens: '## The artifact trio' -> 'the-artifact-trio'",
+      "purpose": "a link into a SECTION of a design document, as distinct from a link into a CONTEXT term or an ADR. design_doc.generation.link_rewrite documents this form ; it is the only way to point a reader at the part of a document that answers them, rather than at its top",
+      "gate_rule": "layer-integrity accepts a design-ish fragment matching this pattern alongside the term and adr patterns, and resolves it against the target document's rendered ids. Before this was declared, the gate rejected the one form the schema blessed, and authors degraded their cross-document pointers to document-level"
+    }
+  },
+  "layer_layout": {
+    "entry_points": ["docs/CONTEXT-MAP.md", "docs/design/design.typ"],
+    "entry_points_rule": "DISJUNCTION, not conjunction: a layer EXISTS when AT LEAST ONE entry point is present. The list is ordered by preference, not by requirement — docs/CONTEXT-MAP.md is the entry point of a multi_context layer and is ABSENT BY DESIGN in a single_context one (single_context.files lists no CONTEXT-MAP.md). So a present docs/design/design.typ alone is a complete, valid layer. 'No design layer' means EVERY entry point is missing; concluding it from the first missing path alone is a false negative that tells later agents a designed repo has no design to consult, and misroutes their first decision.",
+    "homing": {
+      "rule": "the design layer lives ENTIRELY under docs/ — every layer basename has a declared home, and a layer file found outside its home is a mishomed stray (layer-integrity checks this mechanically). The design references the system by path; the system never hosts layer files.",
+      "homes": {
+        "CONTEXT-MAP.md": ["docs/CONTEXT-MAP.md"],
+        "COVERAGE.md": ["docs/COVERAGE.md"],
+        "design.typ": [
+          "docs/design/design.typ",
+          "docs/design/<context>/design.typ"
+        ],
+        "CONTEXT.typ": [
+          "docs/design/CONTEXT.typ",
+          "docs/design/<context>/CONTEXT.typ"
+        ],
+        "design.pdf": ["docs/design/design-layer.pdf"],
+        "design-layer.pdf": ["docs/design/design-layer.pdf"]
+      },
+      "context_segment": "^[a-z0-9][a-z0-9-]*$",
+      "note": "<context> is exactly ONE path segment matching context_segment — the context's kebab-case name (a context folder under docs/design/ holds only that context's layer files). ADR homing is owned by adr_dir + anchors.adr.filename_pattern, not listed here. The layer renders as ONE document at docs/design/design-layer.pdf; a context emits no sibling design.pdf, so a per-context design.pdf is a mishomed stray left by an older render."
+    },
+    "multi_context": {
+      "context_home": "each context homes its design.typ + CONTEXT.typ under docs/design/<context>/ — never colocated in a source directory (see homing)",
+      "context_map": "docs/CONTEXT-MAP.md links every CONTEXT.typ as an exact markdown link, each with a one-line description; a relationships section declares cross-context relationships in the DDD vocabulary (customer/supplier, conformist, anti-corruption layer, shared kernel, separate ways) with direction; a shared term names exactly one owning context — others link to the owner, never redefine; the map owns context-level relationships only — fine-grained structural relations live in the root design document's system-at-a-glance",
+      "no_root_glossary": "in multi-context mode there is no single-context glossary (no docs/design/CONTEXT.typ) — every glossary lives in its context folder; a glossary outside one is an orphan",
+      "root_design_doc": "docs/design/design.typ names every context; a context is named by a ctx() call, and layer-integrity checks that every context design document is named by the root"
+    },
+    "single_context": {
+      "files": [
+        "docs/design/CONTEXT.typ",
+        "docs/design/design.typ",
+        "docs/design/design-layer.pdf",
+        "docs/COVERAGE.md",
+        "docs/adr/"
+      ],
+      "split_trigger": "a second real vocabulary, never module count. A discovered domain can structure sections without earning a separate design source; a context earns its own design source and CONTEXT only when a second real vocabulary appears"
+    },
+    "nested_projects": {
+      "argument": "--nested-project <repo-relative-project-root>",
+      "cardinality": "repeatable — one argument per independently checked nested project",
+      "path_contract": "the value is one exact repo-relative path. It is non-empty, contains no glob metacharacter or backslash, is not absolute, is not '.', and contains no empty, '.' or '..' segment. Its canonical path is a descendant of the repository root and is never the repository root itself. The path must name a directory containing docs/design.",
+      "outer_exclusion": "the outer repository's layer-integrity run excludes exactly each declared nested project. It does not exempt a same-named path, a parent, a sibling, or any unrelated mishomed design artifact.",
+      "independent_check": "the same design-check invocation runs aggregate freshness, token coverage, and layer integrity independently for every declared nested project, using that project root and its docs/design directory. A failure in any nested project fails the invocation."
+    },
+    "adr_dir": "docs/adr",
+    "design_ish_markers": [
+      "CONTEXT.typ",
+      "design.typ",
+      "design.pdf",
+      "#term-",
+      ".md#adr-",
+      "docs/adr/",
+      "re:(^|/)[0-9]{4}-[a-z0-9-]+\\.md",
+      "re:(^|/)adr-[^/]+\\.md"
+    ],
+    "design_ish_markers_note": "entries starting with 're:' are regexes matched against the whole link target (catches adr-ish filenames linked outside docs/adr/ or without a fragment); others: trailing '/' = directory prefix, containing '#' = substring of the destination, else exact basename match. The ADR markers ('.md#adr-', 'docs/adr/', both regexes) match MARKDOWN because ADRs are markdown and stay so — removing them would stop resolving every ADR citation written as a link. CONTEXT.typ and design.typ replaced their .md spellings when markdown authoring was removed: CONTEXT-MAP.md links each context glossary by path, and those links are checked only while the basename is a marker",
+    "staleness_advisory": {
+      "threshold_commits": 30,
+      "note": "an ADVISORY, never a check — exit codes untouched: when the repo has moved threshold_commits+ commits since any layer artifact last changed, layer-integrity prints one line naming the count and recommending the layer be reconciled with the system. The always-on mechanical form of the standing-directives staleness hint; runs wherever the gate is wired (pre-commit, CI, probes). A script reading an older schema copy without this key skips the advisory silently (tolerate-absent). Skipped outside git and when the layer was never committed."
+    },
+    "decision_citation_advisory": {
+      "supersession_patterns": [
+        "[Ss]upersedes\\s+\\[ADR-(\\d+)\\]",
+        "[Rr]etires\\s+\\[ADR-(\\d+)\\]"
+      ],
+      "note": "an ADVISORY, never a check — exit codes untouched: layer-integrity counts the LIVE decisions no design document cites and prints one line naming the count and the lowest-numbered examples. Every other check in this gate is REFERENTIAL — it proves a citation RESOLVES, and is therefore blind to a citation that was never written: a layer citing 12 decisions passes exactly as green as one citing 123. That blindness is measured, not hypothetical — a re-derivation kept every ADR on disk, cited 10 of 72, and passed the full gate. This is the one signal that reads the uncited side. A decision a later one supersedes is legitimately dormant, so supersession_patterns are matched against every ADR body to find the numbers a SUCCESSOR declares dead, and those are excluded — the ledger records supersession only on the citing side, so it is derived there rather than from a status field no ADR carries. A script reading an older schema copy without this key skips the advisory silently (tolerate-absent)."
+    },
+    "generation_debris_patterns": ["^\\s*</content>\\s*$"],
+    "generation_debris_patterns_note": "python-re regexes matched line-by-line against every layer artifact (design.typ, CONTEXT.typ, CONTEXT-MAP.md, COVERAGE.md, ADRs; fenced code blocks exempt — an example is documentation): a matching line is a generation-wrapper artifact, writer leakage the sole writer must never leave behind. layer-integrity reads this list; extend it here as new wrapper shapes surface, never in the script.",
+    "artifact_filenames": {
+      "names": [
+        "design.md",
+        "design.typ",
+        "design.pdf",
+        "CONTEXT.md",
+        "CONTEXT.typ",
+        "CONTEXT-MAP.md",
+        "COVERAGE.md"
+      ],
+      "note": "the design layer's own file basenames. Every file carrying one of these names is a layer artifact and must sit at its declared home (see homing) — the layer never colocates into source directories, so any tool governing a source directory may treat these basenames like any other stray file. design.md and CONTEXT.md are the RETIRED authoring surface: they are still listed because a layer may still carry them, and recognizing them by name is what lets the gate refuse a legacy layer instead of reporting no layer at all."
+    },
+    "coverage_map": {
+      "what": "the answer to 'is any part of the system blind to the design'. A table listing every meaningful system part with a status and a pointer. The STATUSES are declared here because the renderer validates them: a native coverage() row carries one of these values, and a row that is not `captured` states its reason, so absence is a recorded decision rather than an accident",
+      "statuses": {
+        "captured": "a design unit explains this part at architectural scope and links to its owning section; implementation detail remains in code",
+        "standard": "intentionally not detailed — evident boilerplate the owner chose not to design (conventional dev tooling, CI, generated files). A recorded, revisitable decision, not a gap. The row states WHY it is standard.",
+        "out-of-scope": "not a designed subsystem at all (license, .gitignore, vendored third-party). The row says so."
+      }
+    },
+    "unit_model": {
+      "altitude_pattern": "^L([1-9][0-9]*)$",
+      "altitudes": ["L1", "L2", "L3", "L4"],
+      "altitude_names": {
+        "L1": "boundary",
+        "L2": "contexts",
+        "L3": "components",
+        "L4": "internals"
+      },
+      "altitude_tints": {
+        "L1": "slate",
+        "L2": "teal",
+        "L3": "amber",
+        "L4": "violet"
+      },
+      "note": "the depth labels a diagram declares itself at. The design layer is a recursively self-similar tree of units — a unit is the same shape at every altitude — so an altitude is a label on ONE node type rather than a fixed number of different things. The ladder is OPEN: any `L<n>` for a positive integer n is a legal altitude, per altitude_pattern, because a focused architectural view may need another level without requiring every project to use it. `altitudes` lists the NAMED default rungs — L1..L4, the ladder a layer uses unless its recursion runs deeper — and `altitude_names` and `altitude_tints` declare the name and the accent of each named rung; every tint named here must be a declared design_doc.accents value. A rung past the named ones is legal and unnamed: it renders with its level number in place of a name, and its accent is chosen from the declared accents by level number, so the same altitude always draws the same colour. The renderer requires the label on every diagram: a drawing whose altitude is unstated leaves a reader unable to tell which zoom level they are looking at, and the tint keyed to it makes the level legible before the caption is read"
+    }
+  },
+  "design_doc": {
+    "source": "design.typ — Typst calling the projected library directly; the reviewable unit. Its glossary is the CONTEXT.typ beside it",
+    "legacy_markdown": "authoring in design.md + CONTEXT.md was REMOVED. A layer still carrying design.md is refused by name — the aggregate and layer-integrity both name every markdown file and point at the migration — rather than walked past, because ignoring it reports 'no design layer' against a directory visibly full of design documents and sends the reader after the wrong fault. ADRs, CONTEXT-MAP.md and COVERAGE.md are unaffected: they were never the authoring surface and stay markdown",
+    "rendered": "design-layer.pdf — the layer's ONE rendered document, generated by the renderer, never hand-edited, committed and promoted whichever context changed (freshness proven by regenerate-and-compare). The root design is numbered chapter 1 and every context follows in aggregate order; sections and subsections derive chapter-local numbers such as 1.10.1. The grouped table of contents shows chapters through subsections with chapter boundaries and aligned page numbers. The alphabetized glossary is a separate unnumbered reference chapter. A context emits no sibling design.pdf; a standalone reference document kept outside the aggregate keeps its own render. The layer emits no HTML",
+    "syntax": "the projected library's functions, called directly; a block kind IS a function name (see function_naming). ADRs, CONTEXT-MAP.md and COVERAGE.md stay plain markdown with the anchor contract",
+    "generation": {
+      "pass": "validation + typesetting in one pass, at TWO severities split by what a violation breaks. FAIL-CLOSED on anything that makes the OUTPUT wrong: an illegal enum value, a malformed pending date, a malformed altitude, a citation or diagram edge resolving to nothing — the renderer would have to invent a meaning, and a design document must never guess. REPORTED AS A GUIDELINE, rendering anyway, for every STRUCTURAL opinion: a missing required field, a mis-ordered foundation, a foundation missing one of its kinds, a clause shape, a spine running out of order. A design legitimately changes shape, so the library states what it expected and lets the author decide; the guidance names the rule, the offending item, and the expectation on every render, and the run ends with a count summary. DESIGN_STRICT=1 escalates every guideline to a hard failure for a repo wanting the stricter ratchet",
+      "no_translation_step": "the author calls the library, so no converter stands between what was written and what is checked. A construct outside the grammar cannot half-convert into something that renders differently from what it says, and a rule that would have been a second parse over the source is instead a function signature the compiler enforces at the line the author writes"
+    },
+    "agent_context": {
+      "projection": {
+        "status": "an on-demand reading projection for agent context loading; it is derived from the current Typst sources, never committed, and not a published layer artifact",
+        "interface": "one command owns one semantic pipeline: default emits Markdown to standard output, --estimate emits structured size data without Markdown, and --output PATH writes the same Markdown bytes to an explicitly requested temporary path; --estimate and --output are mutually exclusive",
+        "corpus": "root and context design sources, every paired context vocabulary, docs/COVERAGE.md, and docs/CONTEXT-MAP.md when the layer has context directories, in deterministic root-then-context order; ADRs remain outside the initial complete-load corpus",
+        "semantics": "preserve every decision-bearing field, relationship, transition, clause, reference, and authored order; omit only presentation data; never summarize or flatten content to reduce size",
+        "failure": "a source or semantic violation exits 1 with no usable projection; a usage, runtime, or output-write error exits 2; an unsupported construct, unrepresentable field, or unclassified public renderer function fails loud instead of disappearing",
+        "classification": {
+          "projected": [
+            "adr",
+            "answers",
+            "answers-data",
+            "assert-foundation-cardinality",
+            "attribute",
+            "behavior",
+            "cards",
+            "chart",
+            "code-block",
+            "component",
+            "components",
+            "contract",
+            "coverage",
+            "ctx",
+            "figure-block",
+            "declare-vocabulary",
+            "diagram",
+            "diagram-native",
+            "entity",
+            "formula",
+            "given",
+            "goal",
+            "info",
+            "invariant",
+            "lens-pill",
+            "lnk",
+            "md-table",
+            "no-goal",
+            "notes",
+            "pending-entry",
+            "pending-ledger",
+            "pill",
+            "points",
+            "principle",
+            "pseudo-for",
+            "pseudo-if",
+            "pseudo-repeat",
+            "pseudo-return",
+            "pseudo-step",
+            "pseudocode",
+            "relates",
+            "section",
+            "semantic",
+            "semantic-result",
+            "seq-alt",
+            "seq-loop",
+            "seq-msg",
+            "seq-note",
+            "seq-opt",
+            "sequence",
+            "stat-grid",
+            "stat-tile",
+            "state-machine",
+            "state-type",
+            "subsection",
+            "term",
+            "then",
+            "warning",
+            "when"
+          ],
+          "presentation_only": [
+            "aggregate-doc",
+            "chapter-page",
+            "chip",
+            "context-owner",
+            "design-doc",
+            "how-to-read"
+          ],
+          "unrepresentable": ["embedded-svg"]
+        }
+      },
+      "measurement": "measure the exact Markdown bytes produced by the same pipeline during each estimate invocation; report UTF-8 bytes, Unicode characters, whitespace-delimited words, lines, likely_tokens=ceil(UTF-8 bytes/4), and conservative_tokens=ceil(UTF-8 bytes/3), with both formulas named as model-independent planning estimates rather than exact tokenizer counts; the estimator performs no model lookup and has no model-specific tokenizer dependency; no digest handshake spans estimate and output, so callers re-estimate after source changes"
+    },
+    "blocks": {
+      "goal": "pragmatic, practical objective; attrs: title (required, the short label), lens (optional)",
+      "no-goal": "explicit exclusion; attrs: title (required, the short label)",
+      "principle": "aspirational, abstract value that guides judgment; attrs: title (required, the short label), lens optional",
+      "invariant": "checkable property; attrs: title (required, the short label), enforcement=mechanism|partial|convention (required — the honest label for HOW the property is held), lens optional",
+      "behavior": "a conditional behavior rule — given a context, when an actor acts, then an outcome; attrs: title (required, the short label), area (required, the confirmed behavior area that owns the rule), level=interface|boundary (required), lens optional. The area is rendered as declared furniture so ownership remains visible when a rule moves. Body is NOT prose: it is the nested clause calls declared in behavior_contract (`given` optional and repeatable, `when` exactly one, `then` one or more). Each clause states the rule with NO concrete values — the durable rule, never an example of it. Distinct from invariant: an invariant holds at all times with no trigger and no actor; a behavior rule is event-shaped and conditional",
+      "given": "a behavior rule's context clause — legal ONLY nested inside a behavior block; optional and repeatable (a rule needing no setup has none). Body is one clause stating the context, no concrete values",
+      "when": "a behavior rule's event clause — legal ONLY nested inside a behavior block; exactly one per rule. Body is one clause stating the actor's action. Two events mean two rules, never one block with two when clauses",
+      "then": "a behavior rule's outcome clause — legal ONLY nested inside a behavior block; one or more (a rule with two independent outcomes carries two then clauses). Body is one clause stating an observable outcome; this is where mechanism leakage concentrates, so the behavior fence checks it hardest",
+      "entity": "one entry of a domain-local entity census — a thing the domain is made of; attrs: id (optional stable identity used by linked state fields), title (required, the entity's name), description (required, content or string describing the entity in a sentence or short paragraph; rendered below the heading), kind=entity|value-object|aggregate|event (required — an entity has identity persisting as its attributes change, a value object is defined only by its attributes, an aggregate is a cluster with one root owning its invariants, an event is a thing that happened), owner (required, the unit responsible for it), lifecycle (required — immutable|append-only|stateful), domain (required — the discovered domain the entity belongs to; a single-domain census names that one domain rather than leaving the question open), tint (optional — the domain's accent from design_doc.accents; every entity of one domain declares the SAME tint, and that tint is the domain's colour everywhere it appears), lens optional. Body is NOT prose: it is the nested `attribute` clauses (one or more) then the nested `relates` clauses (zero or more). The state machine of a stateful entity lives OUTSIDE the block, in the local census's lifecycle subsection. Entity ids are unique across the aggregate",
+      "attribute": "one attribute of an entity — legal ONLY nested inside an entity block; one or more per entity. Attrs: name (required, the attribute name; content or string), type (required, a readable domain type; content or string conveying domain meaning, not parsed as a programming-language type expression), provenance=authored|derived|observed (required — how the fact ARISES, the census's load-bearing field), and the optional linked-state tuple id + state-type + state-machine. Supplying any linked-state field requires all three and an identified enclosing entity. A linked attribute renders clickable state-type and state-machine references. Attribute ids are unique within one entity but may repeat across entities. Body describes what the attribute means. Legacy unlinked clauses remain valid",
+      "relates": "one relationship of an entity — legal ONLY nested inside an entity block; zero or more per entity. Attrs: cardinality (required — the shape of the relation, written `<this> : <other>` over the vocabulary 1, 0..1, n, 0..n, e.g. `1 : 0..n`, `n : 1`, `0..1 : 1`). Body is one clause naming what it relates to and, optionally, the qualifier. Cardinality is a declared attr rather than prose so the census states the shape of every relation uniformly instead of burying it in a sentence",
+      "cards": "a grid of cards — the workhorse structure for component maps, principle grids, rationale cards, comparison rows, caption strips; items delimited by ### headings inside the block (body before the first ### is a violation); attrs: cols=2|3|4 (default auto-fit), size=md|sm, tint (optional grid fallback accent). An item may add optional `tint` from design_doc.accents to carry its own domain ownership; item tint overrides the grid fallback only for that item and is validated against the same vocabulary",
+      "contract": "a standalone integration contract card — the named agreement between independently owned units; attrs: name (required), mission (required), accent (optional fallback tint), tint (optional domain tint), lens (optional), body (optional), and answers (optional answers-data with responsibility, interface, interactions, invariants, and failure). It uses the component card anatomy but renders one full-width card and carries a visible `contract` role mark. Use it for the agreement itself, not for a runtime component that implements the agreement",
+      "info": "callout; attrs: title (optional micro-caps heading), tint (optional)",
+      "warning": "callout; attrs: title, tint (optional)",
+      "embedded-svg": "embed an SVG figure — source from EITHER a sibling file (attr file=) OR a nested ```svg code fence in the body; optional caption",
+      "chart": "a chart from declared points — the points ARE the data, with no plotting specification involved. REQUIRED: kind=bar|column|line|pie, and `points`, an ordered array of (label, value) pairs. `bar` reads its categories down the side and `column` across the bottom; they are the same data on swapped axes. A value that is not a number is a hard failure, because a non-number has no position on an axis and the alternative to failing is inventing one. The order of the points is the reading order and is never sorted for the author: the order a design states its categories in is itself information. A chart illustrates one point; many series in one chart reads as noise. NO ALTITUDE: a chart has no zoom level, it has axes",
+      "formula": "a displayed mathematical expression that matters as a named unit in the design. The body is native Typst math content. Optional attrs: id (a stable internal target), title, caption, accent, numbered=true|false, and notation as ordered (symbol, meaning) pairs. Inline mathematics remains ordinary Typst math in prose; use this block when the expression needs its own hierarchy, explanation, notation key, or reference target. A formula has no altitude: it states a relation rather than a containment level",
+      "pseudocode": "an implementation-neutral procedure whose control flow is authored as data rather than language syntax. REQUIRED: title and steps. Optional attrs: id (a stable internal target), inputs, outputs, caption, and accent. Steps are built with pseudo-step, pseudo-return, pseudo-if, pseudo-for, and pseudo-repeat; nested branches and loops remain structurally explicit. Use it to explain a consequential algorithm or decision procedure without implying a programming-language implementation. It has no altitude: it is ordered by execution rather than containment",
+      "diagram": "a structure diagram — a node-and-edge graph authored as data. REQUIRED: `altitude` and string-labelled `nodes`; a node may carry optional `tint` from design_doc.accents, otherwise it uses the diagram accent; `edges` are (from, to, label) triples, with optional `external=true` on a node and `dashed` edge style. The Graphviz carrier ranks nodes, routes edges, and places labels. `flow=left-to-right|top-to-bottom` guides the layout. Every edge endpoint must name a declared node. Use this default carrier unless authored coordinates carry meaning or precise visual control is required. A diagram is a structural view at an altitude, not a state machine or sequence",
+      "diagram-native": "a positioned structure diagram — a node-and-edge graph authored as data. REQUIRED: `altitude` and nodes carrying (id, pos, label); a node may carry optional `tint` from design_doc.accents, otherwise it uses the diagram accent; `edges` are (from, to, label) triples, with optional `external=true` on a node and `dashed` edge style. The author supplies the grid and may use Typst content for labels. Use this carrier only when authored coordinates carry meaning or precise visual control is required; otherwise use `diagram`. Every edge endpoint must name a declared node. A diagram is a structural view at an altitude, not a state machine or sequence",
+      "state-type": "the closed value set used by one or more state fields; attrs: id, title, variants, all required. A variant is a string id or an id + optional description record. A state type declares no transitions, initial state, or accepting states. Its id is unique across the aggregate and creates a stable internal target",
+      "state-machine": "a state machine — the states of one unit and the named transitions between them. Legacy unlinked calls remain valid. A linked call supplies id + subject + state-field + state-type together; supplying any one requires all four. The subject identifies the entity, state-field identifies its linked attribute, and state-type must agree with that attribute. Linked ids are unique across the aggregate and create stable internal targets. The state type's variants and the machine's states are equal as sets. REQUIRED: `states`, and `transitions` as (from, to, event) triples; `initial` names the entry state and `accepting` the terminal ones. The author declares NO POSITIONS: the carrier solves the layout, draws the initial marker, and rings each accepting state. An endpoint naming an undeclared state is a hard failure. NO ALTITUDE: a machine is ordered by transition, not by containment",
+      "sequence": "a message sequence — what happened between parties, in time order. REQUIRED: `participants` as ordered (id, label, shape) entries, and `steps` built from the sequence constructors. Carries what a node-and-edge drawing cannot state: a participant active for only part of the exchange, a branch taken under a condition, a repeated block, an optional block, and notes. A message naming an undeclared participant is a hard failure, checked through nested groups as well as at the top level. NO ALTITUDE: a sequence is ordered by time, not by containment",
+      "stat-grid": "a strip of magnitudes read as a set — a KPI row; attrs: cols optional (default 3). Body is NOT prose: it is the nested `stat-tile` entries, each carrying value= (the number, abbreviated for magnitude) and label= (what it counts). The tile is the ONE nested kind with no block of its own: the tiles are passed positionally into the grid because they render as cells of one grid rather than as independent blocks, so the grid is the projected unit. A tile states a fact; a trend is a chart",
+      "mermaid": "structure diagrams — a node-and-edge graph handed to a layout-solving graph renderer, where the author declares nodes and edges and never coordinates. A MESSAGE SEQUENCE AND A STATE MACHINE ARE NOT THIS KIND: each has its own block (`sequence`, `state-machine`) over its own carrier, because each carries constructs a node-and-edge graph cannot state — activation and branching for one, an initial marker and accepting states for the other. Validated at build time — a syntax error fails the gate, never the reader. Convention: in-domain nodes tinted with the context accent, external nodes drawn dashed. A diagram is ALWAYS drawn by its carrier: an authored design document never contains renderer markup, and there is no verbatim-passthrough form. A drawing no block covers earns a new block kind with its own contract, marked in the source as the exception it is — never a silent raw mode of an ordinary diagram fence.",
+      "figure": "A raw typst body is evaluated as self-contained markup for PDF and retained as a fenced typst code block with caption and package names for Markdown. Ordinary evaluated content remains valid for PDF but cannot project because its original source is unavailable. Source errors fail both outputs. A self-contained drawing no diagram carrier covers, carrying renderer markup directly. REQUIRED: a caption, and a `uses` list naming the packages the drawing imports. The `uses` set is restricted to the packages the framework VENDORS — an import outside that set is a violation, so a design layer stays offline-reproducible. Renders inside a visibly distinct frame naming those packages, so the exception is legible in the rendered document as well as the source. It is a FIGURE, not an escape hatch: not renderer markup in ordinary prose, not a way to restyle a statement block, and never a second path for a node-and-edge graph, which belongs in a diagram fence where the gate validates it and the projected tokens colour it"
+    },
+    "entity_contract": {
+      "what": "the entity block's two closed vocabularies, declared as data because the renderer validates against them and colours each member. The `entity` block declaration above states what each member MEANS; these arrays state what the members ARE, and are what the projector reads",
+      "kinds": ["entity", "value-object", "aggregate", "event"],
+      "lifecycles": ["immutable", "append-only", "stateful"],
+      "state_machine_lives_outside": "a stateful entity's state-machine model is NOT inside its entity block. Each model lives in its owning context's lifecycle subsection, with one model per distinct lifecycle or state field. Multiple independent lifecycle or state fields may therefore have multiple models; state combinations that are constrained across fields require explicit cross-axis constraints. Include vacant states or revoked-blessing transitions only when the domain requires them. design_doc.completeness still requires states AND transitions for every stateful unit; this says WHERE models are rendered and how independent axes are modeled; it does not relax lifecycle completeness"
+    },
+    "diagram_contract": {
+      "viewpoints": [
+        "business-domain",
+        "context-ownership",
+        "domain-model",
+        "runtime",
+        "persistence",
+        "deployment",
+        "dataflow"
+      ],
+      "group_kinds": [
+        "domain",
+        "subdomain",
+        "bounded-context",
+        "runtime",
+        "deployment",
+        "subsystem"
+      ],
+      "node_kinds": [
+        "actor",
+        "bounded-context",
+        "system",
+        "aggregate",
+        "entity",
+        "value-object",
+        "event",
+        "frontend",
+        "backend",
+        "service",
+        "component",
+        "queue",
+        "topic",
+        "database",
+        "external-system"
+      ],
+      "relations": ["dependency", "call", "pubsub", "dataflow"],
+      "groups": "optional records (id, label, kind, parent?, tint?). Id, label, and kind are required. Parent names another group in this diagram, never itself, and the parent graph is acyclic. Nested groups render as genuine Graphviz clusters. Ownership boundary kinds are visibly distinct from runtime and deployment kinds, and every cluster displays its boundary-kind label.",
+      "nodes": "legacy records retain id, label, sub?, tint?, and external?, including the existing rounded dashed external style. A solved node may add kind and group. Every authored group reference resolves within that diagram; when groups are declared, every node declares membership in one of them. Node kind selects a framework architecture role and a flat two-dimensional Graphviz shape: actor uses ellipse; bounded-context, system, backend, and external-system use box; frontend and component use component; internal service uses box; database uses folder as a flat datastore mark; queue uses parallelogram; event and topic use hexagon; aggregate, entity, and value-object retain their declared shapes. These meanings are framework authoring vocabulary rather than Graphviz standards. The bounded-context role is a direct context-map node and remains distinct from a group boundary; a shared box shape is distinguished by its role label. The external-system kind implies an explicit trust-boundary treatment distinct from deployment boundaries and does not require external=true; no shape implies externality. A node with `sub` renders its primary label and secondary label on separate lines.",
+      "edges": "legacy (from, to, label, style?) tuples remain valid. A dictionary edge declares from, to, relation, and label. Relations are directional source-to-target. A pubsub relation conveys only the explicitly labelled publish or consume direction; it does not imply durability, order, or delivery semantics.",
+      "legend": "every solved diagram legend uses one compact borderless Typst table/grid under one LEGEND heading, with regular equal-width cells. Each used group, node, or relation kind renders a fixed-size, text-free symbol above its name and short description; labels are outside every symbol. Group symbols use only the carrier's actual boundary stroke, without a fake inner box. Relation arrows occupy cells in the same grid, with their line and arrow styles from the same Graphviz relation mapping. Only used kinds and relations appear; marks reuse the diagram's shape, style, colour, and trust treatment, wrap deterministically (maximum five cells per row), and fit normal A4. The legend does not use Graphviz whole-legend packing or hardcoded per-kind shapes/layouts; empty and legacy diagrams retain compatibility",
+      "scope": "ids and validation are local to one diagram. Separate viewpoints do not share a registry. A diagram is structural and never represents a state transition."
+    },
+    "function_naming": {
+      "rule": "a block kind and the library function that renders it carry THE SAME NAME, spelled kebab-case: `no-goal` is rendered by `#no-goal`, `stat-grid` by `#stat-grid`. The kind IS the function name, so no translation table maps between them",
+      "why": "the two spellings used to differ — a call name was derived from a kind by replacing hyphens with underscores, so one concept carried two names and every reader had to know which side they were on. One concept has one name. Kebab is the surviving spelling because it is what the schema already declares a kind to be and what Typst itself uses, so the schema's word reaches the page unchanged",
+      "collisions": "`figure` is the ONE kind whose function carries a different name, `figure-block`, because `figure` is a Typst builtin and shadowing it would break every document that uses the builtin. The exception is declared here and nowhere else, so the one-name rule holds everywhere it is not written down.",
+      "nested_kinds": "a kind legal only inside another block is still a function of the same name (`given`, `when`, `then`, `attribute`, `relates`), with one exception: `stat-tile` renders as a cell of its grid rather than as a block of its own, so the router collects the tiles into the grid's `tiles:` argument and `stat-tile` builds a value rather than emitting a block"
+    },
+    "block_fields": {
+      "principle": "block contracts ARE the design language's invariants: each kind declares the information it must capture (fields, attrs, allowed vocabularies), the generator checks the contract at render time — fail-closed where a violation makes the output wrong (an illegal vocabulary value, an unresolvable reference), reported as a guideline where it is a structural opinion (a field left unstated), and the writer instructs authors through it. Capturing a NEW kind of information reliably means minting or extending a block contract — schema, renderer, and authoring guidance evolve in lockstep, and the change re-validates every existing document. Never capture load-bearing language as free-form prose when a contract can hold it",
+      "statement_blocks": "goal, no-goal, principle, invariant share one anatomy: a required TITLE — the `title` argument, plain (no links), whose PRESENCE and whose ≤64-char length are both guidelines — reported on every render, naming the rule and what was expected, and blocking none of them — the short description; then the BODY — the long description (required, except optional on no-goal; for invariant the body IS the checkable statement). The title is a declared attr, NOT a bold-first-line convention: it is deterministically located and validated (presence, length, plainness) at generation time, never positionally guessed. Badges render in a fixed head row derived from attrs: invariant → enforcement chip + lens pill(s); principle, goal, no-goal → lens pill(s) when given. The lens attr accepts a multi-value list (lens=state+composition, same syntax as inline combos), validated against the lens enum",
+      "rendered_slots": "every block renders the same slot structure for the stylist: .entry-head (containing .label from the title= attr and .badges) then .body — cards items, callouts (title= attr), and pending entries (title= attr + kind badge + since) follow the same anatomy. Every titled block sources its title from the same declared title= attr",
+      "validated": "field presence, label length and shape, and attr legality are generation-time violations — the structure is enforced by the renderer against the projected contracts on every render, so architectural changes to the block language always re-validate the whole document",
+      "statement_footer": "every prose-bodied statement block renders three slots: a title head, a body, and a FOOTER carrying the furniture projected from the block's attrs (lens, enforcement). The furniture is declared rather than flattened into prose or faked as markup in the head row"
+    },
+    "inline": {
+      "lens_pill": "a code span `lens:<name>` renders as that lens's pill; combos `lens:a+b` render one gradient pill with lenses auto-sorted into the fixed enum order; an unknown lens name is a violation"
+    },
+    "accents": {
+      "values": ["teal", "violet", "amber", "blue", "rose", "slate"],
+      "note": "the tint axis marks OWNERSHIP (a bounded context keeps one stable accent across all its documents); lens pills mark JUDGMENT — two axes, never conflated"
+    },
+    "frontmatter_keys": {
+      "eyebrow": "micro-caps identity line above the title — the document's position in the layer hierarchy, with links up (e.g. 'Domain overview · Meta · [root]')",
+      "hero_title": "the document's display title, rendered as the hero H1 inside the masthead (eyebrow · title · lede as one hero block). Passed as an argument rather than written as a body '= H1' so the whole hero composes as one unit; inline content",
+      "lede": "muted one-to-three-line summary under the title; inline content",
+      "footer": "colophon line — ownership split restated, links back up"
+    },
+    "foundation_order": ["goal", "no-goal", "invariant", "principle"],
+    "foundation_required": ["goal", "invariant", "principle"],
+    "foundation_cardinality": "at least one goal, zero or more no-goals, at least one invariant, at least one principle — in that order, all inside the Foundation section. The machine-readable halves of this sentence are declared beside it: `foundation_order` is the sequence the blocks must appear in, and `foundation_required` names the kinds that must appear at least once. The prose explains the rule to a person; those two arrays are what the projector reads. EXEMPTION: a multi-context root that only indexes its child contexts exports `index_only: true` from its module and is waived from the per-kind minimum — it carries only genuinely cross-context foundation and points down to each context for the rest, never restating a context-owned goal/invariant/principle. The flag is legal only on a document that links at least one child <context>/design.typ; on a single-domain document (no child contexts) it is a violation, so a leaf can never skip its own foundation. The order rule still binds whatever foundation the root does carry.",
+    "spine": [
+      "Foundation — goals, no-goals, invariants, principles: each in its block kind, in that order",
+      "Pending updates — immediately after the foundation; omitted when empty",
+      "System at a glance",
+      "Progressive breakdown — major responsibilities and selective deeper views that explain architectural questions; implementation detail remains in code",
+      "End-to-end walkthrough"
+    ],
+    "behavior_contract": {
+      "area_identity": "every behavior rule cites its confirmed behavior area through the required area attr. The rendered area makes ownership explicit on the rule itself, so moving the rule without reconsidering its ownership leaves a visible discrepancy rather than silently changing its meaning",
+      "clause_bounds": {
+        "given": "0..n",
+        "when": "exactly 1",
+        "then": "1..n"
+      },
+      "clause_cardinality": "given: 0..n (a rule needing no setup carries none; each states one context). when: exactly 1 (two events are two rules — a second when clause is a violation, not a compound rule). then: 1..n (independent outcomes each get their own clause, so each is separately checkable). The bound of each clause is declared beside this sentence in `clause_bounds`, which is what the projector reads; the prose states why each bound is what it is",
+      "clause_sequence": ["given", "when", "then"],
+      "clause_order": "clauses render and validate in the fixed order given, when, then; a then before a when is a violation. Repeated given or then clauses stay in authored order. The sequence itself is declared beside this sentence in `clause_sequence`, which is what the projector reads",
+      "levels": {
+        "interface": "what a person perceives, chooses, and is told — including what they are told when something fails. Interaction-over-time properties (progress is visible, an action stays cancellable, the user is never left unable to tell what happened) exist ONLY at this level",
+        "boundary": "behavior at the application boundary the interface calls, in the domain's own language. Integrity properties (an operation is atomic, idempotent, ordered) exist ONLY at this level",
+        "no_pairing": "the two levels are not two descriptions of one rule — they capture DIFFERENT rules. A rule is authored at the one level where it has content; there is no obligation to mirror a rule at the other level, and a mirrored pair invites filler. A feature's blocks are therefore uneven across levels by design"
+      },
+      "fence": {
+        "rule": "the test is Cucumber's: WILL THIS WORDING NEED TO CHANGE IF THE IMPLEMENTATION DOES? If yes, the clause names a mechanism and must be restated as the observable outcome. Checked per clause at render time and reported as a guideline, hardest on then clauses where leakage concentrates; the wording is the author's call to make, so the check states what it found rather than refusing the document",
+        "patterns_dialect": "every `patterns` entry below is a RUST regex, the dialect of the renderer's own regex engine, which is the sole reader of this list. The dialect is declared here because a pattern list carries no marker of the engine that reads it: the same text is a different pattern in a different dialect, and a list written for an engine nothing runs is a declaration that cannot be executed. A pattern is therefore authored in the form the reader accepts and reaches the fence unmodified, so no translation step stands between what this file declares and what the check applies",
+        "interface_forbids": {
+          "prose": "widget and element ids, CSS selectors and class names, component/class/method/function names, DTOs, controllers, presenters, view models, repositories, HTTP status codes, and exact UI copy quoted as the outcome. 'the offending field is named' is admitted; 'the SignupController returns 409' and '#email-input gains .is-invalid' are violations",
+          "terms": [
+            "css",
+            "selector",
+            "class name",
+            "classname",
+            "component",
+            "controller",
+            "presenter",
+            "viewmodel",
+            "view model",
+            "repository",
+            "dto",
+            "http",
+            "status code",
+            "endpoint",
+            "<div",
+            "css class"
+          ],
+          "patterns": [
+            "#[A-Za-z0-9_-]+",
+            "\\.[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9_-]+",
+            "\\bid=",
+            "data-testid"
+          ]
+        },
+        "boundary_forbids": {
+          "prose": "the transport and the storage — HTTP verbs and status codes, SQL, table and column names, queue and topic names, wire formats, and the classes implementing the operation. The domain's own operation and entity names ARE the correct vocabulary at this level and are admitted: 'the registration operation rejects the request' is admitted, 'INSERT into users fails the unique index' is a violation",
+          "terms": [
+            "sql",
+            "insert into",
+            "select *",
+            "table",
+            "column",
+            "queue",
+            "topic",
+            "http",
+            "status code",
+            "wire format",
+            "json payload"
+          ],
+          "patterns": []
+        },
+        "honest_limit": "a denylist plus a small set of id/selector patterns is a partial check, not a proof. It catches the shapes it names — '#submit-btn' and '.is-invalid' by pattern, 'controller' and 'status code' by term — and it misses any mechanism named in ordinary words, such as 'the blue button in the top right'. It is declared enforcement=partial for exactly this reason: the mechanical check raises the floor, the reviewer and the critic pre-pass catch the rest. The term and pattern lists here are the SOURCE the renderer reads at render time; the fence never forks its own copy of either"
+      }
+    },
+    "vendored_packages": {
+      "rule": "the packages a figure block's `uses` may name — the framework vendors these, so a figure resolves offline and a design layer renders identically everywhere. THE LIST IS DECLARED HERE, not inferred from the framework's flake. The projector used to locate flake.nix relative to the schema, which resolves only when the schema sits in the framework checkout; on a host the schema is copy-installed beside the scripts, the lookup missed, and the set silently fell back to a single package — so a host's own projection rejected legal figures with a false 'the framework does not vendor' message and could never satisfy the projection-freshness seat. A host receives the schema, so a host receives the list.",
+      "packages": [
+        "cmarker",
+        "diagraph",
+        "chronos",
+        "finite",
+        "cetz",
+        "cetz-plot",
+        "fletcher",
+        "lilaq",
+        "showybox",
+        "gentle-clues",
+        "codly",
+        "timeliney",
+        "oxifmt_0_2_1",
+        "oxifmt",
+        "tidy"
+      ],
+      "sync": "this list must equal this repo's flake typst withPackages set; scripts/render-project reads it from here and the projection check fails if the two drift"
+    }
+  },
+  "pending_ledger": {
+    "location": "one design-document section immediately after the foundation header; omitted entirely when empty; an entry lives in the design document that owns the affected structure",
+    "entry": [
+      "kind",
+      "one-line summary",
+      "since (YYYY-MM-DD — places the entry on the ledger's time axis, so aging entries are visible as design debt)",
+      "adr link (required for build entries; optional for verify/foundation/ruling — they may predate any ADR)",
+      "optional tracker-issue link"
+    ],
+    "kinds": {
+      "build": "designed, not yet built — cleared by explicit sign-off when the system catches up; independent conformance double-check on request",
+      "verify": "derived from the system, faithfulness unverified — cleared mechanically by the first clean conformance probe",
+      "foundation": "foundation content the system cannot yield (goals, no-goals, principles) — deferred at bootstrap or underivable at onboarding; cleared by the grilling session that fills it",
+      "ruling": "an open owner decision the layer cannot settle; intentional-open to the conformance probe; cleared by the owner's ruling, recorded and applied"
+    },
+    "rule": "the single home for intentionally-open state; no badges scattered through pages",
+    "link_resolution": "the renderer requires build entries to carry a link whose fragment matches the adr id pattern (verify/foundation/ruling entries are link-optional — they may predate any ADR); whether a link resolves to a real anchor is layer-integrity's job (entry links are ordinary design-ish links)",
+    "time_axis": "the ledger renders as a time axis, not a list of cards: entries are placed by their `since` date, so aging design debt is visible at a glance. This makes `since` load-bearing rather than decorative"
+  },
+  "enums": {
+    "enforcement": {
+      "values": ["mechanism", "partial", "convention"],
+      "note": "the honest label for how a property is held: mechanism (a check decides the whole property), partial (a check decides its mechanical shadow), convention (discipline, no check). It names the KIND of enforcement, never the enforcer — finding which check holds a property is the gate's own job, not a pointer the design document carries and a human keeps current. A convention truthfully labelled beats a mechanism falsely claimed"
+    },
+    "provenance": {
+      "values": ["authored", "derived", "observed"],
+      "note": "how an entity attribute ARISES — the load-bearing field of the entity census. authored: a human stated it, so it can be wrong and it drifts. derived: computed from other facts and not independently authored; synchronization follows the declared derive-at-read or derive-at-write policy. observed: recorded from outside the system, so it describes reality but never authorizes it. PREFER DERIVED OVER AUTHORED wherever a human would otherwise author a claim about something observable — an authored claim about an observable fact is the attribute most likely to go stale. Never let an observed value auto-publish into authoritative state: description is not authority"
+    },
+    "lens": {
+      "values": [
+        "modeling",
+        "depth",
+        "composition",
+        "state",
+        "invariants",
+        "robustness"
+      ],
+      "note": "the order is fixed and load-bearing: a combo pill lists its contributing lenses in this order, never the order they were written. Modeling leads because it is upstream of the other five — it carves the entities they then judge."
+    }
+  }
+}

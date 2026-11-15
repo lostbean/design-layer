@@ -30,8 +30,8 @@
 #   6. the gate: a missing path, a stale contract, a contract no unit lists —
 #      through the scripts and through the public check app — and the
 #      uncovered-directory report, which never changes an exit code
-#   7. a layer that authors no unit is untouched, including under a schema
-#      that predates the block
+#   7. a layer that authors no unit is untouched, including under the schema
+#      as it stood before the block existed
 #
 # Usage: design-units.test.sh [repo-root]
 # Exit:  0 all assertions pass, 1 an assertion failed, 2 a tool is missing.
@@ -1485,15 +1485,32 @@ run 0 "the public gate passes a layer with no unit" -- \
 # A host may gate with its OWN schema copy. One that predates the unit block
 # must keep rendering a layer that authors no unit, must say that the unit
 # checks did not run, and must refuse the first unit by name.
+#
+# The copy is the schema AS IT STOOD before the unit block: every declaration
+# the block added is absent from it, not only the two the library reads. A
+# copy made by deleting keys from today's schema would keep whatever else the
+# block changed, and would then prove nothing about a host that has not
+# upgraded its schema at all. The fixture is checked for that first, so it
+# cannot drift into a schema that knows the block.
 OLD="$WORK/old"
 mkdir -p "$OLD/docs/design"
-python3 - schema/design-schema.json "$OLD/schema.json" <<'PY'
+cp fixtures/design-schema.before-units.json "$OLD/schema.json"
+if python3 - "$OLD/schema.json" schema/design-schema.json <<'PY'; then
 import json, sys
-doc = json.load(open(sys.argv[1], encoding="utf-8"))
-del doc["design_doc"]["unit_contract"]
-del doc["design_doc"]["blocks"]["unit"]
-json.dump(doc, open(sys.argv[2], "w", encoding="utf-8"))
+old = json.load(open(sys.argv[1], encoding="utf-8"))["design_doc"]
+new = json.load(open(sys.argv[2], encoding="utf-8"))["design_doc"]
+projected = lambda doc: doc["agent_context"]["projection"]["classification"]["projected"]
+for doc, present in ((old, False), (new, True)):
+    assert ("unit_contract" in doc) is present
+    assert ("unit" in doc["blocks"]) is present
+    assert ("spine_scope" in doc) is present
+    assert ("unit" in projected(doc)) is present
+assert old["foundation_cardinality"] != new["foundation_cardinality"]
 PY
+  pass_line "the old-schema fixture declares nothing the unit block added"
+else
+  fail_line "the old-schema fixture is not the schema from before the unit block"
+fi
 bash ./scripts/render-project "$OLD/schema.json" "$OLD/docs/design/.render" >/dev/null
 cp "$PLAIN/docs/design/design.typ" "$OLD/docs/design/design.typ"
 printf '# Coverage\n' >"$OLD/docs/COVERAGE.md"

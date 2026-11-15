@@ -13,8 +13,9 @@
 #
 # What it covers:
 #   1. the block's INVARIANTS — a missing required field, a malformed or
-#      duplicate id, an illegal path, an unknown attribute — each fail the
-#      compile; its GUIDELINES report and block only under strict
+#      duplicate id, an illegal path, an unknown attribute, a list written
+#      inside a field — each fail the compile; its GUIDELINES report and block
+#      only under strict
 #   2. the rendered page carries the contract, an empty list reads `None`, and
 #      nesting is the heading hierarchy down to the sixth heading level, in a
 #      document body, a section, and a subsection
@@ -228,6 +229,30 @@ unit_invariant path-not-string "is not a string" "$(with paths 'paths: (3,),')"
 unit_invariant unknown-attribute "unknown attribute tint=" \
   "$UNIT_OK
   tint: \"teal\","
+# A list written INSIDE a field renders on the page but has no form in the
+# projection or in a folder contract, so the render refuses it in the
+# projection's own words. One fixture per kind of list and per field shape.
+unit_invariant list-in-text-field "overview holds a list" "$(with overview 'overview: [Two parts.
+
+- the first
+- the second],')"
+unit_invariant list-in-text-field-names-it "unsupported Typst content function" \
+  "$(with overview 'overview: [Two parts.
+
+- the first
+- the second],')"
+unit_invariant numbered-list-in-field "verification holds a list" \
+  "$(with verification 'verification: [Run in order.
+
++ build
++ test],')"
+unit_invariant list-in-list-item "an item of interface holds a list" \
+  "$(with interface 'interface: ([Two calls.
+
+- `append`
+- `read`],),')"
+unit_invariant explicit-list-in-field "overview holds a list" \
+  "$(with overview 'overview: [Parts: #list([one], [two])],')"
 # A duplicate id fails at the second call.
 out="$(block_compile duplicate plain "#unit($UNIT_OK)
 #unit($UNIT_OK)")"

@@ -73,6 +73,41 @@
   value == none or (type(value) == str and value.trim() == "") or value == []
 )
 
+// A UNIT FIELD HOLDS NO LIST OF ITS OWN. The five sections are read by three
+// carriers — the page, the Markdown projection, and a folder's `AGENTS.md` —
+// and the last two write a text section as one paragraph and a list section as
+// one line per item. A bullet, numbered, or term list written INSIDE a field
+// has no form there: the page would draw it, and the projection and the
+// generator would then stop on a layer the render had accepted. So the render
+// refuses it, in the words the projection uses for the same content, and the
+// three carriers accept exactly the same units.
+#let _unit-holds-list(value) = {
+  if type(value) != content { return false }
+  if value.func() in (list.item, enum.item, terms.item) { return true }
+  let fields = value.fields()
+  // `children` is a sequence or an explicit list call, `body` an element's
+  // content, `child` a styled run.
+  for key in ("children", "body", "child") {
+    let inner = fields.at(key, default: none)
+    let parts = if type(inner) == array { inner } else { (inner,) }
+    for part in parts {
+      if _unit-holds-list(part) { return true }
+    }
+  }
+  false
+}
+
+#let _unit-check-prose(id, where, value) = {
+  if _unit-holds-list(value) {
+    _unit-fail(id, where + " holds a list — unsupported Typst content "
+      + "function 'item' in a unit field. The Markdown projection and a "
+      + "folder's AGENTS.md carry a text section as one paragraph and a list "
+      + "section as one line per item, so a list written inside a field has "
+      + "no form there. State each point as its own item of interface, "
+      + "invariants or side-effects, and write the other fields as sentences")
+  }
+}
+
 // ONE PATH, by the spelling rule the schema declares. Whether the path EXISTS
 // is not visible from inside a compile — that is the gate's half.
 #let _unit-check-path(id, path, forbidden) = {
@@ -140,6 +175,7 @@
   if type(title) != str and type(title) != content {
     _unit-fail(id, "title must be a string or content, got " + repr(title))
   }
+  _unit-check-prose(id, "title", title)
   for s in UNIT-SECTIONS {
     let value = data.at(s.field)
     if s.shape == "list" {
@@ -162,6 +198,7 @@
           _unit-fail(id, s.field + " item " + repr(item) + " is not a string "
             + "or content")
         }
+        _unit-check-prose(id, "an item of " + s.field, item)
       }
     } else {
       if _unit-blank(value) {
@@ -172,6 +209,7 @@
         _unit-fail(id, s.field + " must be a string or content, got "
           + repr(value))
       }
+      _unit-check-prose(id, s.field, value)
     }
   }
   if paths == none {

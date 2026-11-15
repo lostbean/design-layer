@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Added the `#unit` block: one required shape for every design unit — `id`,
+  `title`, `overview`, `interface`, `invariants`, `side-effects`,
+  `verification`, and `paths` — with an optional body that holds any other
+  block and nested units. A missing field, a malformed or duplicate id, and an
+  illegal path fail the render; an empty list renders as `None`.
+- Added the `units` app. It writes each unit's contract into a generated region
+  of `AGENTS.md` in every directory the unit lists, and links `CLAUDE.md` where
+  none exists. `check` now also fails on a unit path that does not exist, a
+  stale region, and a region no unit lists, and reports the tracked directories
+  no unit path covers.
+- `context` gains `--unit ID` and `--path REPO-PATH`, and the manifest lists
+  units when a layer declares them.
+- The foundation minimum now binds the root design document only. A context
+  document may omit goals, invariants, and principles, and is not held to the
+  spine order or to its `System at a glance` and `End-to-end walkthrough`
+  sections.
+- A foundation statement written inside a unit's body is not read as part of
+  the document's foundation order or minimum.
+- A link may target a unit as `design.typ#unit-<id>`; `layer-integrity`
+  resolves it.
+- Rendered output changes by a sub-point amount where text directly follows a
+  `#section` or `#subsection` call on the same line of flow, so a host
+  re-renders its PDF on upgrade.
+- The migration is documented in [Unit contracts and folder contracts](docs/migrations/unit-contract.md).
 - The layer-integrity gate now checks every host `README.md` and `AGENTS.md`
   outside `docs/`: links into `docs/design/` and `docs/adr/` must resolve
   (section anchors included), each bold title under `## Designed, not built`

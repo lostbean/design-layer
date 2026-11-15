@@ -21,10 +21,16 @@ and a value outside a declared vocabulary is one the renderer would have to
 invent a meaning for. These fail the render, naming the violation and its
 location, and no flag relaxes them.
 
-**Structure is guided by warnings.** Which foundation kinds a context declares,
-what order its sections run in, whether every required attribute was filled —
-these are opinions about how a design is usually organized, and a design
-legitimately changes shape. The renderer says what it expected, names the rule
+**A design unit's contract is fail-closed too.** Every `unit` answers the same
+five questions and lists its code paths. A unit missing one of those fields, a
+duplicate unit id, and an illegal path fail the render; an empty list is how a
+unit says "none".
+
+**Structure is guided by warnings.** Which foundation kinds the root document
+declares, what order they run in, whether an optional block's attributes were
+filled — these are opinions about how a design is usually organized, and a
+design legitimately changes shape. A context document is not held to the
+foundation minimum at all. The renderer says what it expected, names the rule
 and the offending item, and renders anyway. Every guideline prints on every
 render and the run ends with a count summary, so guidance is never silent; none
 of it changes the exit code. Set `DESIGN_STRICT=1` to escalate every guideline
@@ -62,7 +68,7 @@ Sections and subsections use chapter-local numbers such as `1.10.1`; authors
 still supply content-only titles. The grouped table of contents marks chapter
 boundaries, nests sections and subsections, and aligns page numbers. The
 alphabetized glossary closes the document as an unnumbered reference chapter.
-`check` then runs three things in sequence and exits 0 clean, 1 on a
+`check` then runs four things in sequence and exits 0 clean, 1 on a
 violation, 2 on an error:
 
 1. **freshness** — regenerate the aggregate and byte-compare it against the
@@ -73,6 +79,23 @@ violation, 2 on an error:
    reference, a section pointer), every ADR is in lockstep with its filename,
    every glossary term is unique, no layer file sits outside its declared
    home under `docs/`
+4. **unit folder contracts** — every path a unit lists exists, every generated
+   `AGENTS.md` region matches a fresh generation, and no folder carries a
+   region no unit lists
+
+The same step prints a **report** of the git-tracked directories no unit path
+covers. It shows what the design does not claim and never changes the exit
+code.
+
+When a layer declares units, write their folder contracts before gating:
+
+```sh
+nix run github:lostbean/design-layer#units -- docs/design .
+```
+
+`units` writes one generated region into the `AGENTS.md` of every directory a
+unit lists, and links `CLAUDE.md` to it where none exists. `check` only
+compares; it never rewrites a stale region.
 
 One further entry point is advisory rather than a gate:
 
@@ -129,7 +152,9 @@ docs/
 
 A single-context layer is just `docs/design/{design.typ,CONTEXT.typ}` plus
 `docs/adr/` — no `CONTEXT-MAP.md` required. Everything under `docs/` is the
-layer; nothing about it lives beside the source it describes.
+layer. One thing is generated beside the source it describes: a directory a
+`unit` lists carries that unit's contract in a marked region of its
+`AGENTS.md`. The region is written by `units` and never authored by hand.
 
 ## What this repo deliberately does not do
 
@@ -153,7 +178,8 @@ layer; nothing about it lives beside the source it describes.
 ## Layout
 
 ```
-scripts/     the gate: design-aggregate, layer-integrity, token-coverage, render-project
+scripts/     the gate: design-aggregate, design-context, design-units, layer-integrity,
+             token-coverage, render-project
 schema/      the ONE declared schema — block vocabulary, anchors, layout, enums
 fixtures/    the gallery: every projected function, and the renderer-drift tripwire
 skills/      the authoring guidance an agent loads to write a well-formed layer
@@ -176,6 +202,40 @@ Read `design-document-syntax` for the exact notation. Both are available under
 through its agent's skill discovery mechanism. No separate design workflow is
 required to use them. Architecture selection and improvement remain outside
 this repository's responsibility.
+
+### Design units
+
+A `unit` is the one block every part of a design uses. It has the same required
+shape at every depth: an overview, an interface, invariants, side effects, a
+verification, and the code paths that realize it. Every other block is optional
+and goes in the unit's body, where a nested `unit` is the next level down.
+
+```typst
+#unit(
+  id: "billing-ledger",
+  title: "Billing ledger",
+  overview: [Records what each customer was charged.],
+  interface: ([`append(entry)` adds one entry.],),
+  invariants: ([An entry is never rewritten.],),
+  side-effects: (),
+  verification: [`cargo test -p ledger`],
+  paths: ("src/ledger",),
+)[
+  Optional body: prose, any other block, and nested units.
+]
+```
+
+Every field is required. An empty list is a legal answer and renders as `None`;
+a field left out fails the render. `paths` holds exact repo-relative
+directories, and a unit that only groups other units lists none. The `id` is
+unique across the layer and is the unit's stable address: the reference
+`@unit-billing-ledger`, the link fragment `design.typ#unit-billing-ledger`, and
+the selector `--unit billing-ledger`.
+
+`units` then writes the contract into `src/ledger/AGENTS.md`, between
+`<!-- design-units:begin -->` and `<!-- design-units:end -->`. Export
+`#let context_command = "nix run .#design-gate-context --"` from the root
+`design.typ` to print your own forwarding app in that region.
 
 ### Diagram node tints
 
@@ -343,6 +403,19 @@ come from one source snapshot. Section output is an exact byte slice of the
 complete projection, so the default and incremental modes cannot drift in
 their Markdown mapping.
 
+Select by design unit instead of by address when the layer declares units:
+
+```sh
+nix run .#context -- docs/design --unit billing-ledger
+nix run .#context -- docs/design --path src/ledger/entry.rs
+```
+
+`--unit` prints one unit with its body and nested units. `--path` takes a
+repo-relative path and prints every unit whose `paths` contain it or a parent
+directory of it. Both accept `--output` and `--expect-digest`. When a layer
+declares units, the manifest gains a `units` list giving each unit's id,
+address, parent, document, and paths.
+
 The estimate reports UTF-8 bytes, characters, words, lines, and the named
 planning estimates `ceil(utf8_bytes/4)` and `ceil(utf8_bytes/3)`. These values
 are model-independent estimates rather than tokenizer counts. The manifest
@@ -351,7 +424,7 @@ adds SHA-256 digests without changing the legacy estimate shape.
 The Markdown is a temporary reading projection. Typst remains authoritative,
 the PDF remains the published rendered artifact, and the Markdown output is not
 committed. A semantic violation exits 1 without usable output; an invocation,
-runtime, digest, section-selection, or output-write error exits 2.
+runtime, digest, selection, or output-write error exits 2.
 
 ## Development
 
@@ -367,6 +440,7 @@ check (projecting the schema twice must yield identical bytes).
 
 ## Migrations
 
+- [Unit contracts and folder contracts](docs/migrations/unit-contract.md) covers the `unit` block, the relaxed context structure, the new gate step, and what a host changes on upgrade.
 - [Entity descriptions and typed attributes](docs/migrations/entity-descriptions-and-types.md) covers bundle updates, census rewrites, and PDF verification.
 - [Reproducible font resolution](docs/migrations/reproducible-fonts.md) covers the embedded-font policy and host migration.
 
@@ -449,6 +523,7 @@ Forward the pinned shared apps directly from a consumer flake:
 apps.design-gate-render = design-layer.apps.${system}.render;
 apps.design-gate-check = design-layer.apps.${system}.check;
 apps.design-gate-context = design-layer.apps.${system}.context;
+apps.design-gate-units = design-layer.apps.${system}.units;
 ```
 
 These apps prepare or refresh the generated `.render` library beside the root

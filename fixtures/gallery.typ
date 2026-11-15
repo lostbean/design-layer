@@ -205,6 +205,46 @@
 )
 
 #section(
+  title: "The design unit",
+  lead: "One required shape at every depth; an empty list says none.",
+  body: [
+    A unit answers the same five questions wherever it sits, and names the
+    directories that realize it. Every other block is optional and lives in
+    its body, where a nested unit is the next level down.
+
+    #unit(
+      id: "gallery-renderer",
+      title: "Renderer",
+      overview: [Turns an authored layer into one PDF and one Markdown
+        projection, from the same calls.],
+      interface: (
+        [`render <layer-root> <out.pdf>` writes the document.],
+        [`context <layer-root> --unit <id>` prints one unit.],
+      ),
+      invariants: (
+        [A value outside a declared vocabulary fails the render.],
+      ),
+      side-effects: (),
+      verification: [`nix flake check`],
+      paths: (),
+    )[
+      A grouping unit lists no path of its own. Its parts do.
+
+      #unit(
+        id: "gallery-library",
+        title: "Block library",
+        overview: "Holds every block contract as a function signature.",
+        interface: ("One function per block kind.",),
+        invariants: (),
+        side-effects: (),
+        verification: "The self-tests compile a fixture that breaks each rule.",
+        paths: ("lib", "schema"),
+      )
+    ]
+  ],
+)
+
+#section(
   title: "Magnitudes and breadth",
   lead: "A tile states a fact; a coverage row states a decision.",
   body: [

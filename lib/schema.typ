@@ -106,6 +106,24 @@
 // The page-identity frontmatter keys the document shell renders.
 #let FRONTMATTER-KEYS = schema.design_doc.frontmatter_keys.keys()
 
+// THE UNIT CONTRACT — the five sections every design unit answers, the shape
+// of its id, and the rule its code paths obey. It is read with a default
+// because a host may project the library against its OWN schema copy, and a
+// copy that predates the unit block must keep rendering a layer that authors
+// no unit. `unit()` itself refuses to run without the contract, so the absence
+// is reported at the first call that needs it rather than rendered around.
+#let UNIT-CONTRACT = schema.design_doc.at("unit_contract", default: none)
+#let UNIT-SECTIONS = if UNIT-CONTRACT == none { () } else {
+  UNIT-CONTRACT.sections
+}
+#let UNIT-SHAPES = ("text", "list")
+// The fields `unit()` implements as parameters. The schema declares the
+// sections' order, labels and shapes; a field named there and absent here
+// would be a section the function cannot be handed.
+#let UNIT-SECTION-FIELDS = (
+  "overview", "interface", "invariants", "side-effects", "verification",
+)
+
 // ---- the coherence checks the generator used to run at projection time ----
 // Each one refused to emit a library whose declarations contradicted each
 // other. They run on every compile now, which is strictly more often.
@@ -264,5 +282,71 @@
       "design_doc.accents declares no tint, so an unnamed altitude has no "
         + "colour to fall back to",
     )
+  }
+  // THE UNIT CONTRACT, when the schema declares one. The declared sections and
+  // the parameters `unit()` implements must be the same set: a section the
+  // function has no parameter for could never be authored, and a parameter the
+  // schema does not declare would render under no label.
+  if UNIT-CONTRACT != none {
+    if UNIT-SECTIONS.len() == 0 {
+      _schema-fail(
+        "design_doc.unit_contract.sections is empty — a unit would carry no "
+          + "contract at all",
+      )
+    }
+    let declared = ()
+    for s in UNIT-SECTIONS {
+      for k in ("field", "label", "shape") {
+        if k not in s or type(s.at(k)) != str or s.at(k) == "" {
+          _schema-fail(
+            "design_doc.unit_contract.sections holds " + repr(s) + ", which "
+              + "declares no " + k,
+          )
+        }
+      }
+      if s.shape not in UNIT-SHAPES {
+        _schema-fail(
+          "design_doc.unit_contract.sections gives " + repr(s.field)
+            + " the shape " + repr(s.shape) + ", which is not one of "
+            + repr(UNIT-SHAPES),
+        )
+      }
+      if declared.contains(s.field) {
+        _schema-fail(
+          "design_doc.unit_contract.sections declares " + repr(s.field)
+            + " twice",
+        )
+      }
+      declared.push(s.field)
+      if s.field not in UNIT-SECTION-FIELDS {
+        _schema-fail(
+          "design_doc.unit_contract.sections declares " + repr(s.field)
+            + ", which the unit block has no parameter for",
+        )
+      }
+    }
+    for f in UNIT-SECTION-FIELDS {
+      if f not in declared {
+        _schema-fail(
+          "design_doc.unit_contract.sections does not declare " + repr(f)
+            + ", which the unit block requires of every unit",
+        )
+      }
+    }
+    for k in ("empty_label", "id_pattern", "anchor_prefix") {
+      if type(UNIT-CONTRACT.at(k, default: none)) != str or UNIT-CONTRACT.at(k) == "" {
+        _schema-fail("design_doc.unit_contract declares no " + k)
+      }
+    }
+    // Compiling the pattern is the assertion: a malformed one fails here,
+    // naming the key, instead of at the first unit a document authors.
+    let _ = "".contains(regex(UNIT-CONTRACT.id_pattern))
+    let forbidden = UNIT-CONTRACT.at("path_forbidden_characters", default: ())
+    if type(forbidden) != array or forbidden.len() == 0 {
+      _schema-fail(
+        "design_doc.unit_contract.path_forbidden_characters is empty, so a "
+          + "unit path could carry a glob",
+      )
+    }
   }
 }

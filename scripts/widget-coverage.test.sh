@@ -302,8 +302,11 @@ public = {
 AGGREGATE_EMITTED = {
     "aggregate-doc", "chapter-page", "context-owner", "declare-vocabulary",
     # The semantic envelope is projection infrastructure. Authoring functions
-    # call it; an author never does.
+    # call it; an author never does. `semantic` is the envelope's other
+    # constructor: it was counted as exercised only because the gallery's prose
+    # uses the word, which the call-shaped match below no longer accepts.
     "semantic-result",
+    "semantic",
     # The document-level assertions. The aggregate places each one around a
     # chapter's body — an author never writes one, and a gallery page calling
     # one would assert against the gallery rather than demonstrate anything.
@@ -318,7 +321,14 @@ for fn in sorted(public - AGGREGATE_EMITTED):
     # \b does not end a hyphenated name the way it ends a word: in `#stat-tile`
     # the boundary after `stat` matches, so `#stat` would look present. The
     # trailing guard is therefore "not another name character", hyphen included.
-    if not re.search(r"[#(\s]" + re.escape(fn) + r"(?![a-z0-9-])", used):
+    # A CALL, not a mention: the name is followed by `(` or by a content
+    # block's `[`. Matching the bare name let prose stand in for a call — the
+    # sentence "a section is the unit" counted as exercising `unit` before the
+    # gallery called it at all. A function passed as a value is the one legal
+    # spelling without either, and `design-doc.with(` is the only such use.
+    if not re.search(
+        r"[#(\s]" + re.escape(fn) + r"(?:\(|\[|\.with\()", used
+    ):
         missing.append(fn)
 
 if len(public - AGGREGATE_EMITTED) == 0:
@@ -348,8 +358,12 @@ PY
       ngmissing=""
       # one mark per structure that could silently render empty: the diagram's
       # own labels, a coverage reason, a stat value, a pending entry.
+      # The unit's marks are its id, a filled section, and the empty label:
+      # the word "unit" alone appears in the gallery's own prose, so only an
+      # id proves the block itself drew.
       for mark in designlib "called directly" LICENSE "2.4M" "Pending updates" \
-        "ADR-0065" "Ledger store" "rotated in place"; do
+        "ADR-0065" "Ledger store" "rotated in place" "gallery-library" \
+        "One function per block kind." "None"; do
         case "$ngtext" in
         *"$mark"*) ;;
         *) ngmissing="$ngmissing [$mark]" ;;

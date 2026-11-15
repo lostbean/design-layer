@@ -37,6 +37,38 @@
 // every context's foundation is judged on its own.
 #let foundation-scope-reset = _foundation-trail.update(())
 
+// A UNIT'S BODY IS ITS OWN SCOPE. The foundation is the DOCUMENT's: the goals,
+// invariants and principles stated at its top. A statement written inside a
+// unit's body belongs to that unit, and the document-level order and minimum
+// say nothing about it — two sibling units each carrying one invariant are not
+// "an invariant following an invariant", and a principle inside the first unit
+// does not make a goal inside the second one out of order.
+//
+// The unit marks its body's boundaries IN THE TRAIL ITSELF rather than in a
+// second state the statements would have to read. A statement's own call is
+// then unchanged — it records itself exactly as it always did — and the two
+// assertions below read the trail through `_foundation-own`, which drops every
+// entry recorded between a unit's opening mark and its closing one.
+#let _UNIT-OPEN = "unit-open"
+#let _UNIT-CLOSE = "unit-close"
+#let _foundation-unit-open = _foundation-trail.update(
+  t => t + ((kind: _UNIT-OPEN, title: none),),
+)
+#let _foundation-unit-close = _foundation-trail.update(
+  t => t + ((kind: _UNIT-CLOSE, title: none),),
+)
+
+#let _foundation-own(trail) = {
+  let own = ()
+  let depth = 0
+  for e in trail {
+    if e.kind == _UNIT-OPEN { depth += 1 }
+    else if e.kind == _UNIT-CLOSE { depth -= 1 }
+    else if depth == 0 { own.push(e) }
+  }
+  own
+}
+
 // Read the trail as it stands HERE and refuse an inversion. The read is
 // `.get()`, not `.final()`, and the difference is the whole scoping story:
 // `.final()` returns the state at the END of the document, which after the next
@@ -49,7 +81,7 @@
   for (i, k) in FOUNDATION-ORDER.enumerate() { rank.insert(k, i) }
   let prev = -1
   let prev-kind = none
-  for e in _foundation-trail.get() {
+  for e in _foundation-own(_foundation-trail.get()) {
     let r = rank.at(e.kind)
     if r < prev {
       _guide("foundation.order",
@@ -75,9 +107,17 @@
 // the layer exists to prevent. The waiver is an ARGUMENT rather than a guess:
 // nothing in the document's own text distinguishes an index root from a leaf
 // that forgot its foundation, so the author declares which one it is.
-#let assert-foundation-cardinality(index-only: false) = context {
-  if not index-only {
-    let present = _foundation-trail.get().map(e => e.kind).dedup()
+//
+// `root` says which document is being judged, and the minimum binds the ROOT
+// ONLY. A context document may omit any foundation kind, or all of them: it
+// states a goal or a principle when its aims differ from the root's, and
+// holding it to one of each is how every context came to restate the layer's
+// foundation in its own words. The aggregate knows which document is the root
+// and passes it; the default keeps a caller that says nothing held to the
+// minimum, so the waiver is never taken by omission.
+#let assert-foundation-cardinality(index-only: false, root: true) = context {
+  if root and not index-only {
+    let present = _foundation-own(_foundation-trail.get()).map(e => e.kind).dedup()
     // A document carrying NO foundation at all is not a document that failed
     // the minimum — it is a document not carrying a foundation, a behavior-rule
     // sheet or a reference page. The minimum binds a document that declares a

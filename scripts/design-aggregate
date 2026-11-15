@@ -368,7 +368,12 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
         L.append("#assert-foundation-order")
         L.append('#let _io = if "index_only" in _m { _m.index_only } '
                  'else { false }')
-        L.append("#assert-foundation-cardinality(index-only: _io)")
+        # The per-kind minimum binds the ROOT document only; a context may
+        # omit any foundation kind. Which document is the root is this
+        # script's knowledge — it is the one discovered at the layer root — so
+        # it is passed rather than left for the library to guess.
+        L.append("#assert-foundation-cardinality(index-only: _io, root: %s)"
+                 % ("true" if name is None else "false"))
         L.append("")
 
     # Entity, state-type, attribute, and state-machine calls contribute one

@@ -189,6 +189,21 @@
 // inserting or moving a section updates the displayed sequence without a
 // source rewrite.
 
+// THE HEADING A NESTED BLOCK SITS UNDER. A `unit` is the same shape at every
+// depth, so it cannot carry a fixed heading level the way `section` (2) and
+// `subsection` (3) do: its level is one below whatever encloses it. A function
+// cannot see its caller, so each heading-owning block pushes its own level
+// while its body is laid out and pops it after, and a unit reads the top of
+// the stack. Content is evaluated at layout time, in document order, so a
+// nested call sees exactly the hosts that enclose it.
+#let _heading-host = state("heading-host", ())
+
+#let _hosted(level, body) = {
+  _heading-host.update(hosts => hosts + (level,))
+  body
+  _heading-host.update(hosts => hosts.slice(0, -1))
+}
+
 #let section(title: none, lead: none, visual: none, notes: none, body: none) = {
   _need("section", "title", title)
   _max-lead("section lead", lead)
@@ -209,7 +224,7 @@
       }
     }
     if notes != none { notes }
-    if body != none { body }
+    if body != none { _hosted(2, body) }
   }
   semantic-result("section", visual-content,
     fields: (title: title, lead: lead, visual: visual, notes: notes, body: body))
@@ -219,7 +234,7 @@
   _need("subsection", "title", title)
   let visual = {
     heading(level: 3)[#title]
-    body
+    _hosted(3, body)
   }
   semantic-result("subsection", visual, fields: (title: title, body: body))
 }
@@ -1085,8 +1100,13 @@
 // expression ends at the newline, the chain is dropped, and the unfiltered
 // list flows on. That failure is SILENT — it renders every field including the
 // absent ones — so the shape is kept where it cannot recur.
-#let _answer-rows(data) = {
-  let pairs = ANSWER-FIELDS.map(f => (f.at(1), data.at(f.at(0), default: none)))
+//
+// `fields` is the label table the rows are read through. The component card,
+// the contract card and the answers panel read ANSWER-FIELDS; the `unit` block
+// reads the schema's unit sections through the same rows, so the two card
+// families share one anatomy rather than each drawing its own.
+#let _answer-rows(data, fields: ANSWER-FIELDS) = {
+  let pairs = fields.map(f => (f.at(1), data.at(f.at(0), default: none)))
   pairs.filter(r => r.at(1) != none)
 }
 

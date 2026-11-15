@@ -258,11 +258,50 @@ def parse_args(argv: list[str]) -> CliOptions:
     )
 
 
-# The characters a repo-relative path may not carry: a path names one exact
-# place, never a pattern. The same set the schema declares for a unit's own
-# `paths`; a query is held to it so a typo is refused instead of matching
-# nothing.
-PATH_FORBIDDEN = frozenset("*?[]{}\\")
+def locate_schema() -> Path:
+    """The declared schema: $DESIGN_SCHEMA, else beside this script, else the
+    checkout's schema/ directory — the lookup every gate script shares."""
+    override = os.environ.get("DESIGN_SCHEMA")
+    if override:
+        return Path(override)
+    here = Path(os.path.realpath(__file__)).parent
+    sibling = here / "design-schema.json"
+    if sibling.is_file():
+        return sibling
+    return here.parent / "schema" / "design-schema.json"
+
+
+def path_forbidden_characters() -> frozenset[str]:
+    """The characters a repo-relative path may not carry, as the schema declares.
+
+    A path names one exact place, never a pattern. The library holds a unit's
+    own `paths` to `unit_contract.path_forbidden_characters`, and a `--path`
+    query is held to the same list so a typo is refused instead of matching
+    nothing. It is read from the schema rather than repeated here: a second
+    copy would let a query accept a character no unit path may carry.
+    """
+    path = locate_schema()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        fail(f"cannot read the design schema {path}: {error}")
+    contract = (raw.get("design_doc") or {}).get("unit_contract")
+    if not isinstance(contract, dict):
+        fail(
+            f"the schema in use ({path}) declares no design_doc.unit_contract, "
+            "so no unit lists a path to select by"
+        )
+    forbidden = contract.get("path_forbidden_characters")
+    if (
+        not isinstance(forbidden, list)
+        or not forbidden
+        or not all(isinstance(item, str) and len(item) == 1 for item in forbidden)
+    ):
+        fail(
+            f"the design schema {path} declares an unusable "
+            "design_doc.unit_contract.path_forbidden_characters"
+        )
+    return frozenset(forbidden)
 
 
 def normalize_query_path(raw: str) -> str:
@@ -278,10 +317,11 @@ def normalize_query_path(raw: str) -> str:
         value = value[2:]
     value = value.rstrip("/")
     segments = value.split("/") if value else []
+    forbidden = path_forbidden_characters()
     if (
         not value
         or raw.startswith("/")
-        or any(character in PATH_FORBIDDEN for character in value)
+        or any(character in forbidden for character in value)
         or any(not segment or segment in {".", ".."} for segment in segments)
     ):
         fail(

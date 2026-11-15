@@ -23,7 +23,10 @@
 #      statement inside a unit is not read as the document's foundation
 #   4. the projection, and selection by unit id and by code path
 #   5. the generator: create, replace, several units in one folder, one unit in
-#      several folders, an existing CLAUDE.md, and removal
+#      several folders, an existing CLAUDE.md, and removal — and what it
+#      refuses to touch: a symlinked or unusable target, a marker someone wrote
+#      in their own text, two spellings of one directory, the line endings and
+#      final newline of a file it shares, and a nested project's contracts
 #   6. the gate: a missing path, a stale contract, a contract no unit lists —
 #      through the scripts and through the public check app — and the
 #      uncovered-directory report, which never changes an exit code
@@ -118,6 +121,23 @@ lacks() { # <needle> <label>
 }
 same_file() { # <a> <b> <label>
   if cmp -s "$1" "$2"; then pass_line "$3"; else fail_line "$3"; fi
+}
+# The output line naming <where> must not also say <needle>: a violation the
+# generator cannot repair must not tell the reader to run the generator.
+line_lacks() { # <where> <needle> <label>
+  local line
+  line="$(printf '%s\n' "$OUT" | grep -F -- "$1")"
+  if [ -z "$line" ]; then
+    fail_line "$3: no output line names '$1'"
+    return
+  fi
+  case "$line" in
+  *"$2"*) fail_line "$3: the line naming '$1' holds '$2'" ;;
+  *) pass_line "$3" ;;
+  esac
+}
+absent() { # <path> <label>
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then pass_line "$2"; else fail_line "$2: $1 exists"; fi
 }
 
 # --- 1. THE BLOCK'S OWN CONTRACT ----------------------------------------------
@@ -821,6 +841,307 @@ printf 'The region opens with `<!-- design-units:begin -->` on its own line.\n' 
 run 0 "a marker named inside prose is not a region" -- units --check
 rm -f "$REPO/tools/release/AGENTS.md"
 
+# --- 5b. WHAT THE GENERATOR REFUSES TO TOUCH ---------------------------------------
+# The generator shares each file with hand-written text and each tree with
+# links, other layers, and other spellings of one directory. Every case below
+# starts from its own small repository — two units, `ua` on src/a and `ub` on
+# src/b — so a refusal is judged alone, and so "nothing was written" can be
+# read off the folder the run did NOT fault.
+SAFE=""
+safe_root() { # <paths of unit ua> <paths of unit ub>
+  cat >"$SAFE/docs/design/design.typ" <<EOF
+#import ".render/designlib.typ": *
+#let title = [Zsafe]
+#let body = [
+  #section(title: "Foundation", body: [
+    #goal(title: "Zsg")[g]
+    #invariant(title: "Zsi", enforcement: "convention")[i]
+    #principle(title: "Zsp")[p]
+  ])
+  #unit(id: "ua", title: "Zunit A", overview: "Overview A.", interface: (),
+    invariants: (), side-effects: (), verification: "none", paths: $1)
+  #unit(id: "ub", title: "Zunit B", overview: "Overview B.", interface: (),
+    invariants: (), side-effects: (), verification: "none", paths: $2)
+]
+EOF
+}
+safe_repo() { # <name>
+  SAFE="$WORK/safe/$1/repo"
+  mkdir -p "$SAFE/docs/design" "$SAFE/src/a" "$SAFE/src/b" "$SAFE/other"
+  cp -R "$LIB" "$SAFE/docs/design/.render"
+  printf 'x\n' >"$SAFE/src/a/x.rs"
+  printf 'x\n' >"$SAFE/src/b/x.rs"
+  printf 'x\n' >"$SAFE/other/x"
+  printf '.render/\n' >"$SAFE/.gitignore"
+  safe_root '("src/a",)' '("src/b",)'
+  (
+    cd "$SAFE" && git init -q . && git add -A &&
+      git -c user.name=t -c user.email=t@localhost commit -qm init
+  ) >/dev/null 2>&1
+}
+safe_units() {
+  DESIGN_LIB_DIR="$SAFE/docs/design/.render" python3 ./scripts/design-units \
+    "$SAFE/docs/design" "$SAFE" "$@"
+}
+# The folder the run did not fault stays as it was: no file, no link.
+nothing_written() { # <label>
+  if [ ! -e "$SAFE/src/b/AGENTS.md" ] && [ ! -L "$SAFE/src/b/CLAUDE.md" ]; then
+    pass_line "$1"
+  else
+    fail_line "$1: src/b was written although the run reported a violation"
+  fi
+}
+
+# A TARGET THAT IS A SYMBOLIC LINK. Only the directory used to be resolved
+# against the repository root, so a link named AGENTS.md was written through:
+# to a file outside the repository, or into a new file where the link dangled.
+safe_repo link-outside
+printf 'outside notes\n' >"$WORK/safe/link-outside/outside.md"
+cp "$WORK/safe/link-outside/outside.md" "$WORK/outside.before"
+ln -s ../../../outside.md "$SAFE/src/a/AGENTS.md"
+run 1 "a target linking outside the repository is a violation" -- safe_units
+has "src/a/AGENTS.md: unusable folder contract file" "the violation names the linked target"
+has "it is a symbolic link to ../../../outside.md" "the violation says the target is a link, and to what"
+same_file "$WORK/safe/link-outside/outside.md" "$WORK/outside.before" \
+  "the file the link points at outside the repository is not written"
+nothing_written "a refused target stops every write, not only its own"
+has "nothing was written" "the generator says it wrote nothing"
+run 1 "the gate reports the linked target too" -- safe_units --check
+line_lacks "src/a/AGENTS.md:" "run the units app" \
+  "the gate does not send the reader to the generator for a target it refuses"
+
+safe_repo link-dangling
+ln -s ../../../created-outside.md "$SAFE/src/a/AGENTS.md"
+run 1 "a dangling target link is a violation" -- safe_units
+absent "$WORK/safe/link-dangling/created-outside.md" \
+  "no file is created outside the repository through a dangling link"
+nothing_written "a dangling link stops every write"
+
+safe_repo link-inside
+printf 'shared notes\n' >"$SAFE/other/notes.md"
+ln -s ../../other/notes.md "$SAFE/src/a/AGENTS.md"
+run 1 "a target linking to a file inside the repository is refused as well" -- safe_units
+if [ "$(cat "$SAFE/other/notes.md")" = "shared notes" ]; then
+  pass_line "the linked file inside the repository is not written"
+else
+  fail_line "the generator wrote through a link inside the repository"
+fi
+
+# A TARGET THAT IS NOT A FILE, or not text. Each is a violation with its own
+# words — never a raw errno — found before any other folder is written.
+safe_repo target-directory
+mkdir "$SAFE/src/a/AGENTS.md"
+run 1 "a target that is a directory is a violation, not an error" -- safe_units
+has "it is a directory" "the violation says the target is a directory"
+lacks "Errno" "no raw system error reaches the reader"
+nothing_written "a directory in a target's place stops every write"
+run 1 "the gate reports the directory" -- safe_units --check
+line_lacks "src/a/AGENTS.md:" "run the units app" \
+  "the gate does not tell the reader to regenerate over a directory"
+
+safe_repo target-binary
+printf '\377\376 not text\n' >"$SAFE/src/a/AGENTS.md"
+cp "$SAFE/src/a/AGENTS.md" "$WORK/binary.before"
+run 1 "a target that is not UTF-8 text is a violation" -- safe_units
+has "it is not UTF-8 text" "the violation says why the file cannot be shared"
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/binary.before" "the undecodable file is left as it was"
+nothing_written "an undecodable target stops every write"
+
+# The well-formed run leaves no temporary file behind and keeps a file's mode.
+safe_repo atomic
+printf '# Private notes\n' >"$SAFE/src/a/AGENTS.md"
+chmod 600 "$SAFE/src/a/AGENTS.md"
+run 0 "the generator writes through a temporary file and a rename" -- safe_units
+if [ -z "$(find "$SAFE/src" -name '.AGENTS.md.*')" ]; then
+  pass_line "no temporary file is left beside a folder contract"
+else
+  fail_line "a temporary file was left behind"
+fi
+if [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$SAFE/src/a/AGENTS.md")" = "0o600" ]; then
+  pass_line "a rewritten file keeps its permissions"
+else
+  fail_line "a rewritten file lost its permissions"
+fi
+
+# A MARKER SOMEONE WROTE IS NOT A REGION. A region is the generator's whole
+# shape. A marker inside a fenced or indented code block is an example and is
+# never read, and it used to be deleted: from a directory no unit lists, and
+# with the fence's content replaced in a listed one.
+write_marker_example() { # <file>
+  cat >"$1" <<'EOF'
+# How a generated region looks
+
+```markdown
+<!-- design-units:begin -->
+my own example text
+<!-- design-units:end -->
+```
+
+~~~
+<!-- design-units:begin -->
+~~~
+
+    <!-- design-units:end -->
+
+Trailing prose.
+EOF
+}
+safe_repo example-unlisted
+write_marker_example "$SAFE/other/AGENTS.md"
+cp "$SAFE/other/AGENTS.md" "$WORK/example.before"
+(cd "$SAFE" && git add -A >/dev/null 2>&1)
+run 0 "the generator runs beside a file that shows the markers as an example" -- safe_units
+has "removed 0 stale region(s)" "an example of the markers is not removed as a stale region"
+same_file "$SAFE/other/AGENTS.md" "$WORK/example.before" \
+  "a file showing the markers in a code block is byte-identical after generation"
+run 0 "the gate does not read the example as a region" -- safe_units --check
+lacks "other/AGENTS.md" "the gate reports nothing about the example file"
+
+safe_repo example-listed
+write_marker_example "$SAFE/src/a/AGENTS.md"
+run 0 "the generator adds a region below a file that shows the markers" -- safe_units
+if head -c "$(wc -c <"$WORK/example.before")" "$SAFE/src/a/AGENTS.md" | cmp -s - "$WORK/example.before"; then
+  pass_line "the example text is kept byte for byte above the generated region"
+else
+  fail_line "the example text was changed in a listed directory"
+fi
+OUT="$(cat "$SAFE/src/a/AGENTS.md")"
+has "my own example text" "the fenced example still holds its own text"
+has "## Design unit: Zunit A" "the real region is written below it"
+run 0 "the gate reads the real region and not the example" -- safe_units --check
+safe_root '()' '("src/b",)'
+run 0 "the generator removes the real region and keeps the example" -- safe_units
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/example.before" \
+  "removing the region restores the file that showed the markers"
+
+# Anything else that holds a marker is MALFORMED: reported, and never changed.
+malformed_case() { # <name> <needle> — the file is already in $SAFE/src/a/AGENTS.md
+  cp "$SAFE/src/a/AGENTS.md" "$WORK/malformed-$1.before"
+  run 1 "$1: a malformed region is a violation when generating" -- safe_units
+  has "src/a/AGENTS.md: malformed folder contract region" "$1: the generator names the file"
+  has "$2" "$1: the violation says what is wrong"
+  same_file "$SAFE/src/a/AGENTS.md" "$WORK/malformed-$1.before" "$1: the file is left as it was"
+  nothing_written "$1: a malformed file stops every write"
+  run 1 "$1: a malformed region is a violation in the gate" -- safe_units --check
+  line_lacks "src/a/AGENTS.md:" "run the units app" \
+    "$1: the gate does not send the reader to the generator"
+}
+safe_repo malformed-bare-markers
+printf 'Notes.\n\n<!-- design-units:begin -->\nhand-written between bare markers\n<!-- design-units:end -->\n' \
+  >"$SAFE/src/a/AGENTS.md"
+malformed_case bare-markers "holds a region marker outside a generated region"
+
+safe_repo malformed-end-first
+printf '<!-- design-units:end -->\nx\n<!-- design-units:begin -->\n' >"$SAFE/src/a/AGENTS.md"
+malformed_case end-first "line 1, 3 holds a region marker"
+
+safe_repo malformed-unclosed
+{
+  printf '<!-- design-units:begin -->\n'
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["design_doc"]["unit_contract"]["folder_contract"]["notice"])' \
+    schema/design-schema.json
+  printf '<!-- prettier-ignore-start -->\n\ntext with no closing lines\n'
+} >"$SAFE/src/a/AGENTS.md"
+malformed_case unclosed "is never closed"
+
+safe_repo malformed-open-fence
+printf '# Notes\n\n```\nan example that never closes its fence\n' >"$SAFE/src/a/AGENTS.md"
+malformed_case open-fence "ends inside a code fence that is never closed"
+
+# Two regions: generate once, then double the file.
+safe_repo malformed-two-regions
+safe_units >/dev/null 2>&1
+cat "$SAFE/src/b/AGENTS.md" "$SAFE/src/b/AGENTS.md" >"$SAFE/src/a/AGENTS.md"
+cp "$SAFE/src/a/AGENTS.md" "$WORK/two.before"
+run 1 "a file holding two regions is a violation" -- safe_units
+has "found 2 generated regions" "the violation counts the regions"
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/two.before" "a file holding two regions is left as it was"
+
+# TWO SPELLINGS OF ONE DIRECTORY. The expected output was keyed by the path as
+# written, so two spellings of one directory overwrote each other's region and
+# generate-then-check reported "stale" for ever.
+safe_repo spelling-link
+ln -s a "$SAFE/src/link"
+safe_root '("src/a",)' '("src/link",)'
+run 1 "a unit path through a symlinked directory is a violation" -- safe_units
+has "unit ub: unit path is not the directory's own path" "the violation names the unit and the rule"
+has "src/link is declared, and the file system stores that directory as src/a" \
+  "the violation names the declared path and the stored one"
+absent "$SAFE/src/a/AGENTS.md" "no contract is written for a directory reached by two spellings"
+run 1 "the gate reports the same spelling violation" -- safe_units --check
+
+# A case-insensitive file system opens src/a for `src/A`. Where the file
+# system is case-sensitive the same path simply does not exist; the run is a
+# violation either way, and which one is asserted by what the file system does.
+safe_repo spelling-case
+safe_root '("src/a",)' '("src/A",)'
+run 1 "a unit path in another letter case is a violation" -- safe_units
+if [ -d "$SAFE/src/A" ]; then
+  has "src/A is declared, and the file system stores that directory as src/a" \
+    "on a case-insensitive file system the violation names both spellings"
+else
+  has "missing unit path: src/A does not exist" \
+    "on a case-sensitive file system the other case is a missing path"
+fi
+absent "$SAFE/src/a/AGENTS.md" "no contract is written while one directory has two spellings"
+
+# LINE ENDINGS AND THE FINAL NEWLINE belong to the file. A file with CRLF
+# endings used to be rewritten wholesale with LF, and a file with no final
+# newline gained one after its region was added and removed.
+crlf_only() { # <file> — every line ends CRLF, none with a bare LF
+  python3 - "$1" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read()
+sys.exit(0 if b"\r\n" in data and b"\n" not in data.replace(b"\r\n", b"") else 1)
+PY
+}
+safe_repo crlf
+printf '# Notes\r\n\r\nHand-written with CRLF.\r\n' >"$SAFE/src/a/AGENTS.md"
+cp "$SAFE/src/a/AGENTS.md" "$WORK/crlf.before"
+run 0 "the generator adds a region to a CRLF file" -- safe_units
+if head -c "$(wc -c <"$WORK/crlf.before")" "$SAFE/src/a/AGENTS.md" | cmp -s - "$WORK/crlf.before"; then
+  pass_line "the CRLF text above the region is kept byte for byte"
+else
+  fail_line "the CRLF text above the region was rewritten"
+fi
+if crlf_only "$SAFE/src/a/AGENTS.md"; then
+  pass_line "the region takes the file's own CRLF line ending"
+else
+  fail_line "the file now mixes line endings"
+fi
+run 0 "a CRLF region is fresh in the gate" -- safe_units --check
+cp "$SAFE/src/a/AGENTS.md" "$WORK/crlf.generated"
+run 0 "regenerating a CRLF file is idempotent" -- safe_units
+has "wrote 0 folder contract(s)" "a fresh CRLF region is not rewritten"
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/crlf.generated" "a second run leaves the CRLF file byte-identical"
+safe_root '("src/a",)' '("src/a", "src/b")'
+run 0 "the generator replaces the region of a CRLF file" -- safe_units
+if crlf_only "$SAFE/src/a/AGENTS.md" && grep -q "Zunit B" "$SAFE/src/a/AGENTS.md"; then
+  pass_line "a replaced region keeps the file's CRLF line ending"
+else
+  fail_line "replacing the region changed the file's line endings"
+fi
+safe_root '()' '("src/b",)'
+run 0 "the generator removes the region of a CRLF file" -- safe_units
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/crlf.before" \
+  "removing the region restores the CRLF file byte for byte"
+
+safe_repo no-final-newline
+printf 'line one\nline two' >"$SAFE/src/a/AGENTS.md"
+cp "$SAFE/src/a/AGENTS.md" "$WORK/nofinal.before"
+run 0 "the generator adds a region to a file with no final newline" -- safe_units
+if head -c "$(wc -c <"$WORK/nofinal.before")" "$SAFE/src/a/AGENTS.md" | cmp -s - "$WORK/nofinal.before" &&
+  [ "$(tail -c 1 "$SAFE/src/a/AGENTS.md" | od -An -c | tr -d ' ')" != '\n' ]; then
+  pass_line "the file keeps its text and still ends without a newline"
+else
+  fail_line "the file gained a final newline, or its text changed"
+fi
+run 0 "a region at the end of a file with no final newline is fresh" -- safe_units --check
+safe_root '()' '("src/b",)'
+run 0 "the generator removes that region" -- safe_units
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/nofinal.before" \
+  "add-then-remove restores a file with no final newline exactly"
+
 # --- 6. THE GATE -----------------------------------------------------------------
 # Restore the full fixture and generate, so each broken variant starts clean.
 cp "$WORK/alpha.good" "$LAYER/alpha/design.typ"
@@ -887,6 +1208,18 @@ write_root '("src/ledger", "src/shared", "src/escape")' "Appends immutable entri
 run 1 "a unit path resolving outside the repository is a violation" -- units --check
 has "unit path escapes the repository" "the gate names the escaping path"
 rm -f "$REPO/src/escape"
+# git's own directory and the layer directory are not a unit's folders.
+write_root '("src/ledger", "src/shared", ".git")' "Appends immutable entries."
+run 1 "a unit path naming .git is a violation" -- units
+has "unit path is inside git's own directory" "the violation names the .git rule"
+absent "$REPO/.git/AGENTS.md" "no contract is written into .git"
+write_root '("src/ledger", "src/shared", "docs/design")' "Appends immutable entries."
+run 1 "a unit path naming the layer directory is a violation" -- units
+has "unit path names the design layer" "the violation names the layer rule"
+absent "$LAYER/AGENTS.md" "no contract is written into the layer directory"
+write_root '("src/ledger", "src/shared", "docs/design/alpha")' "Appends immutable entries."
+run 1 "a unit path inside the layer directory is a violation" -- units --check
+has "unit path names the design layer" "a context directory is the layer too"
 write_root '("src/ledger", "src/shared")' "Appends immutable entries."
 "$DESIGN_RENDER_APP" "$LAYER" "$LAYER/design-layer.pdf" >/dev/null 2>&1
 run 0 "the public gate passes again" -- "$DESIGN_CHECK_APP" "$LAYER" "$REPO"
@@ -930,6 +1263,18 @@ has "  src/ (1 file(s) directly in it; a subdirectory is claimed)" \
   "the report lists files beside a claimed subdirectory"
 lacks "  src/ledger" "the report does not list a claimed directory"
 lacks "  docs/design" "the report does not list the layer's own home"
+# docs/ holds the layer's maps beside the layer directory. They are the layer,
+# not source, and listing docs/ for them told every host that the design does
+# not claim its own documents.
+lacks "  docs/" "the report does not list docs/ for the layer's own maps"
+# The exclusion is the maps alone: any other tracked file there is still listed.
+mkdir -p "$REPO/docs/runbook"
+printf 'notes\n' >"$REPO/docs/runbook/restart.md"
+(cd "$REPO" && git add -A >/dev/null 2>&1)
+run 0 "the report still runs with an unclaimed document beside the layer" -- units --check
+has "  docs/ (1 file(s))" "a tracked file under docs/ that is not the layer's is listed"
+rm -rf "$REPO/docs/runbook"
+(cd "$REPO" && git add -A >/dev/null 2>&1)
 # Outside git the report says it did not run, rather than listing nothing.
 NOGIT="$WORK/nogit"
 mkdir -p "$NOGIT"
@@ -973,6 +1318,54 @@ run 0 "the public units app writes a nested project's contracts" -- \
 (cd "$REPO" && git add -A >/dev/null 2>&1)
 run 1 "without the exclusion the outer scan reports the nested contract" -- units --check
 has "projects/one/lib/AGENTS.md: stale folder contract" "the outer scan names the nested folder"
+has "pass --nested-project projects/one" "the gate names the argument that declares the project"
+line_lacks "projects/one/lib/AGENTS.md:" "run the units app to remove it" \
+  "the gate does not tell the reader to remove another layer's contract"
+# THE GENERATOR NEVER TOUCHES A NESTED PROJECT BY DEFAULT. Run without the
+# argument it used to remove the nested region, delete the emptied file, and
+# delete the CLAUDE.md link made for it.
+cp "$REPO/projects/one/lib/AGENTS.md" "$WORK/nested.good"
+run 1 "the generator reports an undeclared nested project instead of removing its contract" -- units
+has "pass --nested-project projects/one" "the generator names the argument too"
+same_file "$REPO/projects/one/lib/AGENTS.md" "$WORK/nested.good" \
+  "the nested project's contract is left as it was"
+if [ -L "$REPO/projects/one/lib/CLAUDE.md" ]; then
+  pass_line "the nested project's CLAUDE.md link is left in place"
+else
+  fail_line "the nested project's CLAUDE.md link was removed"
+fi
+run 0 "--exclude-project leaves the nested project out of the outer run" -- \
+  units --exclude-project projects/one
+same_file "$REPO/projects/one/lib/AGENTS.md" "$WORK/nested.good" \
+  "an excluded project's contract is not rewritten"
+# --nested-project is the argument `check` takes: the project is left out of
+# the outer run and then handled against its own root, in the same invocation.
+run 0 "--layers names the outer layer and each nested layer" -- \
+  units --layers --nested-project projects/one
+has "$REPO/projects/one/docs/design" "the nested layer is named for the app to prepare"
+sed 's/The nested project/A stale nested project/' "$WORK/nested.good" \
+  >"$REPO/projects/one/lib/AGENTS.md"
+run 1 "the gate with --nested-project fails a stale nested contract" -- \
+  units --check --nested-project projects/one
+has "nested project projects/one" "the nested run is labelled with its project"
+has "lib/AGENTS.md: stale folder contract" "the nested run names the stale contract by its own root"
+# The public app prepares the nested layer's library copy itself.
+rm -rf "$REPO/projects/one/docs/design/.render"
+run 0 "the public units app writes the outer layer and a nested project in one run" -- \
+  "$DESIGN_UNITS_APP" "$LAYER" "$REPO" --nested-project projects/one
+same_file "$REPO/projects/one/lib/AGENTS.md" "$WORK/nested.good" \
+  "the nested project's stale contract is regenerated against its own root"
+run 0 "the gate with --nested-project is clean afterwards" -- \
+  units --check --nested-project projects/one
+# A declared nested project's folders are not the outer layer's to claim.
+write_root '("src/ledger", "src/shared", "projects/one/lib")' "Appends immutable entries."
+run 1 "an outer unit path inside a nested project is a violation" -- \
+  units --check --nested-project projects/one
+has "unit path is inside a nested project" "the violation names the nested-project rule"
+write_root '("src/ledger", "src/shared")' "Appends immutable entries."
+run 2 "--nested-project requires a project that holds a layer" -- \
+  units --nested-project src/ledger
+has "nested project has no layer" "the error says what a nested project is"
 run 0 "the public gate checks a nested project against its own root" -- \
   "$DESIGN_CHECK_APP" "$LAYER" "$REPO" --nested-project projects/one
 printf 'stale\n' >>"$REPO/projects/one/lib/AGENTS.md"
@@ -982,6 +1375,31 @@ run 1 "the public gate fails a stale contract inside a nested project" -- \
 has "lib/AGENTS.md: stale folder contract" "the nested run names the stale contract"
 rm -rf "$REPO/projects"
 (cd "$REPO" && git add -A >/dev/null 2>&1)
+
+# THE FORBIDDEN PATH CHARACTERS ARE THE SCHEMA'S. A schema that forbids one
+# more character must be obeyed by the selector and by the generator's project
+# arguments; a list repeated in either script would keep accepting it.
+python3 - schema/design-schema.json "$WORK/plus-schema.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+doc["design_doc"]["unit_contract"]["path_forbidden_characters"].append("+")
+json.dump(doc, open(sys.argv[2], "w", encoding="utf-8"))
+PY
+mkdir -p "$REPO/vendor/a+b"
+run 2 "--path accepts a character the schema does not forbid" -- context --path 'src/a+b'
+has "no unit lists src/a+b" "the query was compared with the unit paths"
+run 2 "--path refuses a character the schema forbids" -- \
+  env DESIGN_SCHEMA="$WORK/plus-schema.json" python3 ./scripts/design-context "$LAYER" --path 'src/a+b'
+has "--path requires one repo-relative path" "the refusal is the path rule, read from the schema"
+run 2 "--path refuses a glob character the schema declares" -- context --path 'src/[ab]'
+has "--path requires one repo-relative path" "a declared glob character is refused"
+run 0 "a project argument may carry a character the schema does not forbid" -- \
+  units --check --exclude-project 'vendor/a+b'
+run 2 "a project argument is held to the schema's forbidden characters" -- \
+  env DESIGN_SCHEMA="$WORK/plus-schema.json" python3 ./scripts/design-units \
+  "$LAYER" "$REPO" --check --exclude-project 'vendor/a+b'
+has "invalid --exclude-project value" "the refusal names the argument"
+rmdir "$REPO/vendor/a+b" "$REPO/vendor"
 
 # context_command: the default, and a value the generator cannot print.
 python3 - "$LAYER/design.typ" <<'PY'

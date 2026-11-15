@@ -194,13 +194,24 @@
               text = ''
                 export DESIGN_SCHEMA="''${DESIGN_SCHEMA:-${gateBundle}/schema/design-schema.json}"
                 export DESIGN_LIB_DIR="''${DESIGN_LIB_DIR:-${gateBundle}/render}"
-                ${pkgs.lib.optionalString
-                  (script == "design-aggregate" || script == "design-context" || script == "design-units")
-                  ''
-                    ${prepareLayer}
-                    prepare_layer "''${1:-}"
-                  ''
-                }
+                ${pkgs.lib.optionalString (script == "design-aggregate" || script == "design-context") ''
+                  ${prepareLayer}
+                  prepare_layer "''${1:-}"
+                ''}
+                ${pkgs.lib.optionalString (script == "design-units") ''
+                  ${prepareLayer}
+                  # design-units reads the outer layer and the layer of every
+                  # --nested-project. It names them itself, so the argument
+                  # rules live in one place; an invocation it refuses prints
+                  # nothing here and reports its own error below.
+                  if units_layers="$(${gateBundle}/scripts/${script} "$@" --layers 2>/dev/null)"; then
+                    while IFS= read -r units_layer; do
+                      if [ -n "$units_layer" ]; then
+                        prepare_layer "$units_layer"
+                      fi
+                    done <<< "$units_layers"
+                  fi
+                ''}
                 exec ${gateBundle}/scripts/${script} "$@"
               '';
             };
@@ -512,7 +523,8 @@
         #   nix run <flake>#units   -- <layer-root> [repo-root]
         #   nix run <flake>#check   -- <layer-root> [repo-root]
         #
-        # project, render and units are thin pass-throughs to one script each.
+        # project, render and units are thin pass-throughs to one script each;
+        # units also places the library beside each --nested-project layer.
         # check is the COMPOSITE: the freshness check, token coverage, layer
         # integrity, and the unit folder-contract checks in sequence.
         apps.project = gateApp "render-project" "render-project";

@@ -22,7 +22,13 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        inherit (pkgs.lib) fileset;
         snips = pkgs.callPackage ./nix/snips.nix { };
+
+        rendererSources = [
+          (fileset.fileFilter (file: file.hasExt "typ") ./lib)
+          ./schema/design-schema.json
+        ];
 
         # The renderer: the typst binary together with a VENDORED,
         # version-exact package set — every direct and transitive package
@@ -101,6 +107,18 @@
         # tree. That makes the bundle self-consistent by construction: schema
         # and library can never disagree inside one store path.
         gateBundle =
+          let
+            source = fileset.toSource {
+              root = ./.;
+              fileset = fileset.unions (
+                rendererSources
+                ++ [
+                  ./scripts
+                  ./skills
+                ]
+              );
+            };
+          in
           pkgs.runCommand "design-gate-bundle"
             {
               nativeBuildInputs = [
@@ -109,7 +127,7 @@
               ];
             }
             ''
-              cp -r ${./.} repo
+              cp -r ${source} repo
               chmod -R u+w repo
               cd repo
               patchShebangs scripts
@@ -660,12 +678,18 @@
         checks.snips = snips;
 
         checks.workflow-lint =
+          let
+            source = fileset.toSource {
+              root = ./.;
+              fileset = ./.github;
+            };
+          in
           pkgs.runCommand "workflow-lint"
             {
               nativeBuildInputs = [ pkgs.actionlint ];
             }
             ''
-              cd ${./.}
+              cd ${source}
               actionlint .github/workflows/*.yml
               touch $out
             '';
@@ -753,6 +777,12 @@
         # committed schema and produces the library the renderer needs. A
         # schema edit that breaks projection fails the flake.
         checks.projection-freshness =
+          let
+            source = fileset.toSource {
+              root = ./.;
+              fileset = fileset.unions (rendererSources ++ [ ./scripts/render-project ]);
+            };
+          in
           pkgs.runCommand "projection-freshness"
             {
               nativeBuildInputs = [
@@ -761,7 +791,7 @@
               ];
             }
             ''
-              cp -r ${./.} repo
+              cp -r ${source} repo
               chmod -R u+w repo
               cd repo
               patchShebangs scripts

@@ -538,6 +538,13 @@ section, and each change that needs review. It is sized for one pull request
 comment, and design text appears in it only inside code spans. Its first line
 is `<!-- design-review changes=N -->`.
 
+A layer with no design documents counts as an empty layer, and so does a
+`--base` revision with nothing at the layer path, such as the base of the pull
+request that adopts the layer. Against an empty base, the report lists every
+record in the working tree as added. The HTML report and the summary name the
+empty side, and `--pdf` writes no PDF for it. A layer path missing from the working tree, or an
+explicit before path that does not exist, is still an error.
+
 #### Review design changes in pull requests
 
 A pull request that changes the design gets one comment from the **Design

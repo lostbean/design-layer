@@ -222,4 +222,114 @@ if "$APP" "$APP_FIXTURE" "$APP_FIXTURE" >"$WORK/duplicate.out" 2>"$WORK/duplicat
   exit 1
 fi
 rg -q 'duplicate diagram review-id' "$WORK/duplicate.err"
-echo "design-review: Git, cross-section identity, PDF companions, the summary and duplicate detection passed"
+
+# The change that adopts a layer compares against a base with no layer.
+ADOPT="$WORK/adopt"
+ADOPT_LAYER="$ADOPT/docs/design"
+mkdir -p "$ADOPT/docs"
+git -C "$ADOPT" init -q
+echo "Before the design layer." >"$ADOPT/README.md"
+git -C "$ADOPT" add README.md
+git -C "$ADOPT" -c user.name=Test -c user.email=test@example.invalid commit -qm Before
+mkdir "$ADOPT_LAYER"
+cat >"$ADOPT_LAYER/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [Adoption fixture]
+#let body = [
+  #section(title: [Adoption plan], body: [
+    #unit(
+      id: "review-app",
+      title: "Review app",
+      overview: [Compares two revisions of a layer.],
+      interface: ([`review <layer> --base <rev>`],),
+      invariants: ([Every record of the working tree is reported.],),
+      side-effects: (),
+      verification: [The self-tests.],
+      paths: ("scripts",),
+    )
+  ])
+  #section(title: [Delivery], visual: diagram-native(
+    review-id: "adoption-flow", altitude: "L3",
+    nodes: ((id: "draft", label: [Draft], pos: (0, 0)),
+            (id: "adopt", label: [Adopt], pos: (1, 0))),
+    edges: (("draft", "adopt", "merges"),),
+  ), body: [Publish.])
+]
+EOF
+cat >"$ADOPT_LAYER/CONTEXT.typ" <<'EOF'
+#let terms = (
+  (slug: "term-adoption", title: [Adoption], body: [The change that adds a layer.]),
+)
+EOF
+"$APP" "$ADOPT_LAYER" --base HEAD --format json >"$WORK/adopt.json"
+EMPTY="$WORK/empty/docs/design"
+mkdir -p "$EMPTY"
+"$APP" "$EMPTY" "$ADOPT_LAYER" --format json >"$WORK/explicit.json"
+"$APP" "$ADOPT_LAYER" "$EMPTY" --format json >"$WORK/emptied.json"
+python3 - "$WORK/adopt.json" "$WORK/explicit.json" "$WORK/emptied.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report, explicit, emptied = (json.loads(Path(path).read_text()) for path in sys.argv[1:])
+changes = report["changes"]
+assert changes == explicit["changes"], (changes, explicit["changes"])
+removed = emptied["changes"]
+assert [row["path"] for row in removed] == [row["path"] for row in changes], removed
+assert all(row["kind"] == "removed" and row["after"] is None for row in removed), removed
+assert changes and all(row["kind"] == "added" and row["before"] is None for row in changes), changes
+assert report["coverage"]["before"] == {}, report
+added = {row["path"][0]: row for row in changes}
+assert set(added) == {"document Adoption fixture", "term Adoption", "diagram adoption-flow"}, added
+document = json.dumps(added["document Adoption fixture"]["after"])
+for name in ("Adoption plan", "Delivery", "review-app"):
+    assert name in document, name
+assert added["term Adoption"]["after"]["slug"] == "term-adoption", added
+assert added["diagram adoption-flow"]["anchor"] == "diagram/adoption-flow", added
+PY
+
+# An empty side is neither evaluated nor rendered, so it has no PDF. That holds
+# for a base without the path and for an existing layer without documents.
+for review in adopt explicit; do
+  outputs=(--pdf -o "$WORK/$review.html" --summary "$WORK/$review.md")
+  if [ "$review" = adopt ]; then
+    trace_review "$ADOPT_LAYER" --base HEAD "${outputs[@]}"
+  else
+    trace_review "$EMPTY" "$ADOPT_LAYER" "${outputs[@]}"
+  fi
+  rg -q '^`[^`]+` has no design layer, so it is compared as an empty one\.$' "$WORK/$review.md"
+  printf 'compile\nquery\n' | cmp - <(sort "$REVIEW_TEST_CALLS")
+  test -s "$WORK/$review-after.pdf"
+  test ! -e "$WORK/$review-before.pdf"
+  rg -q 'After PDF' "$WORK/$review.html"
+  if rg -q 'Before PDF' "$WORK/$review.html"; then
+    echo "review linked a before PDF for an empty layer" >&2
+    exit 1
+  fi
+  rg -q 'has no design layer, so it is compared as an empty one' "$WORK/$review.html"
+  python3 - "$WORK/adopt.json" "$WORK/$review.html" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+changes = json.loads(Path(sys.argv[1]).read_text())["changes"]
+classes = re.findall(r'<article class="([^"]+)">', Path(sys.argv[2]).read_text())
+assert classes == ["added"] * len(changes), classes
+PY
+done
+
+# A missing working-tree layer is an error, whether or not the base has one.
+if "$APP" "$ADOPT/docs/missing" --base HEAD --format json >"$WORK/missing.out" 2>"$WORK/missing.err"; then
+  echo "review accepted a working tree without a layer" >&2
+  exit 1
+fi
+rg -q 'design source does not exist: .*/adopt/docs/missing$' "$WORK/missing.err"
+mv "$LAYER" "$WORK/held-layer"
+if "$APP" "$LAYER" --base HEAD --format json >"$WORK/removed.out" 2>"$WORK/removed.err"; then
+  echo "review accepted a working tree whose layer was removed" >&2
+  exit 1
+fi
+mv "$WORK/held-layer" "$LAYER"
+rg -q 'design source does not exist: .*/repo/docs/design$' "$WORK/removed.err"
+echo "design-review: Git, cross-section identity, PDF companions, the summary, duplicate detection and missing layers passed"

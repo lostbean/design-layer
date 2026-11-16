@@ -129,7 +129,19 @@ class Revision:
             renderer_library(entry.parent)
         return cls(entry)
 
+    @classmethod
+    def absent(cls, entry: Path) -> "Revision":
+        """A base revision with nothing at the path, such as one before adoption."""
+        return cls(entry, LayerSource(entry, ()))
+
+    @property
+    def empty(self) -> bool:
+        """A layer without design documents has no records and no document."""
+        return self.source is not None and not self.source.documents
+
     def evaluate(self) -> list[object]:
+        if self.empty:
+            return []
         if self.source is not None:
             assert self.library is not None
             return query_layer(self.source, self.library, review=True)
@@ -163,6 +175,7 @@ class Revision:
 
 
 def render_companions(pool, before, after, changes, scratch):
+    """Render a PDF for each side that has a design document."""
     diagrams = sorted(
         {
             change["anchor"].removeprefix("diagram/")
@@ -170,27 +183,32 @@ def render_companions(pool, before, after, changes, scratch):
             if change["anchor"] and change["kind"] != "needs-review"
         }
     )
-    targets = [scratch / "before.pdf", scratch / "after.pdf"]
     if before is after:
-        before.render(targets[0], diagrams)
-        targets[1] = targets[0]
-    else:
-        list(
-            pool.map(
-                lambda revision, target: revision.render(target, diagrams),
-                (before, after),
-                targets,
-            )
+        if before.empty:
+            return {}
+        target = scratch / "before.pdf"
+        before.render(target, diagrams)
+        return {"before": target, "after": target}
+    revisions = {
+        side: revision
+        for side, revision in (("before", before), ("after", after))
+        if not revision.empty
+    }
+    targets = {side: scratch / f"{side}.pdf" for side in revisions}
+    list(
+        pool.map(
+            lambda side: revisions[side].render(targets[side], diagrams), revisions
         )
+    )
     return targets
 
 
 def publish_companions(outputs, targets):
     links = {}
-    for (side, output), target in zip(outputs.items(), targets, strict=True):
+    for side, target in targets.items():
         with target.open("rb") as stream:
-            write_new_output(output, stream)
-        links[side] = quote(output.name)
+            write_new_output(outputs[side], stream)
+        links[side] = quote(outputs[side].name)
     return links
 
 
@@ -240,19 +258,39 @@ def main(argv):
             after_entry = (args.after or args.before).resolve()
             if args.base is not None:
                 assert scratch is not None
+                # The working tree must hold the layer even when the base has
+                # none, so prepare it before extracting the base.
+                after = Revision.prepare(after_entry)
                 before_entry, base_label = base_snapshot(
                     after_entry, args.base, scratch
                 )
+                # A base from before the layer was adopted has nothing at
+                # the path. It is an empty layer, so the adopting change
+                # reviews as added.
+                before = (
+                    Revision.prepare(before_entry)
+                    if before_entry.exists()
+                    else Revision.absent(before_entry)
+                )
             else:
                 before_entry, base_label = args.before.resolve(), str(args.before)
-            before = Revision.prepare(before_entry)
-            if before_entry == after_entry:
-                after = before
+                before = Revision.prepare(before_entry)
+                after = (
+                    before
+                    if before_entry == after_entry
+                    else Revision.prepare(after_entry)
+                )
+            if before is after:
                 old = new = before.evaluate()
             else:
-                after = Revision.prepare(after_entry)
                 old, new = pool.map(Revision.evaluate, (before, after))
 
+            sides = (
+                {"before": before}
+                if after is before
+                else {"before": before, "after": after}
+            )
+            empty = [side for side, revision in sides.items() if revision.empty]
             changes = compare(old, new)
             before_coverage = coverage(old)
             report = {
@@ -281,11 +319,12 @@ def main(argv):
             output = (
                 json.dumps(report, indent=2, ensure_ascii=False) + "\n"
                 if args.format == "json"
-                else render_viewer(report, pdf_links, pdf_error)
+                else render_viewer(report, pdf_links, pdf_error, empty)
             )
             if args.summary:
                 write_new_output(
-                    args.summary, render_summary(report, pdf_error).encode()
+                    args.summary,
+                    render_summary(report, pdf_error, empty=empty).encode(),
                 )
             if args.output:
                 write_new_output(args.output, output.encode())

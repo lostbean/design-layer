@@ -361,7 +361,12 @@ def code_span(text, table=False):
     return span.replace("|", "\\|") if table else span
 
 
-def render_summary(report, pdf_error=None, limit=SUMMARY_ROWS):
+def empty_notice(label):
+    """Name a side with no design layer, such as the base before adoption."""
+    return f"{label} has no design layer, so it is compared as an empty one."
+
+
+def render_summary(report, pdf_error=None, limit=SUMMARY_ROWS, empty=()):
     """A Markdown summary short enough to post as one pull request comment."""
     changes = report["changes"]
     uncertain = [item for item in changes if item["kind"] == "needs-review"]
@@ -374,6 +379,8 @@ def render_summary(report, pdf_error=None, limit=SUMMARY_ROWS):
         "",
         f"**{len(changes) - len(uncertain)} confirmed · {len(uncertain)} need review**",
     ]
+    for side in empty:
+        lines += ["", empty_notice(code_span(source[side]))]
     if pdf_error:
         lines += ["", "The before and after PDFs could not be rendered."]
     if changes:
@@ -412,7 +419,7 @@ def render_summary(report, pdf_error=None, limit=SUMMARY_ROWS):
     return "\n".join(lines) + "\n"
 
 
-def render_viewer(report, pdf_links, pdf_error):
+def render_viewer(report, pdf_links, pdf_error, empty=()):
     """A portable HTML report with escaped data and no remote assets."""
     from html import escape
 
@@ -457,8 +464,15 @@ def render_viewer(report, pdf_links, pdf_error):
         if changes
         else ""
     )
-    warning = f'<p role="status">{escape(pdf_error)}</p>' if pdf_error else ""
     source = report["sources"]
+    warning = "".join(
+        f'<p role="status">{escape(message)}</p>'
+        for message in (
+            *(empty_notice(source[side]) for side in empty),
+            pdf_error,
+        )
+        if message
+    )
     limitation = ""
     if any(report["coverage"].values()):
         limitation = "<p>Native figures and mathematical equivalence may require manual review.</p>"

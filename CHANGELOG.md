@@ -111,3 +111,6 @@
   `--pdf` too. It writes no PDF for that side, where it used to fail to render
   one and exit 2. The HTML report and the `--summary` comment name the side
   that has no layer.
+- The shared render function refuses a layer with no `design.typ` by name, as
+  the `render` app already did, and writes nothing. A caller other than the
+  app used to get a Typst type error instead.

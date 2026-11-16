@@ -10,16 +10,15 @@ from importlib.machinery import SourceFileLoader
 import math
 import os
 import re
-import subprocess
 import sys
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
-from typst_policy import command as typst_command
-from typst_policy import environment as typst_environment
+from design_output import write_new_output
+from design_semantics import SEMANTIC_LABEL as LABEL, query_layer
+from design_source import ProjectionError, ProjectionOperationalError, projection_layer, renderer_library
 
 
 USAGE = (
@@ -31,7 +30,6 @@ USAGE = (
 # The modes that emit one selected part of the projection. They share the
 # output and digest-guard behaviour, so every rule about them names this set.
 SELECTOR_MODES = frozenset({"section", "unit", "path"})
-LABEL = "<design-semantic>"
 # A guideline note is a diagnostic the compile records for `lint`; it is never
 # document content, and `render` and `check` accept a layer that carries one.
 GUIDELINE_LABEL = "<design-guideline>"
@@ -126,14 +124,6 @@ SEMANTIC_FIELDS = {
 # Markdown has six heading levels, and a unit's heading level is its depth. A
 # unit nested past the sixth level has no heading the section index can read.
 MAX_HEADING_LEVEL = 6
-
-
-class ProjectionError(Exception):
-    """The source compiled but its semantic tree cannot be represented."""
-
-
-class ProjectionOperationalError(Exception):
-    """The projection could not run because its execution inputs are invalid."""
 
 
 @dataclass
@@ -344,167 +334,6 @@ def normalize_query_path(raw: str) -> str:
             f"glob segment, got {raw!r}"
         )
     return value
-
-
-def typst_string(path: Path) -> str:
-    value = str(path).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{value}"'
-
-
-def aggregate_module() -> object:
-    """Load the aggregate's shared corpus and glossary implementation once."""
-    aggregate_path = Path(__file__).with_name("design-aggregate")
-    loader = SourceFileLoader("design_aggregate_for_context", str(aggregate_path))
-    spec = importlib.util.spec_from_loader("design_aggregate_for_context", loader)
-    if spec is None or spec.loader is None:
-        raise ProjectionOperationalError("cannot load aggregate corpus discovery")
-    aggregate = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(aggregate)
-    except Exception as error:
-        raise ProjectionOperationalError("cannot load aggregate corpus discovery") from error
-    return aggregate
-
-
-def corpus_documents(layer: Path) -> list[tuple[str, Path]]:
-    """Reuse the aggregate's deterministic design-document discovery."""
-    aggregate = aggregate_module()
-    try:
-        discovered = aggregate.contexts_of(str(layer))
-    except OSError as error:
-        raise ProjectionOperationalError(str(error)) from error
-    except Exception as error:
-        raise ProjectionError(str(error)) from error
-    return [("root" if name is None else name, Path(path)) for name, path in discovered]
-
-
-def corpus_terms(layer: Path, documents: list[tuple[str, Path]]) -> list[dict[str, object]]:
-    """Reuse the aggregate's balanced Typst glossary seam."""
-    aggregate = aggregate_module()
-    source_documents = [
-        (None if name == "root" else name, str(path)) for name, path in documents
-    ]
-    try:
-        return aggregate.typst_glossary_terms(str(layer), source_documents)
-    except OSError as error:
-        raise ProjectionOperationalError(str(error)) from error
-    except Exception as error:
-        raise ProjectionError(str(error)) from error
-
-
-def renderer_library(layer: Path) -> Path:
-    """Resolve and validate the renderer library used by the projection."""
-    configured = os.environ.get("DESIGN_LIB_DIR")
-    library_dir = Path(configured) if configured else layer / ".render"
-    library = library_dir / "designlib.typ"
-    if not library.is_file():
-        raise ProjectionOperationalError(f"projected library not found: {library}")
-    if configured:
-        aggregate = aggregate_module()
-        try:
-            result = aggregate._refuse_divergent_layer_lib(str(layer), str(library))
-        except Exception as error:
-            raise ProjectionOperationalError("cannot compare the projected libraries") from error
-        if result:
-            raise ProjectionOperationalError(
-                "the layer's projected library differs from the bundled library"
-            )
-    return library.resolve()
-
-
-def semantic_probe(layer: Path, scratch: Path, library: Path) -> Path:
-    probe = scratch / "probe.typ"
-    documents = corpus_documents(layer)
-    terms = corpus_terms(layer, documents)
-    lines = []
-    lines.append(f'#import {typst_string(Path(os.path.relpath(library, scratch)))}: *')
-    term_titles = ", ".join(
-        f'{typst_string(Path(term["slug"]))}: {typst_string(Path(term["title_text"]))}'
-        for term in sorted(terms, key=lambda item: str(item["slug"]))
-    )
-    term_owners = ", ".join(
-        f'{typst_string(Path(term["slug"]))}: {typst_string(Path(term["context"]))}'
-        for term in sorted(terms, key=lambda item: str(item["slug"]))
-    )
-    context_names = ", ".join(
-        typst_string(Path(name)) for name, _ in documents if name != "root"
-    )
-    lines.extend(
-        [
-            "#declare-vocabulary(",
-            f"  terms: ({term_titles + (',' if term_titles else '')}),",
-            f"  term-owners: ({term_owners + (',' if term_owners else '')}),",
-            f"  contexts: ({context_names + (',' if context_names else '')}),",
-            ")",
-        ]
-    )
-    for index, (name, source) in enumerate(documents):
-        relative = Path(os.path.relpath(source, scratch))
-        module = f"document_{index}"
-        lines.extend(
-            [
-                f"#import {typst_string(relative)} as {module}",
-                f"#let values_{index} = dictionary({module})",
-                f'#let title_{index} = if "title" in values_{index} {{ values_{index}.title }} else {{ [{name} context] }}',
-                # `context_command` is the one binding the folder-contract
-                # generator reads off a design module. It travels in the
-                # document record so that generator needs no second probe.
-                f'#metadata((kind: "document", name: "{name}", level: {1 if index == 0 else 2}, title: title_{index}, body: {module}.body, "context-command": values_{index}.at("context_command", default: none))) <design-semantic>',
-            ]
-        )
-    lines.append("")
-    for term in sorted(terms, key=lambda item: (str(item["context"]), str(item["slug"]))):
-        lines.append(
-            f'#metadata((kind: "term", owner: {typst_string(Path(str(term["context"])))}, '
-            f'slug: {typst_string(Path(str(term["slug"])))}, '
-            f'title: {term["title_src"]}, body: {term["body_src"]})) <design-semantic>'
-        )
-    lines.append("")
-    probe.write_text("\n".join(lines), encoding="utf-8")
-    return probe
-
-
-def query_semantics(layer: Path, *, review: bool = False) -> list[object]:
-    library = renderer_library(layer)
-    local_library = layer / ".render" / "designlib.typ"
-    if review and local_library.is_file():
-        library = local_library.resolve()
-    # Keep the probe one directory below the layer root, matching the
-    # aggregate's `.render/_aggregate.typ` location. Glossary bodies are
-    # intentionally spliced source and may import `../refs.typ`; moving the
-    # probe beside `docs/` changes that relative base and breaks valid layers.
-    with tempfile.TemporaryDirectory(prefix="design-context.", dir=layer) as name:
-        scratch = Path(name)
-        probe = semantic_probe(layer, scratch, library)
-        env = typst_environment()
-        root = os.path.commonpath((str(layer.parent), str(scratch), str(library)))
-        process = subprocess.run(
-            [
-                typst_command(),
-                "query",
-                str(probe),
-                LABEL,
-                "--field",
-                "value",
-                "--input",
-                "context=1",
-                *(["--input", "review-projection=1"] if review else []),
-                "--root",
-                root,
-            ],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        if process.returncode != 0:
-            raise ProjectionError(process.stderr.strip() or "Typst semantic query failed")
-        try:
-            result = json.loads(process.stdout)
-        except json.JSONDecodeError as error:
-            raise ProjectionError("Typst returned invalid semantic JSON") from error
-        if not isinstance(result, list):
-            raise ProjectionError("Typst semantic query did not return an array")
-        return result
 
 
 def content_text(
@@ -2599,8 +2428,9 @@ def layer_units(layer: Path) -> LayerUnits:
 
 
 def _read_layer(layer: Path) -> _LayerSemantics:
-    documents_expected = corpus_documents(layer)
-    records = query_semantics(layer)
+    source = projection_layer(layer)
+    documents_expected = source.named_documents
+    records = query_layer(source, renderer_library(layer))
     validate_state_links(records)
     documents = [record for record in records if isinstance(record, dict) and record.get("kind") == "document"]
     if len(documents) != len(documents_expected):
@@ -3090,23 +2920,6 @@ def selected_path(
     )
     guard_digest(projection.markdown, selected, f"path {query}", expect_digest)
     return selected
-
-
-def write_new_output(output: Path, markdown: bytes) -> None:
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{output.name}.", dir=output.parent, delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            stream.write(markdown)
-        os.link(temporary, output)
-    finally:
-        if temporary is not None:
-            try:
-                temporary.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def main(argv: list[str]) -> int:

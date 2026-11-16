@@ -105,7 +105,29 @@ edge = next(row for row in report["changes"] if row["anchor"] == "diagram/publis
 assert edge["before"]["from"] == "review" and edge["after"]["from"] == "publish"
 PY
 
-"$APP" "$LAYER" --base HEAD --pdf -o "$WORK/review.html"
+# Observe only the external Typst boundary while exercising the public review CLI.
+export REVIEW_TEST_TYPST="$(type -P typst)"
+export REVIEW_TEST_CALLS="$WORK/typst-calls"
+mkdir "$WORK/bin"
+{
+  printf '#!%s\n' "$BASH"
+  cat <<'SH'
+printf '%s\n' "$1" >>"$REVIEW_TEST_CALLS"
+exec "$REVIEW_TEST_TYPST" "$@"
+SH
+} >"$WORK/bin/typst"
+chmod +x "$WORK/bin/typst"
+
+trace_review() {
+  : >"$REVIEW_TEST_CALLS"
+  PATH="$WORK/bin:$PATH" python3 "$ROOT/scripts/design-review" "$@"
+}
+
+trace_review "$LAYER" "$LAYER" --format json >"$WORK/same.json"
+printf 'query\n' | cmp - "$REVIEW_TEST_CALLS"
+
+trace_review "$LAYER" --base HEAD --pdf -o "$WORK/review.html"
+printf 'compile\ncompile\nquery\nquery\n' | sort | cmp - <(sort "$REVIEW_TEST_CALLS")
 rg -q 'Before PDF' "$WORK/review.html"
 rg -q 'Diagram marked where it appears' "$WORK/review.html"
 for pdf in "$WORK/review-before.pdf" "$WORK/review-after.pdf"; do

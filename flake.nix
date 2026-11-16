@@ -462,6 +462,7 @@
           settings.formatter.ruff-format.includes = [
             "scripts/layer-integrity"
             "scripts/design-units"
+            "scripts/design-review"
           ];
           settings.global.excludes = [
             # The widget gallery is the renderer-drift TEST FIXTURE, and a

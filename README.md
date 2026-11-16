@@ -515,7 +515,9 @@ emit design-layer semantic records. Use `--format json` for the versioned
 `design-review/v1` result. A successful comparison exits zero even when it
 finds changes. Supply fresh output paths.
 
-The report reads the same evaluated Typst records as the Markdown projection.
+Typst emits structured records for the review, including diagram IDs. Python
+compares those records directly. The Markdown projection uses the same layer
+loader and Typst query code to produce reading material.
 Diagram coordinates and decorative tints in the tested widgets are
 presentation. It compares directed edges, labels, data values, and sequence
 order. Changed native drawing code and formula bodies need manual review.
@@ -525,8 +527,10 @@ Add `--pdf` to write a before and an after PDF beside the HTML report. A stable,
 unique `review-id:` on `diagram` or `diagram-native` allows comparison across
 sections and adds a margin mark where a changed diagram appears. Use letters,
 digits, underscores, or hyphens in the ID. Every change still appears in the
-report if it has no PDF mark. Without `--pdf`, the command only evaluates the
-projections and formats the report.
+report if it has no PDF mark. The report evaluates each input once, sharing the
+result when both paths resolve to the same source. With `--pdf`, it compiles
+each distinct source once for the companions and reports compilation errors.
+Use the regular render command for guideline advisories.
 
 For CI, pass the PR merge-base commit as `--base` and upload the HTML and its
 optional PDF companions together from a temporary directory. The JSON output

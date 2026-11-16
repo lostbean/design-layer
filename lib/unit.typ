@@ -75,13 +75,18 @@
 
 // A UNIT FIELD IS PROSE, AND ONLY PROSE. The five sections are read by three
 // carriers — the page, the Markdown projection, and a folder's `AGENTS.md` —
-// and the last two write a text section as one paragraph and a list section as
-// one line per item. So a field holds what a sentence holds: text, emphasis,
+// and the last two write a text section as a paragraph and a list section as
+// one entry per item. So a field holds what a sentence holds: text, emphasis,
 // inline code, a link, a reference, mathematics, and the library's own inline
-// citations. Anything else has no form in Markdown — a list, a footnote, a
-// box, a heading, a `context` — and the page would draw it while the
-// projection and the generator stopped on a layer the render had accepted.
-// The render refuses it here, naming the content function.
+// citations — and one more thing a contract often needs, a CODE BLOCK, such as
+// the command that verifies it. The projection writes a code block as a
+// fenced block, with a fence longer than any run of backticks in its text, so
+// the block ends where it does and never swallows what follows. The title is
+// the exception: it is one heading line, and a code block there is refused.
+// Anything else has no form in Markdown — a list, a footnote, a box, a
+// heading, a `context` — and the page would draw it while the projection and
+// the generator stopped on a layer the render had accepted. The render
+// refuses it here, naming the content function.
 //
 // THE RENDER IS THE STRICTER OF THE TWO, and that is the guarantee: whatever
 // passes here the projection can express. The reverse does not hold. The
@@ -153,25 +158,34 @@
   none
 }
 
+// Whether `value` holds a code block: raw text set as a block.
+#let _unit-code-block(value) = {
+  if type(value) == array { return value.any(_unit-code-block) }
+  if type(value) != content { return false }
+  if value.func() == raw { return value.at("block", default: false) == true }
+  let fields = value.fields()
+  _UNIT-PROSE-CHILDREN.any(key => _unit-code-block(fields.at(key, default: none)))
+}
+
 #let _unit-check-prose(id, where, value) = {
   let found = _unit-not-prose(value)
   if found == none { return }
   if found in _UNIT-LISTS {
     _unit-fail(id, where + " holds a list — unsupported Typst content "
       + "function 'item' in a unit field. The Markdown projection and a "
-      + "folder's AGENTS.md carry a text section as one paragraph and a list "
-      + "section as one line per item, so a list written inside a field has "
+      + "folder's AGENTS.md carry a text section as a paragraph and a list "
+      + "section as one entry per item, so a list written inside a field has "
       + "no form there. State each point as its own item of interface, "
       + "invariants or side-effects, and write the other fields as sentences")
   }
   _unit-fail(id, where + " holds " + found + " — unsupported Typst content "
     + "function '" + found + "' in a unit field. A unit field is prose: "
-    + "text, emphasis, inline code, a link to a URL or a path, a reference, "
-    + "mathematics, and the library's inline citations (term, ctx, adr, "
-    + "pill, lens-pill). The Markdown projection and a folder's AGENTS.md "
-    + "carry a field as a paragraph or as one line of a list, and this "
-    + "content has no form there. Say it in words, or move it into the "
-    + "unit's body")
+    + "text, emphasis, inline code, a code block, a link to a URL or a "
+    + "path, a reference, mathematics, and the library's inline citations "
+    + "(term, ctx, adr, pill, lens-pill). The Markdown projection and a "
+    + "folder's AGENTS.md carry a field as a paragraph or as one entry of a "
+    + "list, and this content has no form there. Say it in words, or move "
+    + "it into the unit's body")
 }
 
 // ONE PATH, by the spelling rule the schema declares. Whether the path EXISTS
@@ -242,6 +256,12 @@
     _unit-fail(id, "title must be a string or content, got " + repr(title))
   }
   _unit-check-prose(id, "title", title)
+  if _unit-code-block(title) {
+    _unit-fail(id, "title holds a code block — a title is the one line that "
+      + "heads the unit's contract, in the page, the Markdown projection, and "
+      + "a folder's AGENTS.md alike. Write the code inline, with single "
+      + "backticks, or move the block into a field or the unit's body")
+  }
   for s in UNIT-SECTIONS {
     let value = data.at(s.field)
     if s.shape == "list" {

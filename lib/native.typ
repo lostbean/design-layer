@@ -236,9 +236,24 @@
 // the unit, so a deep unit could push one past the sixth level, where the
 // outline and the numbering have no form for it. That fails naming the
 // heading rather than rendering it.
+//
+// A heading CALLED with its own level, `#heading(level: 2)[...]`, ignores the
+// offset. At or above the unit's own level it would leave the unit: the page
+// would number what follows it, the unit's nested units among it, under that
+// heading, while the projection keeps them in the unit. It fails naming both
+// levels, as a section does.
 #let _hosted-unit(level, max, body) = {
   set heading(offset: level, depth: 1)
   show heading: it => {
+    if it.level <= level {
+      panic("unit block: a heading inside a unit body is drawn at level "
+        + str(it.level) + ", at or above the unit that holds it, which is at "
+        + "level " + str(level) + ", so the heading would leave the unit: the "
+        + "page would number what follows it under the heading while the "
+        + "Markdown projection keeps it in the unit. Write the heading in "
+        + "markup (`= Title`) or call it without a level, and it nests below "
+        + "the unit; or give the structure to a nested unit")
+    }
     if it.level > max {
       panic("unit block: a heading inside a unit body is drawn at level "
         + str(it.level) + " — a design document has " + str(max)

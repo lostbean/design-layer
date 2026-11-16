@@ -654,9 +654,9 @@ def content_text(
             raise ProjectionError(f"raw without string value at {path}")
         if value.get("block") is True:
             language = value.get("lang", "")
-            if not isinstance(language, str):
-                raise ProjectionError(f"raw block language is not text at {path}")
-            return f"\n\n```{language}\n{text}\n```\n"
+            if not isinstance(language, str) or "`" in language or "\n" in language:
+                raise ProjectionError(f"raw block language is not one line of text at {path}")
+            return fenced_code(language, text)
         return f"`{text}`"
     if function == "link":
         destination = value.get("dest")
@@ -735,6 +735,12 @@ def field_text(
     return content_text(value, path, term_titles, context_names).strip()
 
 
+# A fenced code block as the projection writes one: the opening fence at the
+# start of a line, possibly indented under a list item, and a closing line of
+# at least as many backticks and nothing else.
+FENCED_BLOCK_RE = re.compile(r"(?ms)^[ \t]*(`{3,})[^\n]*\n.*?^[ \t]*\1`*[ \t]*$")
+
+
 def _normalize_fragment(value: str) -> str:
     """Normalize prose while protecting authored raw Markdown fragments."""
     protected: list[str] = []
@@ -743,7 +749,8 @@ def _normalize_fragment(value: str) -> str:
         protected.append(match.group(0))
         return f"\x00raw-{len(protected) - 1}\x00"
 
-    value = re.sub(r"```[^\n]*\n.*?\n```", protect, value, flags=re.DOTALL)
+    value = _CONTRACT_RE.sub(protect, value)
+    value = FENCED_BLOCK_RE.sub(protect, value)
     value = re.sub(r"`[^`\n]*`", protect, value)
     value = re.sub(
         r"(?m)^[ \t]{2,}(?:(?:[-*+] |\d+[.)] )|[A-Z][A-Za-z _-]*: ).*$",
@@ -819,6 +826,17 @@ def markdown_code_block(language: object, source: object, path: str) -> str:
             raise ProjectionError(f"raw code block has no text at {path}.src")
     else:
         raise ProjectionError(f"code block source is not literal text at {path}.src")
+    return fenced_code(language, text)
+
+
+def fenced_code(language: str, text: str) -> str:
+    """A fenced code block that its own text cannot close.
+
+    The fence is one backtick longer than the longest run of backticks the
+    text holds, and never shorter than three. A fixed three-backtick fence
+    around text that holds three backticks ends where the text does, and
+    everything after it — the next unit's heading among it — is read as code.
+    """
     runs = [len(match.group(0)) for match in re.finditer(r"`+", text)]
     fence = "`" * max(3, (max(runs) + 1) if runs else 3)
     return f"\n\n{fence}{language}\n{text}\n{fence}\n"
@@ -884,19 +902,18 @@ def design_unit_sections(
         if shape == "list":
             if not isinstance(raw, list):
                 raise ProjectionError(f"unit section {field!r} is not a list at {path}")
-            # An item is one line of a Markdown list, so its line breaks fold
-            # to spaces. Each fragment is normalized HERE, the way the whole
-            # projection is normalized later, so a folder contract — which is
-            # never part of that later pass — carries the same text.
+            # An item is one entry of a Markdown list, so the line breaks of
+            # its prose fold to spaces; a code block it holds keeps its lines.
+            # Each fragment is normalized HERE, the way the whole projection
+            # is normalized later, so a folder contract — which is never part
+            # of that later pass — carries the same text.
             items = [
-                re.sub(
-                    r"\s*\n\s*",
-                    " ",
+                _fold_item(
                     _normalize_fragment(
                         content_text(
                             item, f"{path}.{field}[{position}]", term_titles, context_names
                         )
-                    ).strip(),
+                    ).strip()
                 )
                 for position, item in enumerate(raw)
             ]
@@ -911,6 +928,32 @@ def design_unit_sections(
                 raise ProjectionError(f"unit section {field!r} is empty at {path}")
             sections.append(UnitSection(field, label, shape, text, []))
     return sections
+
+
+def _fold_item(text: str) -> str:
+    """One list item's text: its prose on one line, each code block whole.
+
+    A code block in a field is projected as a fenced block. Folding its line
+    breaks with the prose around it would join the fence, the code, and the
+    closing fence into one line, so the prose between blocks is folded and
+    each block is kept as its own paragraph of the item.
+    """
+    blocks: list[str] = []
+    position = 0
+    for match in FENCED_BLOCK_RE.finditer(text):
+        prose = re.sub(r"\s*\n\s*", " ", text[position : match.start()]).strip()
+        if prose:
+            blocks.append(prose)
+        blocks.append(match.group(0).strip("\n"))
+        position = match.end()
+    prose = re.sub(r"\s*\n\s*", " ", text[position:]).strip()
+    if prose:
+        blocks.append(prose)
+    return "\n\n".join(blocks)
+
+
+def _opens_with_fence(text: str) -> bool:
+    return FENCED_BLOCK_RE.match(text) is not None
 
 
 def design_unit_empty_label(value: dict[str, object], path: str) -> str:
@@ -933,19 +976,32 @@ def design_unit_contract_markdown(sections: list[UnitSection], empty_label: str)
     This is the one rendering of a unit's contract. The projection places it
     under the unit's heading and the folder-contract generator places the same
     text in a folder's AGENTS.md, so the two cannot drift apart.
+
+    A code block in a field stays a fenced block. A fence opens only at the
+    start of a line, so a text section that begins with one puts its label on
+    a line of its own, and an item's later lines are indented under its
+    marker, where Markdown keeps them inside the item.
     """
     blocks: list[str] = []
     for section in sections:
         if section.shape == "list":
             if section.items:
                 blocks.append(
-                    f"{section.label}:\n\n" + "\n".join(f"- {item}" for item in section.items)
+                    f"{section.label}:\n\n"
+                    + "\n".join(_list_item(item) for item in section.items)
                 )
             else:
                 blocks.append(f"{section.label}: {empty_label}")
+        elif _opens_with_fence(section.text):
+            blocks.append(f"{section.label}:\n\n{section.text}")
         else:
             blocks.append(f"{section.label}: {section.text}")
     return "\n\n".join(blocks)
+
+
+def _list_item(item: str) -> str:
+    first, *rest = item.split("\n")
+    return "\n".join([f"- {first}", *(f"  {line}" if line else "" for line in rest)])
 
 
 # WHERE A UNIT BEGINS AND ENDS IN THE PROJECTION. A unit's heading tells where
@@ -957,7 +1013,18 @@ def design_unit_contract_markdown(sections: list[UnitSection], empty_label: str)
 # character around the unit id: no authored text holds one, and none of the
 # whitespace rules the projection normalizes with reads one.
 _UNIT_MARK = "\x01"
-_UNIT_MARK_RE = re.compile("\x01unit-(open|close):([^\x01]*)\x01")
+_UNIT_MARK_RE = re.compile("\x01unit-(open|close):([^\x01]*)\x01|[\x02\x03]")
+
+
+# A unit's contract is written already normalized, in the exact text its
+# folder contract carries. The pass that normalizes a whole document would
+# otherwise strip the indentation that keeps a list item's later lines inside
+# the item, and the projection would print the contract differently from the
+# folder. So the contract is guarded from that pass and the guard is taken
+# out with the unit marks.
+_CONTRACT_OPEN = "\x02"
+_CONTRACT_CLOSE = "\x03"
+_CONTRACT_RE = re.compile("\x02[^\x02\x03]*\x03")
 
 
 def _unit_mark(side: str, unit_id: str) -> str:
@@ -981,6 +1048,8 @@ def strip_unit_marks(marked: str) -> tuple[str, dict[str, tuple[int, int]]]:
         length += len(piece)
         position = match.end()
         side, unit_id = match.group(1), match.group(2)
+        if side is None:
+            continue  # a contract's guard: it only kept normalization out
         if side == "open":
             opened.setdefault(unit_id, length)
         elif unit_id in opened and unit_id not in spans:
@@ -1022,7 +1091,12 @@ def design_unit_markdown(
         allow_clauses,
     ).strip()
     listed = ", ".join(f"`{item}`" for item in paths) if paths else empty_label
-    parts = [f"{'#' * level} unit: {title}", f"ID: {unit_id}", f"Paths: {listed}", contract]
+    parts = [
+        f"{'#' * level} unit: {title}",
+        f"ID: {unit_id}",
+        f"Paths: {listed}",
+        _CONTRACT_OPEN + contract + _CONTRACT_CLOSE,
+    ]
     if body:
         parts.append(body)
     # The marks bracket exactly what this node wrote, so a selector can return
@@ -2359,6 +2433,13 @@ def collect_units(
     """
     found: list[UnitRecord] = []
     seen: dict[str, str] = {}
+    # How much deeper the projection writes a heading than the page draws it,
+    # for the document being walked: a context document's title is one level
+    # below the root's in the projection, and its own chapter on the page.
+    shift = 0
+    # The enclosing unit's id and the level its heading is drawn at on the
+    # page, so a heading called with its own level can be judged against it.
+    scope: list[tuple[str, int]] = []
 
     def walk(
         current: object, parent: str | None, document: str, level: int | None
@@ -2375,12 +2456,42 @@ def collect_units(
                 raise ProjectionError("semantic metadata value is not an object")
             visit(node, parent, document, level)
             return
+        if current.get("func") == "heading" and scope:
+            check_heading(current)
         for child in current.values():
             walk(child, parent, document, level)
+
+    def check_heading(heading: dict[str, object]) -> None:
+        """Refuse a heading that names a level at or above its unit's.
+
+        A heading written in markup or called with no level carries a depth
+        and nests below the unit. One that names its level — or an offset —
+        ignores the unit and is drawn at that level, where the page numbers
+        what follows under it while the projection keeps it in the unit.
+        """
+        if isinstance(heading.get("level"), int):
+            drawn = heading["level"]
+        elif isinstance(heading.get("offset"), int):
+            depth = heading.get("depth", 1)
+            drawn = heading["offset"] + (depth if isinstance(depth, int) else 1)
+        else:
+            return
+        unit_id, unit_level = scope[-1]
+        if drawn <= unit_level:
+            raise ProjectionError(
+                f"a heading inside the body of unit {unit_id!r} is drawn at "
+                f"level {drawn}, at or above the unit that holds it, which is "
+                f"at level {unit_level}, so the heading would leave the unit: "
+                "the page would number what follows it under the heading "
+                "while the Markdown projection keeps it in the unit. Write the "
+                "heading in markup (`= Title`) or call it without a level, and "
+                "it nests below the unit; or give the structure to a nested unit"
+            )
 
     def visit(
         node: dict[str, object], parent: str | None, document: str, level: int | None
     ) -> None:
+        nonlocal shift
         kind = node.get("kind")
         inner = parent
         below: dict[str, int | None] = {}
@@ -2388,6 +2499,7 @@ def collect_units(
             own = node.get("level", 1)
             if isinstance(own, int):
                 below = {"body": own + 1}
+                shift = own - 1
         elif isinstance(kind, str) and kind in _LEVEL_HOSTS:
             default, hosted = _LEVEL_HOSTS[kind]
             own = level if level is not None else default
@@ -2450,9 +2562,12 @@ def collect_units(
                 )
             )
             inner = unit_id
+            scope.append((unit_id, own - shift))
         for key, child in node.items():
             if key != "kind":
                 walk(child, inner, document, below.get(key))
+        if kind == "unit":
+            scope.pop()
 
     for record in records:
         if not isinstance(record, dict):
@@ -2596,6 +2711,10 @@ class SectionIndex:
 
 
 _FENCE_RE = re.compile(r"^[ \t]{0,3}((?:\x60{3,}|~{3,}))")
+# A fence may also open on a list item's own line, after its marker: a unit's
+# list field writes a code block that begins an item that way. It closes on a
+# line of its own, so only the opening reads past the marker.
+_ITEM_FENCE_RE = re.compile(r"^[ \t]{0,3}(?:[-*+]|[0-9]{1,9}[.)])[ \t]+((?:\x60{3,}|~{3,}))")
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*\r?\n?$")
 
 
@@ -2624,6 +2743,12 @@ def index_sections(markdown: bytes) -> SectionIndex:
             continue
         if marker is not None:
             fence = marker
+            continue
+        item_fence = _ITEM_FENCE_RE.match(line)
+        if item_fence is not None and not (
+            item_fence.group(1)[0] == "`" and "`" in line[item_fence.end() :]
+        ):
+            fence = item_fence.group(1)
             continue
         heading = _HEADING_RE.match(line)
         if heading is not None:

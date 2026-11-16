@@ -1030,14 +1030,20 @@ render naming the unit and the field.
 - **A list item is a string or a content block.** Use a content block when the
   item carries markup, a citation, or inline code.
 - **A field holds prose, and only prose**: text, emphasis, inline code, a
-  link to a URL or a path, a reference, mathematics, and the library's inline
-  citations (`#term`, `#ctx`, `#adr`, `#pill`, `#lens-pill`). Anything else
-  written inside `title:`, `overview:`, `verification:`, or one list item
-  fails the render, naming the field and the content function: a bullet,
-  numbered, or term list, a footnote, a box or any other layout call, a
-  heading, a `context` expression. The projection and a folder contract write
-  a text field as one paragraph and a list field as one line per item, so such
-  content has no form there. State each point as its own item of
+  code block, a link to a URL or a path, a reference, mathematics, and the
+  library's inline citations (`#term`, `#ctx`, `#adr`, `#pill`, `#lens-pill`).
+  A code block — a fenced block in markup, or `#raw(..., block: true)` — is
+  written to the projection and to a folder contract as a fenced block whose
+  fence is longer than any run of backticks in it: in `verification:` or
+  `overview:` below the field's label, in a list item indented under the
+  item's marker. `title:` is the exception: a title is one heading line, and a
+  code block there fails the render. Anything else written inside `title:`,
+  `overview:`, `verification:`, or one list item fails the render, naming the
+  field and the content function: a bullet, numbered, or term list, a
+  footnote, a box or any other layout call, a heading, a `context`
+  expression. The projection and a folder contract write a text field as a
+  paragraph and a list field as one entry per item, so such content has no
+  form there. State each point as its own item of
   `interface:`, `invariants:`, or `side-effects:`, and put anything else in
   the unit's body.
 - **An unknown argument fails the render**, naming it.
@@ -1171,9 +1177,14 @@ Full unit: `nix run github:lostbean/design-layer#context -- docs/design --unit b
   are read past, so a region a formatter touched is still found. It no longer
   matches a fresh generation: `--check` reports it stale and `units` writes it
   again.
-- A marker inside a fenced or indented code block is an example and is never
-  read. A marker line anywhere else that is not part of that shape, a region
-  that is never closed, and a second region each make the file **malformed**:
+- A marker inside a fenced or indented code block, or inside a raw HTML block
+  — `<pre>`, `<details>`, a comment, or any other — is an example and is
+  never read: the search for a region's opening lines and the search for its
+  closing lines both pass over such a block whole, so a copy shown there is
+  neither removed nor taken for the end of a real region. A marker line
+  anywhere else that is not part of that shape, a region that is never
+  closed — its closing lines deleted — and a second region each make the file
+  **malformed**:
   it is reported and left exactly as it is. To recover, delete the region's
   lines, from the begin marker through the end marker, and run `units` again.
 - **The target is a regular file in the listed directory.** An `AGENTS.md`
@@ -1191,9 +1202,14 @@ Full unit: `nix run github:lostbean/design-layer#context -- docs/design --unit b
 - Removing a path from a unit removes that unit from the directory's region.
   A region no unit lists is removed, with the blank line the generator placed
   above it and nothing else. The file is deleted only when it holds the region
-  alone, as the generator created it, and a `CLAUDE.md` link the generator
-  made goes with it. A file that was empty before its region was written is
-  left empty.
+  alone, as the generator created it. A file that was empty before its region
+  was written is left empty.
+- **The `CLAUDE.md` link is the generator's only in the form it creates**: a
+  symbolic link whose target is the bare name `AGENTS.md`. When the region
+  leaves the folder and `AGENTS.md` is left with nothing to read — deleted,
+  or holding only whitespace — that link is removed. When `AGENTS.md` keeps
+  text of its own, the link stays, because it still links something worth
+  reading. A `CLAUDE.md` in any other form is never touched.
 - **git's spelling of a listed directory is the file system's.** On a file
   system that folds letter case, a directory renamed in case only keeps its
   old spelling in git. A folder contract tracked that way is a violation

@@ -98,6 +98,13 @@ nix run github:lostbean/design-layer#units -- docs/design .
 unit lists, and links `CLAUDE.md` to it where none exists. `check` only
 compares; it never rewrites a stale region.
 
+The `CLAUDE.md` link is the generator's only in the form it creates — a
+symbolic link whose target is the bare name `AGENTS.md`. When a region leaves
+a folder and its `AGENTS.md` is left with nothing to read, deleted or holding
+only whitespace, `units` removes that link with it. When `AGENTS.md` keeps
+text of its own, the link stays: it still links something worth reading. A
+`CLAUDE.md` in any other form is never touched.
+
 `units` shares each file with hand-written text, so it is strict about what it
 touches:
 
@@ -106,8 +113,10 @@ touches:
   was added to: a file that was empty is left empty, and only a file `units`
   created is deleted.
 - A region is recognized by its whole generated shape. A marker shown inside a
-  code block is an example and is never read; a marker line anywhere else
-  outside that shape is reported and the file is left as it is. To recover,
+  code block or a raw HTML block — `<pre>`, `<details>`, a comment — is an
+  example and is never read, as the opening of a region or as its end; a
+  marker line anywhere else outside that shape, or a region whose closing
+  lines are missing, is reported and the file is left as it is. To recover,
   delete the region's lines and run `units` again.
 - A region a formatter touched — a space after a marker, a blank line between
   two of its lines — is still found. `check` reports it stale and `units`
@@ -277,8 +286,12 @@ and goes in the unit's body, where a nested `unit` is the next level down.
 
 Every field is required. An empty list is a legal answer and renders as `None`;
 a field left out fails the render. A field holds prose: text, emphasis, inline
-code, a link, a reference, mathematics, and the library's inline citations. A
-list, a footnote, a box, or a heading written inside one fails too: state each
+code, a code block, a link, a reference, mathematics, and the library's inline
+citations. A code block — fenced in markup, or `#raw(..., block: true)` — is
+written to the projection and to a folder contract as a fenced block, below
+the field's label or indented under a list item, with a fence longer than any
+backtick run it holds; a title, which is one heading line, holds none. A list,
+a footnote, a box, or a heading written inside a field fails too: state each
 point as its own item of a list field, and put anything else in the body.
 `paths` holds exact repo-relative directories, and a unit that only groups
 other units lists none. A unit's heading level is its depth, down to the sixth

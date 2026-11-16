@@ -8,13 +8,18 @@
   block and nested units. A missing field, a malformed or duplicate id, an
   illegal path, and content in a field that is not prose — a list, a
   footnote, a box, a heading, a `context` — fail the render; an empty list
-  renders as `None`. Units nest down to the sixth heading level — five
+  renders as `None`. A field may hold a code block, such as a verification
+  command, and the projection and a folder contract write it as a fenced
+  block with a fence longer than any backtick run in it; a title holds none. Units nest down to the sixth heading level — five
   directly in the root document's body, four inside a section, three inside a
   subsection, one fewer in a context document — and one deeper fails the
   render, the projection, and the gate's unit step alike.
 - A unit's body holds no `section` or `subsection`. Both keep their fixed
   heading level, which would sit above the unit that holds them, so the
-  render, the projection, and the gate's unit step each refuse one there.
+  render, the projection, and the gate's unit step each refuse one there. A
+  heading called with its own level at or above the unit's — such as
+  `#heading(level: 2)` in a unit at level two — is refused the same way; a
+  heading in markup, or called with no level, nests below the unit.
 - Added the `units` app. It writes each unit's contract into a generated region
   of `AGENTS.md` in every directory the unit lists, and links `CLAUDE.md` where
   none exists. `check` now also fails on a unit path that does not exist, a
@@ -23,9 +28,11 @@
   another spelling than the file system stores. It reports the tracked
   directories no unit path covers.
 - `units` writes only what it owns. A region is recognized by its whole
-  generated shape, so a marker shown in a code block is never read and any
-  other stray marker is reported, with what to do about it, and the file left
-  as it is. A region a formatter touched — a space after a marker, a blank
+  generated shape, so a marker shown in a code block or a raw HTML block —
+  `<pre>`, `<details>`, a comment — is never read, as a region's opening or
+  as its end, and any other stray marker, or a region whose closing lines are
+  missing, is reported, with what to do about it, and the file left as it
+  is. A region a formatter touched — a space after a marker, a blank
   line between two of its lines — is still found, reported stale, and written
   again. Text outside the region keeps its line endings and its final newline,
   and removing a region restores the file byte for byte: a file that was empty
@@ -34,7 +41,10 @@
   and a unit path that is not the path the file system stores, are violations;
   a file named `AGENTS.md` that holds no marker is never read. A run writes
   every folder contract or none: every new text is staged in a temporary file
-  before any target is replaced.
+  before any target is replaced, and an interrupt leaves no temporary file
+  behind. The `CLAUDE.md` link `units` creates — a symbolic link to the bare
+  name `AGENTS.md` — goes with the region when the `AGENTS.md` is left with
+  nothing to read; beside a file with text of its own it stays.
 - `units` takes `--nested-project`, the argument `check` takes, and never
   writes into a nested project: a unit path inside a directory that holds its
   own design layer is refused whether or not the project is declared, and a
@@ -56,7 +66,14 @@
   re-renders its PDF on upgrade. A heading written in markup keeps its level,
   its number, and its contents entry. One heading form does change: a heading
   called with no level, `#heading[...]`, inside a section or subsection body
-  now takes the level below that body's heading instead of level one.
+  now takes the level below that body's heading instead of level one. It no
+  longer opens a chapter, so the chapters and sections after it, which it
+  used to renumber, take back the numbers they have without it. Inside a
+  section body it is a level-three heading, numbered under the section and
+  listed in the contents, and each later subsection of that section is
+  numbered one higher. Inside a subsection body it is a level-four heading,
+  which the contents — three levels deep — no longer lists. Give the call
+  `level: 1` to keep the old reading.
 - `nix flake check` now gates this repository's own design layer: its rendered
   PDF, its links, and its generated folder contracts.
 - The migration is documented in [Unit contracts and folder contracts](docs/migrations/unit-contract.md).

@@ -32,7 +32,13 @@
   in markup — `=== Title` — render at the level, number, and contents entry
   they had. One form changes: a heading called with no level, `#heading[...]`,
   inside a section or subsection body takes the level below that body's
-  heading instead of level one. Give such a call its `level:` to keep it.
+  heading instead of level one. It no longer opens a chapter, so the chapters
+  and sections after it take back the numbers they have without it. In a
+  section body it becomes a level-three heading, numbered under the section
+  and listed in the contents, and each later subsection of that section is
+  numbered one higher. In a subsection body it becomes a level-four heading,
+  which the contents — three levels deep — no longer lists. Give such a call
+  `level: 1` to keep the old reading.
 - A host that gates with its own schema copy adds `design_doc.blocks.unit`,
   `design_doc.unit_contract`, `design_doc.spine_scope`, the `unit` entry under
   `design_doc.agent_context.projection.classification.projected`, and the
@@ -51,9 +57,11 @@
 - List exact repo-relative directories in `paths`. A grouping unit lists none.
   Write each path as the file system stores it: no symbolic link in it, and
   the letter case its parent directory lists.
-- Write prose in a field: text, emphasis, inline code, a link, a reference,
-  mathematics, and the library's inline citations. A list, a footnote, a box,
-  a heading, or a `context` in a field fails the render. Write each point as
+- Write prose in a field: text, emphasis, inline code, a code block, a link,
+  a reference, mathematics, and the library's inline citations. A code block
+  is projected as a fenced block, so a verification command may be written as
+  one; a title holds none. A list, a footnote, a box, a heading, or a
+  `context` in a field fails the render. Write each point as
   its own item of `interface`, `invariants`, or `side-effects`, and put
   anything else in the unit's body.
 - Keep `section` and `subsection` out of a unit's body. They are the

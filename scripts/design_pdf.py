@@ -169,7 +169,14 @@ def render_layer(layer: LayerSource, out_pdf, check, lib, *, review_diagrams=Non
     many chapters into one document, and a chapter opening on a goal does not
     follow the previous chapter's principle.
     """
-    root, docs, terms = str(layer.root), layer.documents, layer.terms
+    root, docs = str(layer.root), layer.documents
+    # A layer without a design document has nothing to render, and the
+    # aggregate below would declare its empty vocabulary as invalid Typst.
+    # The refusal lives here so every caller gets the same message.
+    if not docs:
+        sys.stderr.write("design-aggregate: error: no design.typ under %s\n" % root)
+        return 2
+    terms = layer.terms
     gen_dir = os.path.join(root, ".render")
     os.makedirs(gen_dir, exist_ok=True)
     rel_lib = os.path.relpath(os.path.abspath(lib), os.path.abspath(gen_dir))
@@ -459,9 +466,6 @@ def main():
         layer = LayerSource.discover(Path(root))
     except LegacyMarkdownLayer as exc:
         sys.stderr.write(str(exc))
-        return 2
-    if not layer.documents:
-        sys.stderr.write("design-aggregate: error: no design.typ under %s\n" % root)
         return 2
 
     try:

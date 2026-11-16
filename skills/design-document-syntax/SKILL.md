@@ -1652,7 +1652,9 @@ the PR base commit, and pass that SHA to `--base`. Write the review under the
 runner's temporary directory and upload the HTML and PDFs as one artifact.
 Link the artifact from the check summary. Adapt the
 [GitHub Actions example](https://github.com/lostbean/design-layer/blob/main/.github/workflows/design-review.yml)
-to the host's pinned app and layer path.
+to the host's pinned app and layer path. On the pull request that adopts the
+layer, the base has no layer: the report lists every record as added and
+`--pdf` writes only the after PDF.
 
 Passing the gate means the layer is **well-formed**. It does not mean the
 design is right.

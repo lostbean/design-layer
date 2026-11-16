@@ -103,3 +103,14 @@
 - Invalid column counts, missing headers, non-array cells, and incomplete rows now fail with specific messages.
 - The renderer ignores ambient system font paths and keeps its embedded font families for byte-stable PDF output across Ubuntu and macOS.
 - The migration is documented in [Reproducible font resolution](docs/migrations/reproducible-fonts.md).
+- `review --base <rev>` treats a base revision with nothing at the layer path
+  as an empty layer, so the pull request that adopts a layer gets a report
+  instead of exit 2. Every record in the working tree is reported as added.
+  A layer path missing from the working tree is still an error.
+- `review` compares a layer with no design documents as an empty layer under
+  `--pdf` too. It writes no PDF for that side, where it used to fail to render
+  one and exit 2. The HTML report and the `--summary` comment name the side
+  that has no layer.
+- The shared render function refuses a layer with no `design.typ` by name, as
+  the `render` app already did, and writes nothing. A caller other than the
+  app used to get a Typst type error instead.

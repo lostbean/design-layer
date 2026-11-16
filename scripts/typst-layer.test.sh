@@ -1354,6 +1354,46 @@ state_rejects "machine field mismatch" "state-field" '#state-type(id: "t", title
 state_rejects "attribute and machine type mismatch" "state-type" '#state-type(id: "a-type", title: "A", variants: ("x",)) #state-type(id: "b-type", title: "B", variants: ("x",)) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "A", provenance: "derived", state-type: "a-type", state-machine: "m")[State.]] #state-machine(id: "m", subject: "a", state-field: "status", state-type: "b-type", states: ("x",), transitions: ())'
 state_rejects "state variants and machine states mismatch" "variants" '#state-type(id: "t", title: "T", variants: ("x", "y")) #entity(id: "a", title: "A", description: [A.], kind: "entity", owner: "X", lifecycle: "stateful", domain: "X")[#attribute(id: "status", name: "Status", type: "T", provenance: "derived", state-type: "t", state-machine: "m")[State.]] #state-machine(id: "m", subject: "a", state-field: "status", state-type: "t", states: ("x", "z"), transitions: ())'
 
+# AN EMPTY LAYER IS REFUSED BY NAME, by the app and by the render function
+# the review app shares. A layer with no design.typ has nothing to render, and
+# the aggregate built for one declared its empty vocabulary as invalid Typst,
+# so a caller other than the app got a Typst type error instead.
+EMPTY="$WORK/empty/docs/design"
+mkdir -p "$EMPTY"
+empty_refused() { # $1 = label, $2 = exit status, $3 = output, $4 = PDF path
+  if [ "$2" -eq 2 ]; then
+    pass_line "$1 exits 2"
+  else
+    fail_line "$1 exited $2, wanted 2: $3"
+  fi
+  case "$3" in
+  *"no design.typ under"*) pass_line "$1 names the missing design.typ" ;;
+  *) fail_line "$1 does not name the missing design.typ: $3" ;;
+  esac
+  if [ -e "$4" ] || [ -e "$EMPTY/.render" ]; then
+    fail_line "$1 wrote output for an empty layer"
+  else
+    pass_line "$1 writes nothing"
+  fi
+}
+out="$(DESIGN_LIB_DIR="$LAYER/.render" python3 ./scripts/design-aggregate \
+  "$EMPTY" "$WORK/empty-app.pdf" 2>&1)"
+empty_refused "rendering an empty layer" "$?" "$out" "$WORK/empty-app.pdf"
+out="$(
+  python3 - "$EMPTY" "$LAYER/.render/designlib.typ" "$WORK/empty-call.pdf" 2>&1 <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "scripts")
+from design_pdf import render_layer
+from design_source import LayerSource
+
+root, library, target = sys.argv[1:]
+sys.exit(render_layer(LayerSource.discover(Path(root)), target, False, library))
+PY
+)"
+empty_refused "render_layer on an empty layer" "$?" "$out" "$WORK/empty-call.pdf"
+
 echo
 echo "typst-layer: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

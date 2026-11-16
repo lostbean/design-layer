@@ -1357,6 +1357,33 @@ run 0 "the fixture re-renders" -- render
 (cd "$REPO" && git add -A && git -c user.name=t -c user.email=t@localhost commit -qm units) >/dev/null 2>&1
 
 run 0 "layer-integrity resolves a link to a unit anchor" -- python3 ./scripts/layer-integrity "$REPO"
+# THE HOST-LINK CHECK READS THE GENERATED REGIONS. layer-integrity resolves
+# every link an AGENTS.md outside docs/ carries into the layer, and a
+# generated region carries one per unit, to `design.typ#unit-<id>`. The
+# fixture's three folder contracts hold four such links, and all of them
+# resolve beside units, fresh regions, and a clean gate.
+has "resolved 3 instruction files" "the host-link check reads the three generated folder contracts"
+has "4 instruction links resolved" "the host-link check resolves each generated link into the layer"
+run 0 "the unit checks are clean beside the host-link check" -- units --check
+# A generated link names a unit by id. One that names no declared unit is a
+# dangling link, reported at the folder contract's own line.
+cp "$REPO/src/gateway/AGENTS.md" "$WORK/gateway.linked"
+sed 's/design\.typ#unit-gateway)/design.typ#unit-absent)/' "$WORK/gateway.linked" \
+  >"$REPO/src/gateway/AGENTS.md"
+if cmp -s "$REPO/src/gateway/AGENTS.md" "$WORK/gateway.linked"; then
+  fail_line "the fixture did not change the generated link"
+else
+  pass_line "the fixture points a generated link at a unit nobody declares"
+fi
+run 1 "the host-link check refuses a generated link to a unit nobody declares" -- \
+  python3 ./scripts/layer-integrity "$REPO"
+has "src/gateway/AGENTS.md:" "the violation names the folder contract and its line"
+has 'no heading renders id "unit-absent"' "the violation names the unit id that does not exist"
+run 1 "the unit checks call the same region stale" -- units --check
+has "src/gateway/AGENTS.md: stale folder contract" "the gate's unit step names the edited region"
+cp "$WORK/gateway.linked" "$REPO/src/gateway/AGENTS.md"
+run 0 "the host-link check passes once the generated link is restored" -- \
+  python3 ./scripts/layer-integrity "$REPO"
 cp "$REPO/docs/COVERAGE.md" "$WORK/coverage.good"
 sed 's/#unit-ledger/#unit-absent/' "$WORK/coverage.good" >"$REPO/docs/COVERAGE.md"
 run 1 "layer-integrity refuses a link to a unit nobody declares" -- \
@@ -1384,8 +1411,35 @@ run 0 "a unit whose id is not its first argument still renders" -- render
 run 0 "layer-integrity resolves a link to a unit written title-first" -- \
   python3 ./scripts/layer-integrity "$REPO"
 run 0 "the folder contracts do not depend on argument order" -- units --check
+# A `//` inside a STRING is text. The scan cut every `//` to the end of its
+# line before it read the call, so a field such as `overview: "a // b"` lost
+# its closing quote and the `id:` after it was never found. A `//` outside a
+# string still opens a comment, and a unit call inside one declares nothing.
+python3 - "$LAYER/alpha/design.typ" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+overview = '    overview: "Types both parts use.",\n'
+assert overview in s
+s = s.replace(
+    overview,
+    '    overview: "Types both parts use. // not a comment",  // a real comment\n'
+    "    /* a block comment, with id: \"wrong\" in it */\n",
+)
+s += '// #unit(id: "ghost", title: "Commented out", paths: ())\n'
+open(p, "w").write(s)
+PY
+run 0 "a unit with // inside a string field still renders" -- render
+run 0 "layer-integrity resolves a link to a unit whose earlier field holds //" -- \
+  python3 ./scripts/layer-integrity "$REPO"
+printf '| Ghost | captured | [Zghost](design/alpha/design.typ#unit-ghost) |\n' \
+  >>"$REPO/docs/COVERAGE.md"
+run 1 "a unit call inside a comment declares no anchor" -- python3 ./scripts/layer-integrity "$REPO"
+has 'no heading renders id "unit-ghost"' "the violation names the commented-out unit's anchor"
 cp "$WORK/alpha.good" "$LAYER/alpha/design.typ"
 cp "$WORK/coverage.good" "$REPO/docs/COVERAGE.md"
+# The overview's text changed and is restored, so the page is rendered again.
+run 0 "the fixture re-renders after the comment variants" -- render
 
 # The composite, through the public app: clean first, then one broken variant
 # per new check, each restored before the next.

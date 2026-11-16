@@ -213,7 +213,14 @@ class Schema:
 
 def locate_schema(argv0: str) -> str:
     """The lookup chain: $DESIGN_SCHEMA, then the script-sibling copy (the
-    copy-installed layout), then ../schema/ (the framework layout)."""
+    copy-installed layout), then ../schema/ (the framework layout).
+
+    THIS IS THE ONE COPY OF THE CHAIN. design-context and design-units load
+    this script and call it with their own path, so no gate script can
+    resolve a schema the others did not. It lives here, and not in a module
+    of its own, because a host may copy-install this script alone beside its
+    schema, and the script must then still find it.
+    """
     override = os.environ.get("DESIGN_SCHEMA")
     if override:
         return override
@@ -534,15 +541,63 @@ TYPST_SECTION_RE = re.compile(r'(?:sub)?section\(\s*title:\s*"([^"]*)"')
 # argument list for its `id:`.
 TYPST_UNIT_OPEN_RE = re.compile(r"(?<![\w-])unit\(")
 TYPST_UNIT_ID_ARG_RE = re.compile(r'\s*id\s*:\s*"([^"]*)"')
-# A line comment, but not the `//` of a URL. The argument walk has to keep
-# every bracket of the call, and the plain comment pattern above would cut a
-# field such as `[See https://example.org.]` off before its closing bracket.
-TYPST_UNIT_COMMENT_RE = re.compile(r"(?<!:)//.*$")
 _TYPST_CLOSERS = {"(": ")", "[": "]", "{": "}"}
 
 
+def _typst_comment_end(source: str, position: int, in_content: bool) -> int:
+    """Where the comment opening at `position` ends, or -1 when none opens.
+
+    `//` runs to the end of its line and `/* */` to its closing mark, nested
+    ones included. In a content block the `//` of a URL is prose: Typst reads
+    `https://example.org` as a link before it reads a comment.
+    """
+    if source.startswith("//", position):
+        if in_content and position > 0 and source[position - 1] == ":":
+            return -1
+        end = source.find("\n", position)
+        return len(source) if end < 0 else end
+    if source.startswith("/*", position):
+        depth = 1
+        position += 2
+        while position < len(source) and depth:
+            if source.startswith("/*", position):
+                depth += 1
+                position += 2
+            elif source.startswith("*/", position):
+                depth -= 1
+                position += 2
+            else:
+                position += 1
+        return position
+    return -1
+
+
+def _typst_line_commented(source: str, position: int) -> bool:
+    """Whether `position` stands behind a `//` on its own line.
+
+    A `//` inside a string is text, so the line is read from its start with
+    the quotes it opens and closes. A URL's `//` is not a comment either.
+    """
+    start = source.rfind("\n", 0, position) + 1
+    in_string = False
+    at = start
+    while at < position:
+        character = source[at]
+        if in_string:
+            if character == "\\":
+                at += 1
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif source.startswith("//", at) and (at == start or source[at - 1] != ":"):
+            return True
+        at += 1
+    return False
+
+
 def typst_unit_ids(source: str) -> list:
-    """The id of every `unit(` call in comment-stripped Typst source.
+    """The id of every `unit(` call in RAW Typst source.
 
     Each call's argument list is walked once and its `id:` is taken only at the
     list's own level: directly after the opening parenthesis or after a comma
@@ -555,15 +610,29 @@ def typst_unit_ids(source: str) -> list:
     a content block only square brackets nest: a quote or a parenthesis there
     is prose, a backslash escapes the next character, and a backtick run opens
     raw text that ends at the same run.
+
+    COMMENTS ARE READ BY THE WALK, never stripped from the source beforehand.
+    Whether `//` opens a comment depends on the mode it stands in: inside a
+    string it is text, and a pass that cut every `//` to the end of its line
+    cut a field such as `overview: "a // b"` in half, lost the string's
+    closing quote, and with it every argument that followed — the `id:` among
+    them.
     """
     ids = []
     for opening in TYPST_UNIT_OPEN_RE.finditer(source):
+        if _typst_line_commented(source, opening.start()):
+            continue
         position = opening.end()
         stack = [")"]
         at_argument_start = True
         while position < len(source) and stack:
             character = source[position]
-            if stack[-1] == "]":
+            in_content = stack[-1] == "]"
+            comment_end = _typst_comment_end(source, position, in_content)
+            if comment_end >= 0:
+                position = comment_end
+                continue
+            if in_content:
                 if character == "\\":
                     position += 2
                     continue
@@ -670,8 +739,7 @@ def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
     # A unit's anchor joins the same id set a section's does: both are ids the
     # rendered document carries, and a link's fragment resolves against either.
     if schema.unit_anchor_prefix:
-        unit_source = "\n".join(TYPST_UNIT_COMMENT_RE.sub("", raw) for raw in idx.lines)
-        for unit_id in typst_unit_ids(unit_source):
+        for unit_id in typst_unit_ids("\n".join(idx.lines)):
             if unit_id:
                 idx.section_ids.add(schema.unit_anchor_prefix + unit_id)
 

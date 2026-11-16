@@ -648,9 +648,30 @@
               touch $out
             '';
 
+        # THIS REPOSITORY'S OWN LAYER, gated the way a host gates its own.
+        # docs/design describes this repo's parts as units, the PDF beside it
+        # is rendered from them, and lib/, schema/, fixtures/, scripts/ and
+        # skills/ each carry a folder contract generated from them. Nothing
+        # held those artifacts to their source: a unit could change, or a
+        # generated region be edited by hand, and `nix flake check` and CI
+        # stayed green. This runs the public check app over the checkout — the
+        # PDF fresh, every link resolving, every folder contract fresh — so a
+        # change to a unit that was not regenerated fails here.
+        #
+        # The sandbox copy is not a git work tree, so the scans walk the tree
+        # and the uncovered-directory report says it did not run. Neither
+        # changes what is checked: the copy holds exactly the tracked files.
+        checks.own-layer = pkgs.runCommand "own-layer" { } ''
+          cp -r ${./.} repo
+          chmod -R u+w repo
+          cd repo
+          ${checkApp.program} docs/design .
+          touch $out
+        '';
+
         # Every gate script's fixture-based self-test. This is what establishes
-        # the correctness of this repo: it holds no design layer of its own, so
-        # tests — not dogfooding — are the proof.
+        # the correctness of this repo: its own layer above exercises
+        # integration, and tests — not dogfooding — are the proof.
         checks.gate-self-tests =
           pkgs.runCommand "gate-self-tests"
             {

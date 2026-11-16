@@ -532,13 +532,21 @@ result when both paths resolve to the same source. With `--pdf`, it compiles
 each distinct source once for the companions and reports compilation errors.
 Use the regular render command for guideline advisories.
 
+Add `--summary <path>` to also write a Markdown summary: the number of
+confirmed changes and of changes that need review, the changes counted by
+section, and each change that needs review. It is sized for one pull request
+comment, and design text appears in it only inside code spans. Its first line
+is `<!-- design-review changes=N -->`.
+
 #### Review design changes in pull requests
 
-Open the PR's **Checks** tab and select **Design review**. Download the artifact
-from the job summary, extract it, and open `design-review.html`. Keep the two
-PDF companions beside the HTML so the report links work. The artifact stays
-with the workflow run and expires according to the repository's retention
-policy.
+A pull request that changes the design gets one comment from the **Design
+review** workflow, and each push updates that comment. It holds the summary
+and a link to the full report. A pull request that changes no design gets no
+comment. Download the artifact from that link or from the job summary, extract
+it, and open `design-review.html`. Keep the two PDF companions beside the HTML
+so the report links work. The artifact stays with the workflow run and expires
+according to the repository's retention policy.
 
 For a consumer repository, copy the
 [design review workflow](.github/workflows/design-review.yml) and use the
@@ -551,13 +559,20 @@ With Nix installed on the runner, the review step is:
 base=$(git merge-base "$BASE_SHA" HEAD)
 mkdir -p "$RUNNER_TEMP/design-review"
 nix run .#design-gate-review -- docs/design --base "$base" --pdf \
-  -o "$RUNNER_TEMP/design-review/design-review.html"
+  -o "$RUNNER_TEMP/design-review/design-review.html" \
+  --summary "$RUNNER_TEMP/design-review/summary.md"
 ```
 
 Set `BASE_SHA` from `github.event.pull_request.base.sha` on GitHub Actions. Omit
 `--pdf` for HTML alone, or use `--format json` for a structured report. Upload
 the output directory as one artifact and put the download link in the check
-summary. The example uses a read-only `pull_request` job.
+summary.
+
+The workflow has two jobs. The `review` job runs the pull request's code with
+read access alone. The `comment` job holds `pull-requests: write`, runs none of
+that code, and posts the summary from the artifact. Keep the two apart. A pull
+request from a fork gets no comment, because its token cannot write; its report
+is still in the check summary.
 
 ## Development
 

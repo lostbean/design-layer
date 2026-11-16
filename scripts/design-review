@@ -25,7 +25,7 @@ from design_source import (
     projection_layer,
     renderer_library,
 )
-from review_model import compare, coverage, render_viewer
+from review_model import compare, coverage, render_summary, render_viewer
 from typst_policy import command as typst_command, environment as typst_environment
 
 
@@ -208,6 +208,11 @@ def main(argv):
         action="store_true",
         help="write annotated before and after PDFs beside the HTML report",
     )
+    parser.add_argument(
+        "--summary",
+        type=Path,
+        help="also write a Markdown summary, sized for one pull request comment",
+    )
     args = parser.parse_args(argv)
     if (args.after is None) == (args.base is None):
         parser.error("supply two paths or one working-tree path with --base")
@@ -221,7 +226,7 @@ def main(argv):
             for side in ("before", "after")
         }
     try:
-        for path in [args.output, *pdfs.values()]:
+        for path in [args.output, args.summary, *pdfs.values()]:
             if path is not None and (path.exists() or path.is_symlink()):
                 raise ValueError(f"output already exists: {path}")
 
@@ -278,6 +283,10 @@ def main(argv):
                 if args.format == "json"
                 else render_viewer(report, pdf_links, pdf_error)
             )
+            if args.summary:
+                write_new_output(
+                    args.summary, render_summary(report, pdf_error).encode()
+                )
             if args.output:
                 write_new_output(args.output, output.encode())
             else:

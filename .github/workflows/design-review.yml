@@ -8,6 +8,8 @@ permissions: {}
 jobs:
   # Runs the pull request's own code, so it reads and never writes.
   review:
+    # The name a branch rule requires and a reader looks for in the checks.
+    name: Design review
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,6 +55,7 @@ jobs:
   # Writes to the pull request and runs none of its code. The summary is data:
   # it reaches the comment through a file, never through the shell.
   comment:
+    name: Design review comment
     needs: review
     if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest

@@ -21,10 +21,16 @@ and a value outside a declared vocabulary is one the renderer would have to
 invent a meaning for. These fail the render, naming the violation and its
 location, and no flag relaxes them.
 
-**Structure is guided by warnings.** Which foundation kinds a context declares,
-what order its sections run in, whether every required attribute was filled —
-these are opinions about how a design is usually organized, and a design
-legitimately changes shape. The renderer says what it expected, names the rule
+**A design unit's contract is fail-closed too.** Every `unit` answers the same
+five questions and lists its code paths. A unit missing one of those fields, a
+duplicate unit id, and an illegal path fail the render; an empty list is how a
+unit says "none".
+
+**Structure is guided by warnings.** Which foundation kinds the root document
+declares, what order they run in, whether an optional block's attributes were
+filled — these are opinions about how a design is usually organized, and a
+design legitimately changes shape. A context document is not held to the
+foundation minimum at all. The renderer says what it expected, names the rule
 and the offending item, and renders anyway. Every guideline prints on every
 render and the run ends with a count summary, so guidance is never silent; none
 of it changes the exit code. Set `DESIGN_STRICT=1` to escalate every guideline
@@ -62,7 +68,7 @@ Sections and subsections use chapter-local numbers such as `1.10.1`; authors
 still supply content-only titles. The grouped table of contents marks chapter
 boundaries, nests sections and subsections, and aligns page numbers. The
 alphabetized glossary closes the document as an unnumbered reference chapter.
-`check` then runs three things in sequence and exits 0 clean, 1 on a
+`check` then runs four things in sequence and exits 0 clean, 1 on a
 violation, 2 on an error:
 
 1. **freshness** — regenerate the aggregate and byte-compare it against the
@@ -73,6 +79,75 @@ violation, 2 on an error:
    reference, a section pointer), every ADR is in lockstep with its filename,
    every glossary term is unique, no layer file sits outside its declared
    home under `docs/`
+4. **unit folder contracts** — every path a unit lists is one real directory
+   of the repository, every generated `AGENTS.md` region matches a fresh
+   generation, no folder carries a region no unit lists, and every unit is
+   one the Markdown projection can address
+
+The same step prints a **report** of the git-tracked directories no unit path
+covers. It shows what the design does not claim and never changes the exit
+code.
+
+When a layer declares units, write their folder contracts before gating:
+
+```sh
+nix run github:lostbean/design-layer#units -- docs/design .
+```
+
+`units` writes one generated region into the `AGENTS.md` of every directory a
+unit lists, and links `CLAUDE.md` to it where none exists. `check` only
+compares; it never rewrites a stale region.
+
+The `CLAUDE.md` link is the generator's only in the form it creates — a
+symbolic link whose target is the bare name `AGENTS.md`. When a region leaves
+a folder and its `AGENTS.md` is left with nothing to read, deleted or holding
+only whitespace, `units` removes that link with it. When `AGENTS.md` keeps
+text of its own, the link stays: it still links something worth reading. A
+`CLAUDE.md` in any other form is never touched.
+
+`units` shares each file with hand-written text, so it is strict about what it
+touches:
+
+- Text outside the region keeps every byte, including its line endings and
+  whether the file ends with a newline. Removing a region restores the file it
+  was added to: a file that was empty is left empty, and only a file `units`
+  created is deleted.
+- A region is recognized by its whole generated shape. A marker shown inside a
+  code block or a raw HTML block — `<pre>`, `<details>`, a comment — is an
+  example and is never read, as the opening of a region or as its end; a
+  marker line anywhere else outside that shape, or a region whose closing
+  lines are missing, is reported and the file is left as it is. To recover,
+  delete the region's lines and run `units` again.
+- A region a formatter touched — a space after a marker, a blank line between
+  two of its lines — is still found. `check` reports it stale and `units`
+  writes it again.
+- The target is a regular file in the listed directory. An `AGENTS.md` that is
+  a symbolic link, a directory, or not UTF-8 text is a violation. An
+  `AGENTS.md` anywhere else that holds no marker is never read.
+- A unit path is the path the file system stores. A path through a symbolic
+  link, or in another letter case on a case-insensitive file system, fails
+  naming both spellings. `.git` and the layer directory are not unit paths. A
+  folder contract git tracks under another spelling than the file system
+  stores is reported naming both, and is never removed.
+- A run writes every folder contract or none: one violation leaves every file
+  untouched, and every new text is staged in a temporary file before any
+  target is replaced.
+
+A directory holding its own `docs/design/design.typ` is a **nested project**,
+and its folder contracts belong to its own layer. `units` never touches one by
+default: it refuses a unit path inside one, declared or not, and it reports a
+region found there and leaves it in place. Declare the project with the
+argument `check` takes:
+
+```sh
+nix run github:lostbean/design-layer#units -- docs/design . --nested-project packages/api
+nix run github:lostbean/design-layer#check -- docs/design . --nested-project packages/api
+```
+
+`--nested-project <path>` is repeatable. It leaves the project out of the
+outer run, then writes — or with `--check` compares — the project's own layer
+at `<path>/docs/design` against the project's root. `--exclude-project <path>`
+only leaves the project out, for a caller that processes it separately.
 
 One further entry point is advisory rather than a gate:
 
@@ -129,18 +204,24 @@ docs/
 
 A single-context layer is just `docs/design/{design.typ,CONTEXT.typ}` plus
 `docs/adr/` — no `CONTEXT-MAP.md` required. Everything under `docs/` is the
-layer; nothing about it lives beside the source it describes.
+layer. One thing is generated beside the source it describes: a directory a
+`unit` lists carries that unit's contract in a marked region of its
+`AGENTS.md`. The region is written by `units` and never authored by hand.
 
 ## What this repo deliberately does not do
 
 - **It does not choose or improve a system architecture.** It teaches how to
   document an existing system and established intent. Documentation depth is
   authoring guidance, not a mechanical correctness property.
-- **It does not hold a design layer of its own.** It is a tool. Its
-  correctness is proven by the self-tests under `scripts/*.test.sh` and by
-  `fixtures/gallery.typ`, the fixture that exercises every function the
-  library projects for authoring — never by dogfooding a layer it would then
-  have an incentive to keep looking good.
+- **Its own design layer is not its proof of correctness.** The repository
+  carries a concise layer under `docs/design/` that describes its parts as
+  units, and `lib/`, `schema/`, `fixtures/`, `scripts/`, and `skills/` each
+  carry the generated folder contract. `nix flake check` gates that layer —
+  its PDF, its links, and its folder contracts — which exercises integration.
+  Correctness is proven by the self-tests under
+  `scripts/*.test.sh` and by `fixtures/gallery.typ`, the fixture that
+  exercises every function the library projects for authoring — never by a
+  layer the repository would have an incentive to keep looking good.
 - **It does not render to anything but PDF.** One document, one artifact;
   no HTML output, no stylesheet theming layer to keep in sync.
 - **It is not a proof of good design.** The behavior-rule fence (see
@@ -153,10 +234,14 @@ layer; nothing about it lives beside the source it describes.
 ## Layout
 
 ```
-scripts/     the gate: design-aggregate, layer-integrity, token-coverage, render-project
+scripts/     the gate: design-aggregate, design-context, design-units, layer-integrity,
+             token-coverage, render-project
+lib/         the hand-written Typst library the layer calls
 schema/      the ONE declared schema — block vocabulary, anchors, layout, enums
-fixtures/    the gallery: every projected function, and the renderer-drift tripwire
+fixtures/    the gallery: every projected function, and the renderer-drift tripwire;
+             and the schema as it stood before the unit block, for the old-schema test
 skills/      the authoring guidance an agent loads to write a well-formed layer
+docs/design/ this repository's own layer: its parts as units, and the rendered PDF
 ```
 
 ## Writing a design document
@@ -176,6 +261,52 @@ Read `design-document-syntax` for the exact notation. Both are available under
 through its agent's skill discovery mechanism. No separate design workflow is
 required to use them. Architecture selection and improvement remain outside
 this repository's responsibility.
+
+### Design units
+
+A `unit` is the one block every part of a design uses. It has the same required
+shape at every depth: an overview, an interface, invariants, side effects, a
+verification, and the code paths that realize it. Every other block is optional
+and goes in the unit's body, where a nested `unit` is the next level down.
+
+```typst
+#unit(
+  id: "billing-ledger",
+  title: "Billing ledger",
+  overview: [Records what each customer was charged.],
+  interface: ([`append(entry)` adds one entry.],),
+  invariants: ([An entry is never rewritten.],),
+  side-effects: (),
+  verification: [`cargo test -p ledger`],
+  paths: ("src/ledger",),
+)[
+  Optional body: prose, any other block, and nested units.
+]
+```
+
+Every field is required. An empty list is a legal answer and renders as `None`;
+a field left out fails the render. A field holds prose: text, emphasis, inline
+code, a code block, a link, a reference, mathematics, and the library's inline
+citations. A code block — fenced in markup, or `#raw(..., block: true)` — is
+written to the projection and to a folder contract as a fenced block, below
+the field's label or indented under a list item, with a fence longer than any
+backtick run it holds; a title, which is one heading line, holds none. A list,
+a footnote, a box, or a heading written inside a field fails too: state each
+point as its own item of a list field, and put anything else in the body.
+`paths` holds exact repo-relative directories, and a unit that only groups
+other units lists none. A unit's heading level is its depth, down to the sixth
+level: five units nest directly in the root document's body, four inside a
+section, three inside a subsection, and one fewer in a context document. The
+body holds no `section` or `subsection`: inside a unit, a nested unit carries
+the structure. The `id` is
+unique across the layer and is the unit's stable address: the reference
+`@unit-billing-ledger`, the link fragment `design.typ#unit-billing-ledger`, and
+the selector `--unit billing-ledger`.
+
+`units` then writes the contract into `src/ledger/AGENTS.md`, between
+`<!-- design-units:begin -->` and `<!-- design-units:end -->`. Export
+`#let context_command = "nix run .#design-gate-context --"` from the root
+`design.typ` to print your own forwarding app in that region.
 
 ### Diagram node tints
 
@@ -343,6 +474,21 @@ come from one source snapshot. Section output is an exact byte slice of the
 complete projection, so the default and incremental modes cannot drift in
 their Markdown mapping.
 
+Select by design unit instead of by address when the layer declares units:
+
+```sh
+nix run .#context -- docs/design --unit billing-ledger
+nix run .#context -- docs/design --path src/ledger/entry.rs
+```
+
+`--unit` prints one unit: its contract, its body, and its nested units. It
+stops where the unit does, so it is shorter than `--section` at the same
+address whenever text follows the unit under the same heading. `--path` takes a
+repo-relative path and prints every unit whose `paths` contain it or a parent
+directory of it. Both accept `--output` and `--expect-digest`. When a layer
+declares units, the manifest gains a `units` list giving each unit's id,
+address, parent, document, and paths.
+
 The estimate reports UTF-8 bytes, characters, words, lines, and the named
 planning estimates `ceil(utf8_bytes/4)` and `ceil(utf8_bytes/3)`. These values
 are model-independent estimates rather than tokenizer counts. The manifest
@@ -351,7 +497,7 @@ adds SHA-256 digests without changing the legacy estimate shape.
 The Markdown is a temporary reading projection. Typst remains authoritative,
 the PDF remains the published rendered artifact, and the Markdown output is not
 committed. A semantic violation exits 1 without usable output; an invocation,
-runtime, digest, section-selection, or output-write error exits 2.
+runtime, digest, selection, or output-write error exits 2.
 
 ## Development
 
@@ -367,6 +513,7 @@ check (projecting the schema twice must yield identical bytes).
 
 ## Migrations
 
+- [Unit contracts and folder contracts](docs/migrations/unit-contract.md) covers the `unit` block, the relaxed context structure, the new gate step, and what a host changes on upgrade.
 - [Entity descriptions and typed attributes](docs/migrations/entity-descriptions-and-types.md) covers bundle updates, census rewrites, and PDF verification.
 - [Reproducible font resolution](docs/migrations/reproducible-fonts.md) covers the embedded-font policy and host migration.
 
@@ -449,13 +596,15 @@ Forward the pinned shared apps directly from a consumer flake:
 apps.design-gate-render = design-layer.apps.${system}.render;
 apps.design-gate-check = design-layer.apps.${system}.check;
 apps.design-gate-context = design-layer.apps.${system}.context;
+apps.design-gate-units = design-layer.apps.${system}.units;
 ```
 
 These apps prepare or refresh the generated `.render` library beside the root
 `design.typ` before using it. The selected bundle owns this operation; consumers
-need no projection wrapper or copied bootstrap script. `check` also prepares each
-validated `--nested-project` layer. It still reports a stale PDF without rewriting
-that PDF. All preparation uses local bundled files, without network access.
+need no projection wrapper or copied bootstrap script. `check` and `units` also
+prepare each validated `--nested-project` layer. `check` still reports a stale
+PDF without rewriting that PDF. All preparation uses local bundled files,
+without network access.
 
 `DESIGN_LIB_DIR` remains an explicit library override: preparation uses that
 library when supplied. Direct script invocation retains its existing contract

@@ -691,15 +691,16 @@ case "$fo_out" in
   ;;
 *) fail_line "the guidance does not say what was expected — advice with no remedy" ;;
 esac
-# This fixture carries a principle before a goal AND no invariant, so it trips
-# the order rule and the cardinality rule — the summary counts both under the
-# `foundation` area.
+# This fixture carries a principle before a goal AND no invariant. The order
+# rule fires. The per-kind minimum does NOT: the misordered foundation is a
+# CONTEXT's, and the minimum binds the root document only — so the summary
+# counts exactly one guideline under the `foundation` area.
 case "$fo_out" in
-*"2 guideline(s): 2 foundation"*)
-  pass_line "the count summary counts both foundation guidelines"
+*"1 guideline(s): 1 foundation"*)
+  pass_line "the count summary counts the one foundation guideline"
   ;;
 *)
-  fail_line "the count summary does not report them: $(printf '%s' "$fo_out" | grep 'guideline(s)' | head -1)"
+  fail_line "the count summary does not report it: $(printf '%s' "$fo_out" | grep 'guideline(s)' | head -1)"
   ;;
 esac
 if [ -f "$FO/b.pdf" ]; then
@@ -741,12 +742,45 @@ fi
 # four directions are covered, because a check that only ever passes and a
 # check that only ever fails are equally useless.
 
-# (d) a foundation missing a required kind is GUIDED, not refused. This is the
-# case the flexibility ruling was decided on: a layer may legitimately not carry
-# one of the levels, and failing the whole design over it is the behavior being
-# reversed. The guidance still has to name the missing kind and what was
+# THE MINIMUM BINDS THE ROOT DOCUMENT ONLY. A context states a goal or a
+# principle when its aims differ from the root's, so the cases below put the
+# short foundation in the ROOT, and (e2) asserts the other direction: the same
+# short foundation in a context is not reported at all.
+fo_root_layer() { # $1 = the ROOT's foundation body; alpha carries a full one
+  cat >"$FO/design.typ" <<EOF
+#import ".render/designlib.typ": *
+#let title = [Zfoot root]
+#let body = [
+  #section(
+    title: "00 Foundation",
+    body: [
+      $1
+    ],
+  )
+]
+EOF
+  cat >"$FO/alpha/design.typ" <<'EOF'
+#import "../.render/designlib.typ": *
+#let title = [Zfoot alpha]
+#let body = [
+  #section(
+    title: "00 Foundation",
+    body: [
+      #goal(title: "Zfag")[Alpha goal.]
+      #invariant(title: "Zfai", enforcement: "convention")[Alpha invariant.]
+      #principle(title: "Zfap")[Alpha principle.]
+    ],
+  )
+]
+EOF
+}
+
+# (d) a ROOT foundation missing a required kind is GUIDED, not refused. This is
+# the case the flexibility ruling was decided on: a layer may legitimately not
+# carry one of the levels, and failing the whole design over it is the behavior
+# being reversed. The guidance still has to name the missing kind and what was
 # expected, or it is noise.
-fo_layer '#goal(title: "Zdg")[g]
+fo_root_layer '#goal(title: "Zdg")[g]
       #invariant(title: "Zdi", enforcement: "convention")[i]'
 fc_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/d.pdf" 2>&1)"
 fc_rc=$?
@@ -785,25 +819,49 @@ else
 fi
 rm -f "$FO/ds.pdf"
 
-# (e) the minimum is still scoped PER CONTEXT. The scoping is what makes the
-# guidance accurate rather than merely absent: without the per-context reset a
-# context carrying no foundation of its own would inherit the previous chapter's
-# statements and the guidance would never fire. Alpha carries only a goal here,
-# so a correctly scoped check reports the two kinds it lacks.
-fo_layer '#goal(title: "Zeg")[g]'
+# (e) the minimum is judged on the ROOT'S OWN statements. The scoping is what
+# makes the guidance accurate rather than merely absent: a root carrying only a
+# goal must not be satisfied by the full foundation the next chapter carries.
+# Alpha carries all three kinds here, so a check folding over the whole
+# aggregate would find nothing missing.
+fo_root_layer '#goal(title: "Zeg")[g]'
 fe_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/e.pdf" 2>&1)"
 if printf '%s' "$fe_out" | grep -q 'declares no invariant' &&
   printf '%s' "$fe_out" | grep -q 'declares no principle'; then
-  pass_line "the minimum is scoped per context, not across the aggregate"
+  pass_line "the minimum is judged on the root's own statements, not the aggregate's"
 else
-  fail_line "a partial foundation inherited the root's statements — no guidance fired"
+  fail_line "a partial root foundation borrowed a context's statements — no guidance fired"
 fi
 rm -f "$FO/e.pdf"
+
+# (e2) THE OTHER DIRECTION: a CONTEXT is not held to the minimum. The same
+# short foundation that reports twice in the root reports nothing in a context,
+# and strict mode accepts it — a guideline that still failed under strict would
+# be the old rule surviving behind a quieter message.
+fo_layer '#goal(title: "Ze2g")[g]'
+fe2_out="$(python3 ./scripts/design-aggregate "$FO" "$FO/e2.pdf" 2>&1)"
+case "$fe2_out" in
+*"foundation.cardinality"*)
+  fail_line "a context carrying only a goal was held to the per-kind minimum"
+  ;;
+*"0 guideline(s)"*)
+  pass_line "a context carrying only a goal is not held to the per-kind minimum"
+  ;;
+*) fail_line "the context render reported something unexpected: $(printf '%s' "$fe2_out" | head -1)" ;;
+esac
+rm -f "$FO/e2.pdf"
+if DESIGN_STRICT=1 python3 ./scripts/design-aggregate "$FO" "$FO/e2s.pdf" \
+  >/dev/null 2>&1; then
+  pass_line "DESIGN_STRICT accepts a context with a partial foundation"
+else
+  fail_line "DESIGN_STRICT still fails a context for a missing foundation kind"
+fi
+rm -f "$FO/e2s.pdf"
 
 # (f) a document carrying NO foundation at all is not a document that failed
 # the minimum — it is a document not carrying one. A reference page or a
 # behavior-rule sheet is legal, and reporting it would fail correct documents.
-fo_layer '#notes(title: "Zfn")[Prose only, no foundation statements here.]'
+fo_root_layer '#notes(title: "Zfn")[Prose only, no foundation statements here.]'
 if python3 ./scripts/design-aggregate "$FO" "$FO/f.pdf" >/dev/null 2>&1; then
   pass_line "a document declaring no foundation is not held to the minimum"
 else

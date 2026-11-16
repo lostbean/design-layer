@@ -205,11 +205,22 @@ class Schema:
     # copy predates layer_layout.instruction_files (tolerate-absent).
     instruction_basenames: Optional[tuple] = None
     pending_heading: Optional[str] = None
+    # The prefix a unit id renders its anchor under. None when the schema copy
+    # predates the unit block (tolerate-absent): such a copy can gate no layer
+    # that authors a unit, so there is no unit anchor to index.
+    unit_anchor_prefix: Optional[str] = None
 
 
 def locate_schema(argv0: str) -> str:
     """The lookup chain: $DESIGN_SCHEMA, then the script-sibling copy (the
-    copy-installed layout), then ../schema/ (the framework layout)."""
+    copy-installed layout), then ../schema/ (the framework layout).
+
+    THIS IS THE ONE COPY OF THE CHAIN. design-context and design-units load
+    this script and call it with their own path, so no gate script can
+    resolve a schema the others did not. It lives here, and not in a module
+    of its own, because a host may copy-install this script alone beside its
+    schema, and the script must then still find it.
+    """
     override = os.environ.get("DESIGN_SCHEMA")
     if override:
         return override
@@ -315,8 +326,13 @@ def load_schema(path: str) -> Schema:
     if isinstance(instr, dict) and instr.get("basenames"):
         instruction_basenames = tuple(instr["basenames"])
         pending_heading = instr.get("pending_heading")
+    unit_anchor_prefix = None
+    unit_contract = (raw.get("design_doc") or {}).get("unit_contract")
+    if isinstance(unit_contract, dict):
+        unit_anchor_prefix = unit_contract.get("anchor_prefix") or None
 
     return Schema(
+        unit_anchor_prefix=unit_anchor_prefix,
         term_id_re=re.compile(term_id_src),
         section_id_re=re.compile(section_src) if section_src else None,
         adr_id_re=re.compile(adr_id_src),
@@ -512,6 +528,243 @@ TYPST_TERM_OK_RE = re.compile(r"^term-[a-z0-9]+(?:-[a-z0-9]+)*$")
 # one index is built off the joined source while everything that does need a
 # line number stays in the per-line loop.
 TYPST_SECTION_RE = re.compile(r'(?:sub)?section\(\s*title:\s*"([^"]*)"')
+# A UNIT, by its id. `#unit(id: "billing-ledger", ...)` renders the anchor
+# `unit-billing-ledger`, which a link into the design document may carry the
+# way it carries a section slug. Read off the joined source for the same
+# reason a section is: the call opens across lines.
+#
+# The id is a NAMED argument, so it may stand anywhere in the call, and the
+# library accepts it wherever it stands. A pattern that wanted it first would
+# index `#unit(id: "a", title: …)` and miss `#unit(title: …, id: "a")`, and a
+# link to a unit that renders would be reported as dangling. So the source is
+# walked for where a call OPENS, and `typst_unit_ids` reads that call's own
+# argument list for its `id:`.
+TYPST_UNIT_ID_ARG_RE = re.compile(r'\s*id\s*:\s*"([^"]*)"')
+_TYPST_CLOSERS = {"(": ")", "[": "]", "{": "}"}
+
+
+def _typst_comment_end(source: str, position: int, in_content: bool) -> int:
+    """Where the comment opening at `position` ends, or -1 when none opens.
+
+    `//` runs to the end of its line and `/* */` to its closing mark, nested
+    ones included. In a content block the `//` of a URL is prose: Typst reads
+    `https://example.org` as a link before it reads a comment.
+    """
+    if source.startswith("//", position):
+        if in_content and position > 0 and source[position - 1] == ":":
+            return -1
+        end = source.find("\n", position)
+        return len(source) if end < 0 else end
+    if source.startswith("/*", position):
+        depth = 1
+        position += 2
+        while position < len(source) and depth:
+            if source.startswith("/*", position):
+                depth += 1
+                position += 2
+            elif source.startswith("*/", position):
+                depth -= 1
+                position += 2
+            else:
+                position += 1
+        return position
+    return -1
+
+
+_TYPST_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+# The keywords that open a statement after `#`. A statement runs to the end of
+# its line, and what it holds is code — `#let part = unit(…)` calls a unit.
+_TYPST_STATEMENTS = frozenset(
+    "let set show import include if else for while context return break "
+    "continue".split()
+)
+
+
+def _typst_raw_end(source: str, position: int) -> int:
+    """Where the raw text opening at `position` — a run of backticks — ends."""
+    run = len(source) - len(source[position:].lstrip("`")) - position
+    close = source.find("`" * run, position + run)
+    return len(source) if close < 0 else close + run
+
+
+def _typst_unit_calls(source: str) -> list:
+    """Where each REAL `unit(` call opens: the position past its parenthesis.
+
+    The source is read in Typst's own modes, because only code calls a
+    function. A layer file starts in markup, where `unit(` is prose: a call
+    there is written `#unit(`. Code is what follows a `#` — one expression,
+    with its calls, fields, and trailing content blocks, or a statement such
+    as `#let` to the end of its line — and what a parenthesis or a brace opens
+    in code; a content block opens markup again. Neither mode reads a call
+    inside a comment, inside raw text, or, in code, inside a string.
+    """
+    calls = []
+    # Each entry is (mode, closer). The closer of a statement is the newline
+    # that ends it; an expression after `#` has none and ends at the first
+    # character that does not continue it.
+    stack = [("markup", "")]
+    position = 0
+
+    def ident_at(at: int) -> str:
+        match = _TYPST_IDENT.match(source, at)
+        return match.group(0) if match else ""
+
+    while position < len(source):
+        mode, closer = stack[-1]
+        character = source[position]
+        if mode == "expression":
+            # After `#name`: a call, a content block, or a field continues it.
+            if character == "(":
+                stack.append(("code", ")"))
+                position += 1
+            elif character == "[":
+                stack.append(("markup", "]"))
+                position += 1
+            elif character == "." and ident_at(position + 1):
+                name = ident_at(position + 1)
+                position += 1 + len(name)
+                if name == "unit" and source.startswith("(", position):
+                    calls.append(position + 1)
+            else:
+                stack.pop()
+            continue
+        comment_end = _typst_comment_end(source, position, mode == "markup")
+        if comment_end >= 0:
+            position = comment_end
+            continue
+        if character == "`":
+            position = _typst_raw_end(source, position)
+            continue
+        if mode == "markup":
+            if character == "\\":
+                position += 2
+            elif character == "[":
+                stack.append(("markup", "]"))
+                position += 1
+            elif character == "]" and closer == "]":
+                stack.pop()
+                position += 1
+            elif character == "#":
+                position += 1
+                name = ident_at(position)
+                if name in _TYPST_STATEMENTS:
+                    stack.append(("code", "\n"))
+                    position += len(name)
+                elif name:
+                    position += len(name)
+                    if name == "unit" and source.startswith("(", position):
+                        calls.append(position + 1)
+                    stack.append(("expression", ""))
+                elif source.startswith(("(", "{"), position):
+                    stack.append(("code", ")" if source[position] == "(" else "}"))
+                    position += 1
+                elif source.startswith("[", position):
+                    stack.append(("markup", "]"))
+                    position += 1
+            else:
+                position += 1
+            continue
+        # Code.
+        if character == '"':
+            position += 1
+            while position < len(source) and source[position] != '"':
+                position += 2 if source[position] == "\\" else 1
+            position += 1
+        elif character == closer:
+            stack.pop()
+            position += 1
+        elif character in "({":
+            stack.append(("code", ")" if character == "(" else "}"))
+            position += 1
+        elif character == "[":
+            stack.append(("markup", "]"))
+            position += 1
+        elif character in ")}]":
+            # A closer that is not this level's: the source is not well
+            # formed here, and the compile reports it. Read on.
+            position += 1
+        else:
+            name = ident_at(position)
+            if name and not (
+                position > 0 and re.match(r"[A-Za-z0-9_-]", source[position - 1])
+            ):
+                position += len(name)
+                if name == "unit" and source.startswith("(", position):
+                    calls.append(position + 1)
+            else:
+                position += 1
+    return calls
+
+
+def typst_unit_ids(source: str) -> list:
+    """The id of every `unit(` call in RAW Typst source.
+
+    Each call's argument list is walked once and its `id:` is taken only at the
+    list's own level: directly after the opening parenthesis or after a comma
+    there. An `id:` inside a nested call, a content block, or a string belongs
+    to something else and is not read. A nested unit is its own `unit(` and is
+    found by its own match.
+
+    The walk follows Typst's two modes, because they disagree about what is
+    structure. In code a double quote opens a string, and brackets nest. Inside
+    a content block only square brackets nest: a quote or a parenthesis there
+    is prose, a backslash escapes the next character, and a backtick run opens
+    raw text that ends at the same run.
+
+    COMMENTS ARE READ BY THE WALK, never stripped from the source beforehand.
+    Whether `//` opens a comment depends on the mode it stands in: inside a
+    string it is text, and a pass that cut every `//` to the end of its line
+    cut a field such as `overview: "a // b"` in half, lost the string's
+    closing quote, and with it every argument that followed — the `id:` among
+    them.
+    """
+    ids = []
+    for position in _typst_unit_calls(source):
+        stack = [")"]
+        at_argument_start = True
+        while position < len(source) and stack:
+            character = source[position]
+            in_content = stack[-1] == "]"
+            comment_end = _typst_comment_end(source, position, in_content)
+            if comment_end >= 0:
+                position = comment_end
+                continue
+            if in_content:
+                if character == "\\":
+                    position += 2
+                    continue
+                if character == "`":
+                    run = len(source) - len(source[position:].lstrip("`")) - position
+                    close = source.find("`" * run, position + run)
+                    position = len(source) if close < 0 else close + run
+                    continue
+                if character == "[":
+                    stack.append("]")
+                elif character == "]":
+                    stack.pop()
+                position += 1
+                continue
+            if at_argument_start and len(stack) == 1:
+                named = TYPST_UNIT_ID_ARG_RE.match(source, position)
+                if named is not None:
+                    ids.append(named.group(1))
+                    break
+            if not character.isspace():
+                at_argument_start = False
+            if character == '"':
+                position += 1
+                while position < len(source) and source[position] != '"':
+                    position += 2 if source[position] == "\\" else 1
+            elif character in _TYPST_CLOSERS:
+                stack.append(_TYPST_CLOSERS[character])
+            elif character == stack[-1]:
+                stack.pop()
+            elif character == "," and len(stack) == 1:
+                at_argument_start = True
+            position += 1
+    return ids
+
+
 TYPST_LINK_RE = re.compile(r'link\(\s*"([^"]*)"')
 TYPST_LINE_COMMENT_RE = re.compile(r"//.*$")
 # A CITATION, as opposed to a declaration. `#term("term-x")` names a term
@@ -580,6 +833,12 @@ def index_typst(path: str, rel: str, schema: Schema) -> FileIndex:
         slug = section_slug(m.group(1))
         if slug:
             idx.section_ids.add(slug)
+    # A unit's anchor joins the same id set a section's does: both are ids the
+    # rendered document carries, and a link's fragment resolves against either.
+    if schema.unit_anchor_prefix:
+        for unit_id in typst_unit_ids("\n".join(idx.lines)):
+            if unit_id:
+                idx.section_ids.add(schema.unit_anchor_prefix + unit_id)
 
     # Pending-entry titles, which a host README's "Designed, not built" list
     # names (check 9). The title is a Typst string, so its escapes are undone

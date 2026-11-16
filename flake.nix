@@ -129,6 +129,12 @@
               # holding only the scripts would leave the assembler with nothing
               # to assemble, and it says so rather than emitting an empty one.
               cp lib/*.typ "$out/lib/"
+              # This repository's own folder contracts describe its working
+              # tree: each links back into docs/design, which the bundle does
+              # not carry. They are generated here for this repo's agents and
+              # are not part of what a host receives.
+              find "$out/scripts" "$out/skills" \
+                \( -name AGENTS.md -o -name CLAUDE.md \) -delete
 
               # The assembled library directory, made fresh from the bundled
               # schema. The library READS that schema at compile time, so the
@@ -165,8 +171,9 @@
         # The store is read-only, so nothing is written into $out at run time —
         # the scripts write their scratch and their output under the TARGET
         # directory, which the caller owns.
-        # Authored imports are layer-relative; render, check and context use the
-        # same selected library for those imports and their own compilation.
+        # Authored imports are layer-relative; render, check, context and units
+        # use the same selected library for those imports and their own
+        # compilation.
         prepareLayer = ''
           prepare_layer() {
             if [ -f "$1/design.typ" ]; then
@@ -190,6 +197,20 @@
                 ${pkgs.lib.optionalString (script == "design-aggregate" || script == "design-context") ''
                   ${prepareLayer}
                   prepare_layer "''${1:-}"
+                ''}
+                ${pkgs.lib.optionalString (script == "design-units") ''
+                  ${prepareLayer}
+                  # design-units reads the outer layer and the layer of every
+                  # --nested-project. It names them itself, so the argument
+                  # rules live in one place; an invocation it refuses prints
+                  # nothing here and reports its own error below.
+                  if units_layers="$(${gateBundle}/scripts/${script} "$@" --layers 2>/dev/null)"; then
+                    while IFS= read -r units_layer; do
+                      if [ -n "$units_layer" ]; then
+                        prepare_layer "$units_layer"
+                      fi
+                    done <<< "$units_layers"
+                  fi
                 ''}
                 exec ${gateBundle}/scripts/${script} "$@"
               '';
@@ -220,9 +241,10 @@
                                 repeatable exact repo-relative project root;
                                 its layer is <project>/docs/design
 
-                Runs aggregate freshness, token coverage, and layer integrity
-                for the outer layer and each declared nested project. Exit: 0
-                clean, 1 violation, 2 error.
+                Runs aggregate freshness, token coverage, layer integrity,
+                and the unit folder-contract checks for the outer layer and
+                each declared nested project. Exit: 0 clean, 1 violation,
+                2 error.
                 USAGE
                   exit 2
                 fi
@@ -382,6 +404,17 @@
                   integrity_args+=(--exclude-project "$nested_relpath")
                 done
                 ${gateBundle}/scripts/layer-integrity "''${integrity_args[@]}"
+                # THE UNIT CHECKS. Every path a unit lists exists, every
+                # generated folder contract is fresh, and no folder carries a
+                # contract no unit lists. A nested project's folders belong to
+                # its own layer, so the outer run excludes exactly the
+                # projects the integrity run excludes, and each nested project
+                # is then checked against its own root.
+                units_args=("$layer_root" "$repo_root" --check)
+                for nested_relpath in "''${nested_relpaths[@]}"; do
+                  units_args+=(--exclude-project "$nested_relpath")
+                done
+                ${gateBundle}/scripts/design-units "''${units_args[@]}"
 
                 for nested_project in "''${nested_projects[@]}"; do
                   nested_layer="$nested_project/docs/design"
@@ -389,6 +422,8 @@
                     "$nested_layer" "$nested_layer/design-layer.pdf" --check
                   ${gateBundle}/scripts/token-coverage "$nested_layer"
                   ${gateBundle}/scripts/layer-integrity "$nested_project"
+                  ${gateBundle}/scripts/design-units \
+                    "$nested_layer" "$nested_project" --check
                 done
               '';
             };
@@ -422,8 +457,11 @@
           # files; that reformat is a separate
           # decision from whatever else touches this config, and making it
           # here would bury it in an unrelated diff.
+          # design-units was written after that decision and is listed from
+          # its first commit, so it never carries an unformatted history.
           settings.formatter.ruff-format.includes = [
             "scripts/layer-integrity"
+            "scripts/design-units"
           ];
           settings.global.excludes = [
             # The widget gallery is the renderer-drift TEST FIXTURE, and a
@@ -462,6 +500,7 @@
             export DESIGN_RENDER_APP=${(gateApp "design-aggregate" "design-aggregate").program}
             export DESIGN_CHECK_APP=${checkApp.program}
             export DESIGN_CONTEXT_APP=${(gateApp "context" "design-context").program}
+            export DESIGN_UNITS_APP=${(gateApp "units" "design-units").program}
           '';
         };
 
@@ -481,11 +520,13 @@
         #
         #   nix run <flake>#project -- <schema.json> <out-dir>
         #   nix run <flake>#render  -- <layer-root> <out.pdf>
+        #   nix run <flake>#units   -- <layer-root> [repo-root]
         #   nix run <flake>#check   -- <layer-root> [repo-root]
         #
-        # project and render are thin pass-throughs to one script each.
-        # check is the COMPOSITE: the freshness check, token coverage, and
-        # layer integrity in sequence.
+        # project, render and units are thin pass-throughs to one script each;
+        # units also places the library beside each --nested-project layer.
+        # check is the COMPOSITE: the freshness check, token coverage, layer
+        # integrity, and the unit folder-contract checks in sequence.
         apps.project = gateApp "render-project" "render-project";
 
         # The renderer, callable on its own. `check` VERIFIES the rendered
@@ -509,6 +550,13 @@
         # path: both names run the same program, and the old one retires only
         # once the hosts have moved.
         apps.aggregate = gateApp "design-aggregate" "design-aggregate";
+
+        # The folder-contract generator. `check` VERIFIES every generated
+        # AGENTS.md region the way it verifies the PDF — regenerate and
+        # compare — so a host needs the app that WRITES them, after every
+        # change to a unit. It sits beside `render` for the same reason
+        # `render` exists.
+        apps.units = gateApp "units" "design-units";
         apps.check = checkApp;
 
         # The ephemeral agent-context projection. It uses the same pinned
@@ -600,9 +648,30 @@
               touch $out
             '';
 
+        # THIS REPOSITORY'S OWN LAYER, gated the way a host gates its own.
+        # docs/design describes this repo's parts as units, the PDF beside it
+        # is rendered from them, and lib/, schema/, fixtures/, scripts/ and
+        # skills/ each carry a folder contract generated from them. Nothing
+        # held those artifacts to their source: a unit could change, or a
+        # generated region be edited by hand, and `nix flake check` and CI
+        # stayed green. This runs the public check app over the checkout — the
+        # PDF fresh, every link resolving, every folder contract fresh — so a
+        # change to a unit that was not regenerated fails here.
+        #
+        # The sandbox copy is not a git work tree, so the scans walk the tree
+        # and the uncovered-directory report says it did not run. Neither
+        # changes what is checked: the copy holds exactly the tracked files.
+        checks.own-layer = pkgs.runCommand "own-layer" { } ''
+          cp -r ${./.} repo
+          chmod -R u+w repo
+          cd repo
+          ${checkApp.program} docs/design .
+          touch $out
+        '';
+
         # Every gate script's fixture-based self-test. This is what establishes
-        # the correctness of this repo: it holds no design layer of its own, so
-        # tests — not dogfooding — are the proof.
+        # the correctness of this repo: its own layer above exercises
+        # integration, and tests — not dogfooding — are the proof.
         checks.gate-self-tests =
           pkgs.runCommand "gate-self-tests"
             {
@@ -634,6 +703,7 @@
               export DESIGN_RENDER_APP=${(gateApp "design-aggregate" "design-aggregate").program}
               export DESIGN_CHECK_APP=${checkApp.program}
               export DESIGN_CONTEXT_APP=${(gateApp "context" "design-context").program}
+              export DESIGN_UNITS_APP=${(gateApp "units" "design-units").program}
               # The tests exec the gate scripts directly; /usr/bin/env does
               # not exist in the sandbox.
               patchShebangs scripts
@@ -647,6 +717,7 @@
               bash ./scripts/designlib-native.test.sh
               bash ./scripts/design-context.test.sh
               bash ./scripts/design-context-app.test.sh
+              bash ./scripts/design-units.test.sh
               bash ./scripts/diagram-viewpoints.test.sh
               bash ./scripts/typst-layer.test.sh
               bash ./scripts/token-coverage.test.sh

@@ -32,6 +32,7 @@ pre-commit:
           bash ./scripts/vendored-offline.test.sh
           bash ./scripts/designlib-native.test.sh
           bash ./scripts/typst-layer.test.sh
+          bash ./scripts/design-units.test.sh
         '
     projection-determinism:
       # The seam `nix flake check`'s projection-freshness check also proves:

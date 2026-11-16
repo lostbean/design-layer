@@ -24,9 +24,13 @@ from typst_policy import environment as typst_environment
 
 USAGE = (
     "usage: design-context <layer-root> "
-    "[--estimate | --manifest | --preview [--depth N] | --section PATH] "
+    "[--estimate | --manifest | --preview [--depth N] | --section PATH "
+    "| --unit ID | --path REPO-PATH] "
     "[--output PATH] [--expect-digest DIGEST]"
 )
+# The modes that emit one selected part of the projection. They share the
+# output and digest-guard behaviour, so every rule about them names this set.
+SELECTOR_MODES = frozenset({"section", "unit", "path"})
 LABEL = "<design-semantic>"
 # A guideline note is a diagnostic the compile records for `lint`; it is never
 # document content, and `render` and `check` accept a layer that carries one.
@@ -61,7 +65,7 @@ def layout_child(value: dict[str, object]) -> object:
 
 
 SEMANTIC_FIELDS = {
-    "document": {"name", "level", "title", "body"},
+    "document": {"name", "level", "title", "body", "context-command"},
     "term": {"owner", "slug", "title", "body"},
     "section": {"title", "lead", "visual", "notes", "body"},
     "answers": {"title", "accent", "answers"},
@@ -105,7 +109,23 @@ SEMANTIC_FIELDS = {
     "lens-pill": {"name"},
     "pill": {"names"},
     "term-reference": {"slug"},
+    "unit": {
+        "id",
+        "title",
+        "sections",
+        "empty-label",
+        "overview",
+        "interface",
+        "invariants",
+        "side-effects",
+        "verification",
+        "paths",
+        "body",
+    },
 }
+# Markdown has six heading levels, and a unit's heading level is its depth. A
+# unit nested past the sixth level has no heading the section index can read.
+MAX_HEADING_LEVEL = 6
 
 
 class ProjectionError(Exception):
@@ -124,6 +144,8 @@ class CliOptions:
     depth: int
     section: str | None
     expect_digest: str | None
+    unit: str | None = None
+    path: str | None = None
 
 
 def fail(message: str, code: int = 2) -> NoReturn:
@@ -136,6 +158,8 @@ def parse_args(argv: list[str]) -> CliOptions:
     output: Path | None = None
     depth: int | None = None
     section: str | None = None
+    unit: str | None = None
+    path: str | None = None
     expect_digest: str | None = None
     positionals: list[str] = []
     index = 0
@@ -165,6 +189,18 @@ def parse_args(argv: list[str]) -> CliOptions:
                 fail("--section requires a path")
             section = argv[index]
             select_mode("section")
+        elif arg == "--unit":
+            index += 1
+            if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
+                fail("--unit requires a unit id")
+            unit = argv[index]
+            select_mode("unit")
+        elif arg == "--path":
+            index += 1
+            if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
+                fail("--path requires a repo-relative path")
+            path = normalize_query_path(argv[index])
+            select_mode("path")
         elif arg == "--depth":
             index += 1
             if index >= len(argv) or not argv[index] or argv[index].startswith("-"):
@@ -199,8 +235,8 @@ def parse_args(argv: list[str]) -> CliOptions:
         fail(f"--{mode} and --output are mutually exclusive")
     if mode != "preview" and depth is not None:
         fail("--depth is only valid with --preview")
-    if mode != "section" and expect_digest is not None:
-        fail("--expect-digest is only valid with --section")
+    if mode not in SELECTOR_MODES and expect_digest is not None:
+        fail("--expect-digest is only valid with --section, --unit, or --path")
     if mode != "section" and section is not None:
         fail("--section requires a section path")
     if mode == "section" and section is None:
@@ -217,7 +253,97 @@ def parse_args(argv: list[str]) -> CliOptions:
         depth=depth or 2,
         section=section,
         expect_digest=expect_digest,
+        unit=unit,
+        path=path,
     )
+
+
+def locate_schema() -> Path:
+    """The declared schema, found by the one lookup every gate script shares.
+
+    The chain — $DESIGN_SCHEMA, else beside the script, else the checkout's
+    schema/ directory — is written once, in layer-integrity, and called here
+    with this script's own path. A copy of it kept in this file could come to
+    resolve a different schema than the gate's other steps read.
+    """
+    path = Path(__file__).with_name("layer-integrity")
+    name = "layer_integrity_for_context"
+    module = sys.modules.get(name)
+    if module is None:
+        loader = SourceFileLoader(name, str(path))
+        spec = importlib.util.spec_from_loader(name, loader)
+        if spec is None or spec.loader is None:
+            fail(f"cannot load the shared schema lookup from {path}")
+        module = importlib.util.module_from_spec(spec)
+        # A dataclass resolves its own module while the class body runs, so
+        # the module is registered before it executes.
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception as error:
+            del sys.modules[name]
+            fail(f"cannot load the shared schema lookup from {path}: {error}")
+    return Path(module.locate_schema(__file__))
+
+
+def path_forbidden_characters() -> frozenset[str]:
+    """The characters a repo-relative path may not carry, as the schema declares.
+
+    A path names one exact place, never a pattern. The library holds a unit's
+    own `paths` to `unit_contract.path_forbidden_characters`, and a `--path`
+    query is held to the same list so a typo is refused instead of matching
+    nothing. It is read from the schema rather than repeated here: a second
+    copy would let a query accept a character no unit path may carry.
+    """
+    path = locate_schema()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        fail(f"cannot read the design schema {path}: {error}")
+    contract = (raw.get("design_doc") or {}).get("unit_contract")
+    if not isinstance(contract, dict):
+        fail(
+            f"the schema in use ({path}) declares no design_doc.unit_contract, "
+            "so no unit lists a path to select by"
+        )
+    forbidden = contract.get("path_forbidden_characters")
+    if (
+        not isinstance(forbidden, list)
+        or not forbidden
+        or not all(isinstance(item, str) and len(item) == 1 for item in forbidden)
+    ):
+        fail(
+            f"the design schema {path} declares an unusable "
+            "design_doc.unit_contract.path_forbidden_characters"
+        )
+    return frozenset(forbidden)
+
+
+def normalize_query_path(raw: str) -> str:
+    """A `--path` value as the repo-relative path it names.
+
+    A leading `./` and a trailing `/` are spelling, so they are dropped. What
+    remains must be one exact repo-relative path: a query that is absolute,
+    that climbs with `..`, or that carries a glob cannot be compared with a
+    unit's declared paths, and is a usage error rather than an empty result.
+    """
+    value = raw
+    while value.startswith("./"):
+        value = value[2:]
+    value = value.rstrip("/")
+    segments = value.split("/") if value else []
+    forbidden = path_forbidden_characters()
+    if (
+        not value
+        or raw.startswith("/")
+        or any(character in forbidden for character in value)
+        or any(not segment or segment in {".", ".."} for segment in segments)
+    ):
+        fail(
+            f"--path requires one repo-relative path with no '.', '..', or "
+            f"glob segment, got {raw!r}"
+        )
+    return value
 
 
 def typst_string(path: Path) -> str:
@@ -320,7 +446,10 @@ def semantic_probe(layer: Path, scratch: Path, library: Path) -> Path:
                 f"#import {typst_string(relative)} as {module}",
                 f"#let values_{index} = dictionary({module})",
                 f'#let title_{index} = if "title" in values_{index} {{ values_{index}.title }} else {{ [{name} context] }}',
-                f'#metadata((kind: "document", name: "{name}", level: {1 if index == 0 else 2}, title: title_{index}, body: {module}.body)) <design-semantic>',
+                # `context_command` is the one binding the folder-contract
+                # generator reads off a design module. It travels in the
+                # document record so that generator needs no second probe.
+                f'#metadata((kind: "document", name: "{name}", level: {1 if index == 0 else 2}, title: title_{index}, body: {module}.body, "context-command": values_{index}.at("context_command", default: none))) <design-semantic>',
             ]
         )
     lines.append("")
@@ -525,9 +654,9 @@ def content_text(
             raise ProjectionError(f"raw without string value at {path}")
         if value.get("block") is True:
             language = value.get("lang", "")
-            if not isinstance(language, str):
-                raise ProjectionError(f"raw block language is not text at {path}")
-            return f"\n\n```{language}\n{text}\n```\n"
+            if not isinstance(language, str) or "`" in language or "\n" in language:
+                raise ProjectionError(f"raw block language is not one line of text at {path}")
+            return fenced_code(language, text)
         return f"`{text}`"
     if function == "link":
         destination = value.get("dest")
@@ -606,6 +735,12 @@ def field_text(
     return content_text(value, path, term_titles, context_names).strip()
 
 
+# A fenced code block as the projection writes one: the opening fence at the
+# start of a line, possibly indented under a list item, and a closing line of
+# at least as many backticks and nothing else.
+FENCED_BLOCK_RE = re.compile(r"(?ms)^[ \t]*(`{3,})[^\n]*\n.*?^[ \t]*\1`*[ \t]*$")
+
+
 def _normalize_fragment(value: str) -> str:
     """Normalize prose while protecting authored raw Markdown fragments."""
     protected: list[str] = []
@@ -614,7 +749,8 @@ def _normalize_fragment(value: str) -> str:
         protected.append(match.group(0))
         return f"\x00raw-{len(protected) - 1}\x00"
 
-    value = re.sub(r"```[^\n]*\n.*?\n```", protect, value, flags=re.DOTALL)
+    value = _CONTRACT_RE.sub(protect, value)
+    value = FENCED_BLOCK_RE.sub(protect, value)
     value = re.sub(r"`[^`\n]*`", protect, value)
     value = re.sub(
         r"(?m)^[ \t]{2,}(?:(?:[-*+] |\d+[.)] )|[A-Z][A-Za-z _-]*: ).*$",
@@ -690,6 +826,17 @@ def markdown_code_block(language: object, source: object, path: str) -> str:
             raise ProjectionError(f"raw code block has no text at {path}.src")
     else:
         raise ProjectionError(f"code block source is not literal text at {path}.src")
+    return fenced_code(language, text)
+
+
+def fenced_code(language: str, text: str) -> str:
+    """A fenced code block that its own text cannot close.
+
+    The fence is one backtick longer than the longest run of backticks the
+    text holds, and never shorter than three. A fixed three-backtick fence
+    around text that holds three backticks ends where the text does, and
+    everything after it — the next unit's heading among it — is read as code.
+    """
     runs = [len(match.group(0)) for match in re.finditer(r"`+", text)]
     fence = "`" * max(3, (max(runs) + 1) if runs else 3)
     return f"\n\n{fence}{language}\n{text}\n{fence}\n"
@@ -714,6 +861,253 @@ def expect_keys(value: dict[str, object], allowed: set[str], path: str) -> None:
         raise ProjectionError(
             f"unrepresentable field(s) at {path}: {', '.join(sorted(surplus))}"
         )
+
+
+@dataclass
+class UnitSection:
+    """One answered section of a design unit's contract."""
+
+    field: str
+    label: str
+    shape: str
+    text: str
+    items: list[str]
+
+
+def design_unit_sections(
+    value: dict[str, object],
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+) -> list[UnitSection]:
+    """Read a unit node's sections in the order the library declared them.
+
+    The node carries the section table the library rendered it with, so the
+    labels and the order here are the schema's by way of the one reader that
+    owns it, and this projection cannot disagree with the PDF about them.
+    """
+    declared = value.get("sections")
+    if not isinstance(declared, list) or not declared:
+        raise ProjectionError(f"unit declares no sections at {path}")
+    sections: list[UnitSection] = []
+    for index, entry in enumerate(declared):
+        if not isinstance(entry, dict):
+            raise ProjectionError(f"unit section is not an object at {path}.sections[{index}]")
+        field, label, shape = entry.get("field"), entry.get("label"), entry.get("shape")
+        if not isinstance(field, str) or not isinstance(label, str) or shape not in ("text", "list"):
+            raise ProjectionError(f"unit section is malformed at {path}.sections[{index}]")
+        if field not in value:
+            raise ProjectionError(f"unit is missing section {field!r} at {path}")
+        raw = value[field]
+        if shape == "list":
+            if not isinstance(raw, list):
+                raise ProjectionError(f"unit section {field!r} is not a list at {path}")
+            # An item is one entry of a Markdown list, so the line breaks of
+            # its prose fold to spaces; a code block it holds keeps its lines.
+            # Each fragment is normalized HERE, the way the whole projection
+            # is normalized later, so a folder contract — which is never part
+            # of that later pass — carries the same text.
+            items = [
+                _fold_item(
+                    _normalize_fragment(
+                        content_text(
+                            item, f"{path}.{field}[{position}]", term_titles, context_names
+                        )
+                    ).strip()
+                )
+                for position, item in enumerate(raw)
+            ]
+            if any(not item for item in items):
+                raise ProjectionError(f"unit section {field!r} holds an empty item at {path}")
+            sections.append(UnitSection(field, label, shape, "", items))
+        else:
+            text = _normalize_fragment(
+                content_text(raw, f"{path}.{field}", term_titles, context_names)
+            ).strip()
+            if not text:
+                raise ProjectionError(f"unit section {field!r} is empty at {path}")
+            sections.append(UnitSection(field, label, shape, text, []))
+    return sections
+
+
+def _fold_item(text: str) -> str:
+    """One list item's text: its prose on one line, each code block whole.
+
+    A code block in a field is projected as a fenced block. Folding its line
+    breaks with the prose around it would join the fence, the code, and the
+    closing fence into one line, so the prose between blocks is folded and
+    each block is kept as its own paragraph of the item.
+    """
+    blocks: list[str] = []
+    position = 0
+    for match in FENCED_BLOCK_RE.finditer(text):
+        prose = re.sub(r"\s*\n\s*", " ", text[position : match.start()]).strip()
+        if prose:
+            blocks.append(prose)
+        blocks.append(match.group(0).strip("\n"))
+        position = match.end()
+    prose = re.sub(r"\s*\n\s*", " ", text[position:]).strip()
+    if prose:
+        blocks.append(prose)
+    return "\n\n".join(blocks)
+
+
+def _opens_with_fence(text: str) -> bool:
+    return FENCED_BLOCK_RE.match(text) is not None
+
+
+def design_unit_empty_label(value: dict[str, object], path: str) -> str:
+    label = value.get("empty-label")
+    if not isinstance(label, str) or not label:
+        raise ProjectionError(f"unit declares no empty label at {path}")
+    return label
+
+
+def design_unit_paths(value: dict[str, object], path: str) -> list[str]:
+    paths = value.get("paths")
+    if not isinstance(paths, list) or not all(isinstance(item, str) and item for item in paths):
+        raise ProjectionError(f"unit paths are not a list of paths at {path}")
+    return list(paths)
+
+
+def design_unit_contract_markdown(sections: list[UnitSection], empty_label: str) -> str:
+    """The sections of one unit as Markdown.
+
+    This is the one rendering of a unit's contract. The projection places it
+    under the unit's heading and the folder-contract generator places the same
+    text in a folder's AGENTS.md, so the two cannot drift apart.
+
+    A code block in a field stays a fenced block. A fence opens only at the
+    start of a line, so a text section that begins with one puts its label on
+    a line of its own, and an item's later lines are indented under its
+    marker, where Markdown keeps them inside the item.
+    """
+    blocks: list[str] = []
+    for section in sections:
+        if section.shape == "list":
+            if section.items:
+                blocks.append(
+                    f"{section.label}:\n\n"
+                    + "\n".join(_list_item(item) for item in section.items)
+                )
+            else:
+                blocks.append(f"{section.label}: {empty_label}")
+        elif _opens_with_fence(section.text):
+            blocks.append(f"{section.label}:\n\n{section.text}")
+        else:
+            blocks.append(f"{section.label}: {section.text}")
+    return "\n\n".join(blocks)
+
+
+def _list_item(item: str) -> str:
+    first, *rest = item.split("\n")
+    return "\n".join([f"- {first}", *(f"  {line}" if line else "" for line in rest)])
+
+
+# WHERE A UNIT BEGINS AND ENDS IN THE PROJECTION. A unit's heading tells where
+# it begins and not where it ends: prose that follows a nested unit in its
+# parent's body, or follows the parent in its section, sits under the same
+# heading as far as a heading scan can tell. So the unit's own node marks its
+# two ends while it is written, and the marks are taken out of the finished
+# projection, leaving the offsets a selector cuts by. A mark is a control
+# character around the unit id: no authored text holds one, and none of the
+# whitespace rules the projection normalizes with reads one.
+_UNIT_MARK = "\x01"
+_UNIT_MARK_RE = re.compile("\x01unit-(open|close):([^\x01]*)\x01|[\x02\x03]")
+
+
+# A unit's contract is written already normalized, in the exact text its
+# folder contract carries. The pass that normalizes a whole document would
+# otherwise strip the indentation that keeps a list item's later lines inside
+# the item, and the projection would print the contract differently from the
+# folder. So the contract is guarded from that pass and the guard is taken
+# out with the unit marks.
+_CONTRACT_OPEN = "\x02"
+_CONTRACT_CLOSE = "\x03"
+_CONTRACT_RE = re.compile("\x02[^\x02\x03]*\x03")
+
+
+def _unit_mark(side: str, unit_id: str) -> str:
+    return f"{_UNIT_MARK}unit-{side}:{unit_id}{_UNIT_MARK}"
+
+
+def strip_unit_marks(marked: str) -> tuple[str, dict[str, tuple[int, int]]]:
+    """The projection without its unit marks, and each unit's character span.
+
+    A span runs from the first character of the unit's heading to the end of
+    the last line the unit's node wrote.
+    """
+    pieces: list[str] = []
+    opened: dict[str, int] = {}
+    spans: dict[str, tuple[int, int]] = {}
+    position = 0
+    length = 0
+    for match in _UNIT_MARK_RE.finditer(marked):
+        piece = marked[position : match.start()]
+        pieces.append(piece)
+        length += len(piece)
+        position = match.end()
+        side, unit_id = match.group(1), match.group(2)
+        if side is None:
+            continue  # a contract's guard: it only kept normalization out
+        if side == "open":
+            opened.setdefault(unit_id, length)
+        elif unit_id in opened and unit_id not in spans:
+            spans[unit_id] = (opened[unit_id], length)
+    pieces.append(marked[position:])
+    return "".join(pieces), spans
+
+
+def design_unit_markdown(
+    value: dict[str, object],
+    level: int,
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+    allow_clauses: bool,
+) -> str:
+    if level > MAX_HEADING_LEVEL:
+        raise ProjectionError(
+            f"unit {value.get('id')!r} at {path} is nested past Markdown's "
+            f"{MAX_HEADING_LEVEL} heading levels and cannot be addressed"
+        )
+    unit_id = value.get("id")
+    if not isinstance(unit_id, str) or not unit_id:
+        raise ProjectionError(f"unit id is invalid at {path}")
+    title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
+    if not title:
+        raise ProjectionError(f"unit {unit_id!r} has no title at {path}")
+    empty_label = design_unit_empty_label(value, path)
+    paths = design_unit_paths(value, path)
+    contract = design_unit_contract_markdown(
+        design_unit_sections(value, path, term_titles, context_names), empty_label
+    )
+    body = content_text(
+        value.get("body"),
+        f"{path}.body",
+        term_titles,
+        context_names,
+        level + 1,
+        allow_clauses,
+    ).strip()
+    listed = ", ".join(f"`{item}`" for item in paths) if paths else empty_label
+    parts = [
+        f"{'#' * level} unit: {title}",
+        f"ID: {unit_id}",
+        f"Paths: {listed}",
+        _CONTRACT_OPEN + contract + _CONTRACT_CLOSE,
+    ]
+    if body:
+        parts.append(body)
+    # The marks bracket exactly what this node wrote, so a selector can return
+    # the unit and nothing that merely follows it under the same heading.
+    return (
+        "\n\n"
+        + _unit_mark("open", unit_id)
+        + "\n\n".join(parts)
+        + _unit_mark("close", unit_id)
+        + "\n\n"
+    )
 
 
 def unit_markdown(
@@ -1445,6 +1839,11 @@ def semantic_markdown(
         return unit_markdown(
             value, "contract", level, path, term_titles, context_names
         )
+    if kind == "unit":
+        level = heading_level if heading_level is not None else 3
+        return design_unit_markdown(
+            value, level, path, term_titles, context_names, allow_clauses
+        )
     if kind == "entity":
         level = heading_level if heading_level is not None else 3
         title = field_text(value.get("title"), f"{path}.title", term_titles, context_names)
@@ -1941,7 +2340,261 @@ def validate_state_links(records: list[object]) -> None:
             raise ProjectionError(f"state links: state type {state_type!r} variants do not equal state machine {machine_id!r} states")
 
 
+@dataclass
+class UnitRecord:
+    """One design unit found in the layer, in document order."""
+
+    id: str
+    title: str
+    paths: list[str]
+    parent: str | None
+    document: str
+    # The unit's sections as Markdown: the text the projection places under the
+    # unit's heading and a folder contract repeats.
+    contract: str
+    node: dict[str, object]
+    # The heading level the projection writes the unit at.
+    level: int = 0
+
+
+@dataclass
+class LayerUnits:
+    """The units a layer declares, with the facts a folder contract names.
+
+    This is read WITHOUT the Markdown projection. The gate checks folder
+    contracts for every layer, and a layer is well-formed without the corpus
+    maps the projection requires and with constructs the projection cannot
+    represent — so the unit checks must not inherit either requirement.
+    """
+
+    units: list[UnitRecord]
+    # (name, source path) per design document, root first.
+    documents: list[tuple[str, Path]]
+    # The `context_command` each design module exports, by document name.
+    context_commands: dict[str, object]
+
+
+@dataclass
+class Projection:
+    """One Markdown projection of a layer, with the units its selectors read."""
+
+    markdown: bytes
+    units: list[UnitRecord]
+    # Each unit's own text in `markdown`, as a half-open range of bytes.
+    spans: dict[str, tuple[int, int]]
+
+
+@dataclass
+class _LayerSemantics:
+    """The queried semantic tree, resolved once for whichever reader asks."""
+
+    expected_names: list[str]
+    documents: list[tuple[str, Path]]
+    by_name: dict[object, dict[str, object]]
+    terms: list[dict[str, object]]
+    term_titles: dict[str, str]
+    context_names: frozenset[str]
+    units: list[UnitRecord]
+
+
+# THE HEADING LEVEL A NESTED BLOCK IS PROJECTED AT. The projection hands each
+# block the level its host leaves it: these kinds write a heading and place
+# the named fields one level below it. Every other semantic kind projects its
+# fields with no level of its own, and a block found there takes its default.
+# `collect_units` follows the same rule without projecting anything, so the
+# gate can refuse a unit past the sixth level in a layer the projection cannot
+# otherwise represent; `locate_units` then compares the two wherever the
+# projection does run.
+_LEVEL_HOSTS: dict[str, tuple[int, frozenset[str]]] = {
+    "section": (2, frozenset({"visual", "notes", "body"})),
+    "subsection": (3, frozenset({"body"})),
+    "unit": (3, frozenset({"body"})),
+    "entity": (3, frozenset({"body"})),
+    "notes": (3, frozenset({"body"})),
+}
+# The document's own spine. Each draws a fixed heading level on the page, so
+# the library refuses one inside a unit's body, and so does this reader.
+_SPINE_KINDS = frozenset({"section", "subsection"})
+
+
+def collect_units(
+    records: list[object],
+    term_titles: Mapping[str, str] | None = None,
+    context_names: frozenset[str] | None = None,
+) -> list[UnitRecord]:
+    """Every unit the layer declares, with its parent, document, and level.
+
+    Nesting is read off the semantic tree: a unit found while walking another
+    unit's fields is that unit's child. Three rules are checked here because
+    the projection never lays the document out, so the renderer's own checks —
+    which read layout-time styles and trails — do not run in this mode: an id
+    is unique across the layer, no unit is projected past the sixth heading
+    level, and a unit's body holds no section or subsection.
+    """
+    found: list[UnitRecord] = []
+    seen: dict[str, str] = {}
+    # How much deeper the projection writes a heading than the page draws it,
+    # for the document being walked: a context document's title is one level
+    # below the root's in the projection, and its own chapter on the page.
+    shift = 0
+    # The enclosing unit's id and the level its heading is drawn at on the
+    # page, so a heading called with its own level can be judged against it.
+    scope: list[tuple[str, int]] = []
+
+    def walk(
+        current: object, parent: str | None, document: str, level: int | None
+    ) -> None:
+        if isinstance(current, list):
+            for item in current:
+                walk(item, parent, document, level)
+            return
+        if not isinstance(current, dict):
+            return
+        if current.get("func") == "metadata" and current.get("label") == LABEL:
+            node = current.get("value")
+            if not isinstance(node, dict):
+                raise ProjectionError("semantic metadata value is not an object")
+            visit(node, parent, document, level)
+            return
+        if current.get("func") == "heading" and scope:
+            check_heading(current)
+        for child in current.values():
+            walk(child, parent, document, level)
+
+    def check_heading(heading: dict[str, object]) -> None:
+        """Refuse a heading that names a level at or above its unit's.
+
+        A heading written in markup or called with no level carries a depth
+        and nests below the unit. One that names its level — or an offset —
+        ignores the unit and is drawn at that level, where the page numbers
+        what follows under it while the projection keeps it in the unit.
+        """
+        if isinstance(heading.get("level"), int):
+            drawn = heading["level"]
+        elif isinstance(heading.get("offset"), int):
+            depth = heading.get("depth", 1)
+            drawn = heading["offset"] + (depth if isinstance(depth, int) else 1)
+        else:
+            return
+        unit_id, unit_level = scope[-1]
+        if drawn <= unit_level:
+            raise ProjectionError(
+                f"a heading inside the body of unit {unit_id!r} is drawn at "
+                f"level {drawn}, at or above the unit that holds it, which is "
+                f"at level {unit_level}, so the heading would leave the unit: "
+                "the page would number what follows it under the heading "
+                "while the Markdown projection keeps it in the unit. Write the "
+                "heading in markup (`= Title`) or call it without a level, and "
+                "it nests below the unit; or give the structure to a nested unit"
+            )
+
+    def visit(
+        node: dict[str, object], parent: str | None, document: str, level: int | None
+    ) -> None:
+        nonlocal shift
+        kind = node.get("kind")
+        inner = parent
+        below: dict[str, int | None] = {}
+        if kind == "document":
+            own = node.get("level", 1)
+            if isinstance(own, int):
+                below = {"body": own + 1}
+                shift = own - 1
+        elif isinstance(kind, str) and kind in _LEVEL_HOSTS:
+            default, hosted = _LEVEL_HOSTS[kind]
+            own = level if level is not None else default
+            below = {name: own + 1 for name in hosted}
+        if kind in _SPINE_KINDS and parent is not None:
+            title = field_text(
+                node.get("title"), f"{kind}.title", term_titles, context_names
+            )
+            raise ProjectionError(
+                f"{kind} {title!r} is written inside the body of unit "
+                f"{parent!r}. A {kind} is part of the document's own spine and "
+                "keeps its fixed heading level, which would sit above the unit "
+                "that holds it. Give the structure to a nested unit, or move "
+                f"the {kind} out of the unit's body"
+            )
+        if kind == "unit":
+            unit_id = node.get("id")
+            if not isinstance(unit_id, str) or not unit_id:
+                raise ProjectionError("unit id is invalid")
+            if not document:
+                raise ProjectionError(
+                    f"unit {unit_id!r} is declared outside a design document"
+                )
+            if unit_id in seen:
+                raise ProjectionError(
+                    f"unit id {unit_id!r} is declared twice (in {seen[unit_id]} "
+                    f"and {document}); a unit id is unique across the layer"
+                )
+            seen[unit_id] = document
+            if own > MAX_HEADING_LEVEL:
+                raise ProjectionError(
+                    f"unit {unit_id!r} in {document} is nested past Markdown's "
+                    f"{MAX_HEADING_LEVEL} heading levels and cannot be "
+                    f"addressed: the projection would write it at level {own}. "
+                    "The projection nests every heading below its host, so a "
+                    "unit inside a section inside a section is deeper there "
+                    "than on the page. Flatten the nesting, or split the "
+                    "unit's subtree into sibling units"
+                )
+            found.append(
+                UnitRecord(
+                    id=unit_id,
+                    title=field_text(
+                        node.get("title"),
+                        f"unit {unit_id}.title",
+                        term_titles,
+                        context_names,
+                    ),
+                    paths=design_unit_paths(node, f"unit {unit_id}"),
+                    parent=parent,
+                    document=document,
+                    contract=design_unit_contract_markdown(
+                        design_unit_sections(
+                            node, f"unit {unit_id}", term_titles, context_names
+                        ),
+                        design_unit_empty_label(node, f"unit {unit_id}"),
+                    ),
+                    node=node,
+                    level=own,
+                )
+            )
+            inner = unit_id
+            scope.append((unit_id, own - shift))
+        for key, child in node.items():
+            if key != "kind":
+                walk(child, inner, document, below.get(key))
+        if kind == "unit":
+            scope.pop()
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        name = record.get("name") if record.get("kind") == "document" else ""
+        visit(record, None, name if isinstance(name, str) else "", None)
+    return found
+
+
 def project(layer: Path) -> bytes:
+    return project_layer(layer).markdown
+
+
+def layer_units(layer: Path) -> LayerUnits:
+    """The layer's units, read without projecting its documents to Markdown."""
+    semantics = _read_layer(layer)
+    return LayerUnits(
+        units=semantics.units,
+        documents=semantics.documents,
+        context_commands={
+            str(name): record.get("context-command")
+            for name, record in semantics.by_name.items()
+        },
+    )
+
+
+def _read_layer(layer: Path) -> _LayerSemantics:
     documents_expected = corpus_documents(layer)
     records = query_semantics(layer)
     validate_state_links(records)
@@ -1961,11 +2614,26 @@ def project(layer: Path) -> bytes:
         for record in terms
         if isinstance(record.get("slug"), str)
     }
+    return _LayerSemantics(
+        expected_names=expected_names,
+        documents=documents_expected,
+        by_name=by_name,
+        terms=terms,
+        term_titles=term_titles,
+        context_names=context_names,
+        units=collect_units(records, term_titles, context_names),
+    )
+
+
+def project_layer(layer: Path) -> Projection:
+    semantics = _read_layer(layer)
+    by_name, terms = semantics.by_name, semantics.terms
+    term_titles, context_names = semantics.term_titles, semantics.context_names
     parts = [
         semantic_markdown(
             by_name[name], term_titles=term_titles, context_names=context_names
         )
-        for name in expected_names
+        for name in semantics.expected_names
     ]
     owners = sorted({record.get("owner") for record in terms})
     for owner in owners:
@@ -1998,7 +2666,15 @@ def project(layer: Path) -> bytes:
             raise ProjectionError(f"cannot read semantic map {path}: {error}") from error
         parts.append(f"<!-- source: docs/{filename} -->\n\n{raw}")
 
-    return ("\n\n".join(part.rstrip("\n") for part in parts) + "\n").encode("utf-8")
+    marked = "\n\n".join(part.rstrip("\n") for part in parts) + "\n"
+    text, character_spans = strip_unit_marks(marked)
+    spans = {
+        unit_id: (len(text[:start].encode("utf-8")), len(text[:end].encode("utf-8")))
+        for unit_id, (start, end) in character_spans.items()
+    }
+    return Projection(
+        markdown=text.encode("utf-8"), units=semantics.units, spans=spans
+    )
 
 
 def estimate(markdown: bytes) -> dict[str, int | str]:
@@ -2035,6 +2711,10 @@ class SectionIndex:
 
 
 _FENCE_RE = re.compile(r"^[ \t]{0,3}((?:\x60{3,}|~{3,}))")
+# A fence may also open on a list item's own line, after its marker: a unit's
+# list field writes a code block that begins an item that way. It closes on a
+# line of its own, so only the opening reads past the marker.
+_ITEM_FENCE_RE = re.compile(r"^[ \t]{0,3}(?:[-*+]|[0-9]{1,9}[.)])[ \t]+((?:\x60{3,}|~{3,}))")
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*\r?\n?$")
 
 
@@ -2063,6 +2743,12 @@ def index_sections(markdown: bytes) -> SectionIndex:
             continue
         if marker is not None:
             fence = marker
+            continue
+        item_fence = _ITEM_FENCE_RE.match(line)
+        if item_fence is not None and not (
+            item_fence.group(1)[0] == "`" and "`" in line[item_fence.end() :]
+        ):
+            fence = item_fence.group(1)
             continue
         heading = _HEADING_RE.match(line)
         if heading is not None:
@@ -2126,7 +2812,93 @@ def metrics(markdown: bytes) -> dict[str, int | str]:
     return result
 
 
-def section_manifest(markdown: bytes, index: SectionIndex) -> dict[str, object]:
+_UNIT_HEADING_PREFIX = "unit: "
+_UNIT_ID_LINE_RE = re.compile(r"^ID: (\S+)\s*$")
+
+
+def locate_units(index: SectionIndex, units: list[UnitRecord]) -> dict[str, str]:
+    """Map each declared unit id to the address of its heading.
+
+    A unit projects as a `unit: <title>` heading whose first line is
+    `ID: <id>`. The id is unique across the layer, so that pair names one
+    heading. Every declared unit must be found exactly once: a unit the index
+    cannot locate would be a unit no selector can return, and that fails here
+    instead of at the first caller who asks for it.
+    """
+    declared = {unit.id for unit in units}
+    located: dict[str, str] = {}
+    for address in index.order:
+        node = index.nodes[address]
+        if not node.title.startswith(_UNIT_HEADING_PREFIX):
+            continue
+        for line in index.lines[node.start_line + 1 : node.direct_end_line]:
+            if not line.strip():
+                continue
+            match = _UNIT_ID_LINE_RE.match(line)
+            if match is not None and match.group(1) in declared:
+                unit_id = match.group(1)
+                if unit_id in located:
+                    raise ProjectionError(
+                        f"unit {unit_id!r} projects to two headings "
+                        f"({located[unit_id]} and {address})"
+                    )
+                located[unit_id] = address
+            break
+    missing = sorted(declared - set(located))
+    if missing:
+        raise ProjectionError(
+            "unit(s) have no addressable heading in the projection: "
+            + ", ".join(missing)
+        )
+    # The gate judges a unit's depth from `collect_units`, which follows the
+    # projection's level rule without projecting. Here both have run, so a
+    # difference between them is found rather than left for the gate to act on.
+    for unit in units:
+        projected = index.nodes[located[unit.id]].level
+        if projected != unit.level:
+            raise ProjectionError(
+                f"unit {unit.id!r} is projected at heading level {projected}, "
+                f"and the unit reader placed it at level {unit.level}; the two "
+                "must agree, because the gate refuses a unit by the reader's "
+                "level. This is a defect in design-context, not in the layer"
+            )
+    return located
+
+
+def path_governed_by(query: str, unit_path: str) -> bool:
+    """Whether a unit path is the queried path or a parent directory of it."""
+    return query == unit_path or query.startswith(unit_path + "/")
+
+
+def units_for_path(units: list[UnitRecord], query: str) -> list[UnitRecord]:
+    return [
+        unit
+        for unit in units
+        if any(path_governed_by(query, unit_path) for unit_path in unit.paths)
+    ]
+
+
+def unit_manifest(
+    units: list[UnitRecord], located: Mapping[str, str]
+) -> list[dict[str, object]]:
+    return [
+        {
+            "id": unit.id,
+            "title": unit.title,
+            "address": located[unit.id],
+            "parent": unit.parent,
+            "document": unit.document,
+            "paths": list(unit.paths),
+        }
+        for unit in units
+    ]
+
+
+def section_manifest(
+    markdown: bytes,
+    index: SectionIndex,
+    units: list[UnitRecord] | None = None,
+) -> dict[str, object]:
     sections: list[dict[str, object]] = []
     for address in index.order:
         node = index.nodes[address]
@@ -2156,6 +2928,11 @@ def section_manifest(markdown: bytes, index: SectionIndex) -> dict[str, object]:
         result["preamble"] = metrics(
             section_bytes(index, 0, index.nodes[index.order[0]].start_line)
         )
+    # A layer that declares no unit keeps the manifest it always had. The key
+    # appears with the first unit, so an existing consumer sees no new field
+    # until its layer gives the field something to say.
+    if units:
+        result["units"] = unit_manifest(units, locate_units(index, units))
     return result
 
 
@@ -2199,6 +2976,25 @@ def digest_matches(expected: str, actual: str) -> bool:
     )
 
 
+def guard_digest(
+    markdown: bytes, selected: bytes, what: str, expect_digest: str | None
+) -> None:
+    """Refuse a selection taken from a different snapshot than the caller's."""
+    if expect_digest is None:
+        return
+    projection_digest = digest(markdown)
+    section_digest = digest(selected)
+    if not (
+        digest_matches(expect_digest, projection_digest)
+        or digest_matches(expect_digest, section_digest)
+    ):
+        raise ProjectionOperationalError(
+            "digest mismatch for "
+            f"{what}: expected {expect_digest}, projection is {projection_digest}, "
+            f"section is {section_digest}"
+        )
+
+
 def selected_section(
     markdown: bytes,
     index: SectionIndex,
@@ -2209,19 +3005,87 @@ def selected_section(
     if node is None:
         raise ProjectionOperationalError(f"section not found: {address}")
     subtree = section_bytes(index, node.start_line, node.end_line)
-    if expect_digest is not None:
-        projection_digest = digest(markdown)
-        section_digest = digest(subtree)
-        if not (
-            digest_matches(expect_digest, projection_digest)
-            or digest_matches(expect_digest, section_digest)
-        ):
-            raise ProjectionOperationalError(
-                "digest mismatch for "
-                f"{address}: expected {expect_digest}, projection is {projection_digest}, "
-                f"section is {section_digest}"
-            )
+    guard_digest(markdown, subtree, address, expect_digest)
     return subtree
+
+
+def unit_text(projection: Projection, unit_id: str) -> bytes:
+    """One unit as its own node wrote it: heading, contract, body, nested units.
+
+    The bytes are cut at the marks the unit's node left, never at the next
+    heading. A heading subtree would also carry whatever follows the unit
+    under the same heading — prose after a nested unit in its parent's body,
+    prose after the parent in its section, the next corpus file's source line
+    — and none of that is the unit.
+    """
+    span = projection.spans.get(unit_id)
+    if span is None:
+        raise ProjectionError(
+            f"unit {unit_id!r} is declared and has no text in the projection"
+        )
+    return projection.markdown[span[0] : span[1]].rstrip(b"\n") + b"\n"
+
+
+def selected_unit(
+    projection: Projection,
+    index: SectionIndex,
+    unit_id: str,
+    expect_digest: str | None,
+) -> bytes:
+    """One unit: its contract, its body, and its nested units."""
+    units = projection.units
+    # Every declared unit must have a heading the manifest can address, the
+    # selected one included, so a selector and the manifest read one layer.
+    locate_units(index, units)
+    if not any(unit.id == unit_id for unit in units):
+        known = ", ".join(unit.id for unit in units) or "none"
+        raise ProjectionOperationalError(
+            f"unit not found: {unit_id} (declared units: {known})"
+        )
+    selected = unit_text(projection, unit_id)
+    guard_digest(projection.markdown, selected, f"unit {unit_id}", expect_digest)
+    return selected
+
+
+def selected_path(
+    projection: Projection,
+    index: SectionIndex,
+    query: str,
+    expect_digest: str | None,
+) -> bytes:
+    """Every unit governing a path, each as its own text, in layer order.
+
+    A unit already inside another selected unit is not repeated: its text is
+    part of that unit, and emitting it twice would hand the reader one
+    contract as though it were two.
+    """
+    units = projection.units
+    locate_units(index, units)
+    governing = units_for_path(units, query)
+    if not governing:
+        raise ProjectionOperationalError(
+            f"no unit lists {query} or a parent directory of it"
+        )
+    chosen = {unit.id for unit in governing}
+    parents = {unit.id: unit.parent for unit in units}
+
+    def nested_in_chosen(unit_id: str) -> bool:
+        parent = parents.get(unit_id)
+        while parent is not None:
+            if parent in chosen:
+                return True
+            parent = parents.get(parent)
+        return False
+
+    outermost = [unit for unit in governing if not nested_in_chosen(unit.id)]
+    texts = [unit_text(projection, unit.id) for unit in outermost]
+    selected = (
+        texts[0]
+        if len(texts) == 1
+        else b"\n\n".join(text.rstrip(b"\n") for text in texts) + b"\n"
+    )
+    guard_digest(projection.markdown, selected, f"path {query}", expect_digest)
+    return selected
 
 
 def write_new_output(output: Path, markdown: bytes) -> None:
@@ -2244,7 +3108,8 @@ def write_new_output(output: Path, markdown: bytes) -> None:
 def main(argv: list[str]) -> int:
     options = parse_args(argv)
     try:
-        markdown = project(options.layer)
+        projection = project_layer(options.layer)
+        markdown, units = projection.markdown, projection.units
     except ProjectionOperationalError as error:
         sys.stderr.write(f"design-context: error: {error}\n")
         return 2
@@ -2257,7 +3122,7 @@ def main(argv: list[str]) -> int:
     if options.mode == "estimate":
         sys.stdout.write(json.dumps(estimate(markdown), sort_keys=True) + "\n")
         return 0
-    if options.mode in {"manifest", "preview", "section"}:
+    if options.mode in {"manifest", "preview"} | SELECTOR_MODES:
         try:
             index = index_sections(markdown)
             if not index.order:
@@ -2267,7 +3132,9 @@ def main(argv: list[str]) -> int:
             if options.mode == "manifest":
                 sys.stdout.write(
                     json.dumps(
-                        section_manifest(markdown, index), indent=2, sort_keys=True
+                        section_manifest(markdown, index, units),
+                        indent=2,
+                        sort_keys=True,
                     )
                     + "\n"
                 )
@@ -2275,10 +3142,21 @@ def main(argv: list[str]) -> int:
             if options.mode == "preview":
                 sys.stdout.write(preview(markdown, index, options.depth))
                 return 0
-            assert options.section is not None
-            selected = selected_section(
-                markdown, index, options.section, options.expect_digest
-            )
+            if options.mode == "unit":
+                assert options.unit is not None
+                selected = selected_unit(
+                    projection, index, options.unit, options.expect_digest
+                )
+            elif options.mode == "path":
+                assert options.path is not None
+                selected = selected_path(
+                    projection, index, options.path, options.expect_digest
+                )
+            else:
+                assert options.section is not None
+                selected = selected_section(
+                    markdown, index, options.section, options.expect_digest
+                )
         except ProjectionOperationalError as error:
             sys.stderr.write(f"design-context: error: {error}\n")
             return 2

@@ -55,6 +55,7 @@
 //   chart.typ      the chart, drawn by a plotting carrier
 //   formula.typ    display equations with notation and citation furniture
 //   pseudocode.typ implementation-neutral procedures with structured control flow
+//   unit.typ       the design unit: one required contract at every depth
 #import "schema.typ": *
 #import "semantic.typ": *
 #import "tokens.typ": *
@@ -73,3 +74,4 @@
 #import "chart.typ": *
 #import "formula.typ": *
 #import "pseudocode.typ": *
+#import "unit.typ": *

@@ -64,18 +64,22 @@ assuming the sandbox has it.
 
 ```sh
 nix develop                       # the dev shell: lefthook, typst, pdftotext, python3
-nix flake check                   # formatting, the self-tests, projection determinism
+nix flake check                   # formatting, the self-tests, projection determinism, this repo's own layer
 nix fmt                           # treefmt: nixfmt, prettier, shfmt, ruff-format
 nix run .#snips -- --commands deny README.md          # synchronize opted-in snippets
 nix run .#snips -- --check --commands deny README.md  # check freshness only
 
 nix run .#render  -- <layer-root> <out.pdf> [--check]   # #aggregate: old name
+nix run .#units   -- <layer-root> <repo-root> [--check] # folder contracts
+nix run .#units   -- <layer-root> <repo-root> --nested-project <project-root>
 nix run .#check   -- <layer-root> <repo-root>
 nix run .#lint    -- <layer-root>            # the guideline sweep, never a gate
 nix run .#project -- schema/design-schema.json <out-dir>
 nix run .#context -- <layer-root> --estimate
 nix run .#context -- <layer-root> --manifest
 nix run .#context -- <layer-root> --section 1.1 --expect-digest <digest>
+nix run .#context -- <layer-root> --unit <id>
+nix run .#context -- <layer-root> --path <repo-relative-path>
 ```
 
 `check` runs the invariants and decides pass or fail. `lint` promotes every
@@ -91,8 +95,9 @@ produced them; use its projection digest with --expect-digest when several
 section calls must share one source snapshot.
 
 The self-tests establish tool correctness. This repository also carries a
-concise architectural overview in `docs/design/`; rendering and checking that
-layer exercises integration but does not replace the self-tests:
+concise architectural overview in `docs/design/`. `nix flake check` gates it —
+the PDF fresh, the links resolving, every folder contract fresh — which
+exercises integration but does not replace the self-tests:
 
 ```sh
 nix develop --command bash scripts/layer-integrity.test.sh
@@ -100,6 +105,7 @@ nix develop --command bash scripts/widget-coverage.test.sh
 nix develop --command bash scripts/designlib-native.test.sh
 nix develop --command bash scripts/typst-layer.test.sh
 nix develop --command bash scripts/vendored-offline.test.sh
+nix develop --command bash scripts/design-units.test.sh
 ```
 
 ## What is generated, and what is authored
@@ -129,6 +135,23 @@ holds the coherence checks, `tokens.typ` the colour tables and their totality
 guarantee, `rules.typ` the guideline-versus-failure split, then one file per
 block family. `designlib.typ` is the entry point and lists the whole map.
 
+**The folder contracts ARE generated.** `lib/`, `schema/`, `fixtures/`,
+`scripts/` and `skills/` each carry an `AGENTS.md` whose marked region is
+written from the units in `docs/design/design.typ`, and the rendered
+`docs/design/design-layer.pdf` is written from the same source. Change the
+unit, then regenerate both through their owners and gate the result:
+
+```sh
+nix run .#units  -- docs/design .
+nix run .#render -- docs/design docs/design/design-layer.pdf
+nix run .#check  -- docs/design .
+```
+
+`fixtures/design-schema.before-units.json` is the schema as it stood before
+the unit block, kept byte for byte. `design-units.test.sh` gates with it to
+prove that a host which has not upgraded its schema copy still renders. It is
+a record, not a second schema: never edit it to follow `schema/`.
+
 `fixtures/gallery.typ` is the ONE gallery: it calls every function the
 library projects for authoring, and it is a DRIFT TRIPWIRE rather than
 documentation. `widget-coverage.test.sh` fails when a declared kind has no
@@ -144,7 +167,7 @@ covered where they are real, in `typst-layer.test.sh`.
 
 ## Where a check belongs
 
-Three homes, and picking the wrong one is how a contract ends up declared and
+Four homes, and picking the wrong one is how a contract ends up declared and
 unenforced:
 
 - **The projected library** validates ONE block against its own contract —
@@ -155,11 +178,23 @@ unenforced:
   `assert-foundation-cardinality` read it back — the cardinality rule is the
   one that must notice a block NOBODY WROTE, and a kind missing from the
   finished trail was never called. `_clause-trail` does the same for a
-  behavior block's given/when/then, and `_spine-trail` for the numbered
-  sections. Each trail is reset at the boundary of the scope it judges: a
-  context for the foundation and the spine, one block for the clauses.
+  behavior block's given/when/then, and `_unit-trail` for the unit ids, which
+  are unique across the whole layer. Each trail is reset at the boundary of
+  the scope it judges: a context for the foundation, one block for the
+  clauses, and never for the unit ids. A unit also brackets its body in the
+  foundation trail, so a statement inside a unit is not read as the
+  document's foundation.
 - **`layer-integrity`** crosses ARTIFACTS — links, anchors, homing, the
   coverage map's own citations.
+- **`design-units`** crosses from the layer into the SOURCE TREE — a unit's
+  path is one real directory of the repository, each target is a regular file
+  holding at most one well-formed region, each listed folder's generated
+  contract is fresh, and no folder keeps a contract no unit lists. It is the
+  one check that reads directories outside `docs/`, and the one tool that
+  writes there, so it examines every path and every target before it writes
+  anything, stages every new text before it replaces any file, and writes all
+  of them or none. It also runs the projection's depth rule, because the gate
+  holds layers the projection itself cannot run on.
 
 A rule the schema declares and no home runs is worse than an undeclared one: the
 manual promises it, an author trusts it, and nothing objects.
@@ -177,8 +212,9 @@ every contract added here is asserted in both directions.
 
 ## Don't
 
-- Do not hand-edit `fence.typ` or any rendered PDF. The rest of `lib/`
-  IS the source and is meant to be edited.
+- Do not hand-edit `fence.typ`, any rendered PDF, or the marked region of a
+  folder's `AGENTS.md`. The rest of `lib/` IS the source and is meant to be
+  edited.
 - Do not add ADR citations, references to a sibling framework repo, or its
   skill and primitive names. This repo ships to hosts that have none of them.
 - Do not weaken a check to make something pass.

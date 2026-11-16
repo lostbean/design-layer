@@ -1,6 +1,6 @@
 ---
 name: design-document-syntax
-description: The format specification for a design layer — the Typst that `design.typ` and `CONTEXT.typ` are authored in, the markdown that `docs/adr/` and `COVERAGE.md` stay in, and the contracts the renderer and the gate decide pass or fail on. Covers the artifact set and where each file lives, the bindings a design document exports, the `terms` array a glossary exports, ADR anchors, the block functions and their required arguments, the section spine, the pending ledger, the behavior clause calls and `level`, the entity census, and how the renderer is pinned. Use when writing or editing a `design.typ`, a `CONTEXT.typ`, or an ADR; when a compile or gate run reports a violation and the correct call is needed; when asking "what function do I call for this?", "how do I write an invariant / a behavior rule / an entity", "where does this file go", "why did my foundation fail to compile"; or when bootstrapping a design layer in a repo that has none.
+description: The format specification for a design layer — the Typst that `design.typ` and `CONTEXT.typ` are authored in, the markdown that `docs/adr/` and `COVERAGE.md` stay in, and the contracts the renderer and the gate decide pass or fail on. Covers the artifact set and where each file lives, the bindings a design document exports, the `terms` array a glossary exports, ADR anchors, the block functions and their required arguments, the `unit` block and its code paths, the generated folder contracts, the section spine, the pending ledger, the behavior clause calls and `level`, the entity census, the context selectors, and how the renderer is pinned. Use when writing or editing a `design.typ`, a `CONTEXT.typ`, or an ADR; when a compile or gate run reports a violation and the correct call is needed; when asking "what function do I call for this?", "how do I write a unit / an invariant / a behavior rule / an entity", "where does this file go", "why is this AGENTS.md stale", "why did my foundation fail to compile"; or when bootstrapping a design layer in a repo that has none.
 domains: [engineering]
 status: ship
 ---
@@ -35,14 +35,16 @@ Three words are used precisely throughout:
   this, fail-closed. Break it and you get a violation naming the file and the
   line. This severity is reserved for what makes the OUTPUT wrong: a value
   outside a declared vocabulary, a citation or diagram edge that resolves to
-  nothing, a malformed date or altitude. The renderer would have to invent a
-  meaning to continue, and a design document must never guess.
+  nothing, a malformed date or altitude, a `unit` missing a required field or
+  carrying a duplicate id or an illegal path. The renderer would have to invent
+  a meaning to continue, and a design document must never guess.
 - **Guideline** — the renderer holds the rule, REPORTS it on every render, and
   renders anyway. The report names the rule, the offending item, and what was
   expected; the run ends with a count summary; the exit code does not change.
-  This is the severity of every STRUCTURAL opinion — which foundation kinds a
-  context declares and in what order, whether a required argument was filled,
-  the shape of a clause or a cardinality — because a design legitimately
+  This is the severity of every STRUCTURAL opinion — which foundation kinds
+  the root document declares and in what order, whether a required argument of
+  an optional block was filled, the shape of a clause or a cardinality —
+  because a design legitimately
   changes shape and a layer missing one level may be missing it for a good
   reason. `DESIGN_STRICT=1`, or the `lint` sweep (§6), promotes every guideline
   to a hard error for a repo that wants the stricter ratchet.
@@ -51,13 +53,14 @@ Three words are used precisely throughout:
 
 The split matters when reading the rest of this document: "required" almost
 always means **guideline-required** — the renderer expects it and says so, and
-your document still renders without it.
+your document still renders without it. The one block whose required arguments
+are machine-checked is `#unit` (§5).
 
 Every command below is a `nix run` against the design-layer flake. A host repo
 copies nothing in: the scripts, the schema, and the renderer travel together as
 one pinned bundle, and the host stores only its own sources.
 
-The shared `render`, `check`, and `context` apps prepare the layer-local `.render`
+The shared `render`, `check`, `context`, and `units` apps prepare the layer-local `.render`
 library from their selected bundle. Forward those apps directly in consumer Nix
 configuration; do not copy a projection wrapper into each repository. `check`
 also prepares layers supplied through its validated `--nested-project` arguments.
@@ -156,7 +159,9 @@ not a privileged path.
 
 Every layer artifact lives under `docs/` at its declared home. The design
 references the system by path; the system's source directories never host layer
-files. A context is a unit of the design, not of the source tree, so its folder
+files. A source directory may carry a **folder contract** — a generated region
+of its `AGENTS.md` — which is output derived from a `unit`, not a layer file
+(§5). A context is a unit of the design, not of the source tree, so its folder
 is `docs/design/<context>/` even when the context happens to match one source
 directory exactly.
 
@@ -212,7 +217,10 @@ the file and line.
 
 - A link into a design source with a fragment,
   `docs/design/design.typ#<slug>` or `docs/design/<context>/design.typ#<slug>`,
-  must name a section's rendered id, by the same slug rule as any section link.
+  must name a section's rendered id, by the same slug rule as any section link,
+  or a unit's anchor `unit-<id>`. A generated folder contract carries one such
+  link per unit it names and is checked like any other `AGENTS.md`: a link to
+  an id no unit declares is reported at the file and line.
 - A link into `docs/adr/` must open an existing ADR. A link to an ADR that a
   successor supersedes is reported as an **advisory** naming the successor;
   the exit code is untouched.
@@ -438,8 +446,11 @@ Build it, then gate it:
 
 ```sh
 nix run github:lostbean/design-layer#aggregate -- docs/design docs/design/design-layer.pdf
+nix run github:lostbean/design-layer#units     -- docs/design .
 nix run github:lostbean/design-layer#check     -- docs/design .
 ```
+
+`units` is needed only when the layer declares a `unit` with `paths` (§5).
 
 Nothing stands between what the author wrote and what is checked. There is no
 converter reading the source and deciding what call it meant, so a construct
@@ -451,12 +462,14 @@ instead a function signature the compiler enforces where the author writes it.
 Generation is deliberately two things at once:
 
 - **Validation**, at two severities. It **fails closed** on an illegal enum
-  value, a malformed pending date, a malformed altitude, and any reference that
-  resolves to nothing — a document that breaks one of these produces **no
-  document at all**, because the renderer cannot draw what it cannot read. It
-  **reports a guideline** and renders anyway for a missing required argument, a
-  mis-ordered foundation, a foundation missing one of its kinds, mis-ordered
-  clauses, or a clause naming a mechanism. The guidance names the rule and what
+  value, a malformed pending date, a malformed altitude, any reference that
+  resolves to nothing, and a `unit` missing a required field or carrying a
+  duplicate id or an illegal path — a document that breaks one of these
+  produces **no document at all**, because the renderer cannot draw what it
+  cannot read. It **reports a guideline** and renders anyway for a missing
+  required argument on any other block, a mis-ordered foundation, a root
+  foundation missing one of its kinds, mis-ordered clauses, or a clause naming
+  a mechanism. The guidance names the rule and what
   was expected on every render; `DESIGN_STRICT=1` turns each into a failure.
 - **Normalization** — typesetting and styling come from the library's own
   visual system, applied uniformly. Authors write content; the library owns the
@@ -531,6 +544,7 @@ named agreement as one standalone full-width card.
 
 | Function                               | Required arguments                                   | Use it for                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | -------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `#unit`                                | all eight arguments (§5)                             | one design unit: the same required shape at every depth. **Machine-checked**: `id:`, `title:`, `overview:`, `interface:`, `invariants:`, `side-effects:`, `verification:`, and `paths:` are all required, and a missing one fails the render. The body is optional and holds any other block, including nested units                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `#goal`                                | `title:`                                             | a pragmatic, practical objective. `lens:` optional                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `#no-goal`                             | `title:`                                             | an explicit exclusion. The one block whose body may be empty — write `[]`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `#principle`                           | `title:`                                             | an aspirational value guiding judgment; `lens:` optional                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -789,32 +803,44 @@ chapter's statements.
 
 ### The spine
 
-**Guideline.** A design document's sections are expected to run in a fixed
-order. Every rule in this section is reported and none of them blocks the
-render — this is the shape a design usually takes, not a shape it must take.
+**Convention, for the root document.** The root design document usually runs in
+this order. No check reads section order or section titles.
 
 ```
 Foundation             goals · no-goals · invariants · principles, in that order
 Pending updates        immediately after the foundation; omitted when empty
 System at a glance     one diagram of the whole
-Progressive breakdown  major responsibilities, with selective deeper views
+Progressive breakdown  the units, with selective deeper views
 End-to-end walkthrough one real usage path
 ```
 
-Three parts of this are checked, each as a guideline that reports and lets the
-render finish:
+**A context document is not held to the spine.** It may follow it, reorder it,
+or carry none of it. `System at a glance` and `End-to-end walkthrough` are not
+expected of a context, and a context whose content is its units needs no
+section at all.
 
-1. **Foundation cardinality** — at least one `goal`, at least one `invariant`,
-   at least one `principle`. Zero or more `no-goal`s. A kind missing from the
-   context's finished run of foundation calls is a kind nobody wrote, and the
-   render names it. If your context has a reason not to carry one of these,
-   that is a legitimate design and the guidance is the whole consequence.
-2. **Foundation order** — the four kinds are expected in the declared order. A
-   `#principle` called before an `#invariant` is reported, naming the offending
-   statement's title.
-   `DESIGN_STRICT=1` turns the two guidelines into hard failures, which is how a
-   repo that does want the fixed shape enforces them. Typst derives the visible
-   section sequence from position; authors never write it into a title.
+Two rules about the foundation are checked, each as a guideline that reports
+and lets the render finish:
+
+1. **Foundation cardinality — the root document only.** The root is expected
+   to carry at least one `goal`, at least one `invariant`, and at least one
+   `principle`. Zero or more `no-goal`s. A kind missing from the root's
+   finished run of foundation calls is a kind nobody wrote, and the render
+   names it. **A context document is never held to this minimum**: it states a
+   goal, a no-goal, an invariant, or a principle only when its aims differ
+   from the root's, and it may state one kind without the others.
+2. **Foundation order — any document.** Whatever foundation statements a
+   document carries are expected in the declared order. A `#principle` called
+   before an `#invariant` is reported, naming the offending statement's title.
+
+`DESIGN_STRICT=1` turns the two guidelines into hard failures, which is how a
+repo that does want the fixed shape enforces them. Typst derives the visible
+section sequence from position; authors never write it into a title.
+
+**A unit's body is its own scope.** A foundation statement written inside a
+`#unit` body belongs to that unit. Neither rule above reads it: a principle
+inside one unit and a goal inside the next are not out of order, and a
+statement inside a unit does not count toward the root's minimum.
 
 **Foundation statements are siblings — machine-checked.** A `#goal`,
 `#no-goal`, `#invariant`, or `#principle` written inside the body of another
@@ -823,10 +849,9 @@ The usual cause is a missing `]`: a later stray `]` closes the first statement,
 so the statements in between become its body. After resolving a merge in
 `design.typ`, check bracket balance around each resolved hunk.
 
-The foundation contract binds a document that **declares a foundation at all**.
-A document carrying no foundation — a behavior-rule sheet, a reference page —
-is not held to the per-kind minimum, because it is not a document that failed
-the minimum; it is a document not carrying a foundation.
+A root document carrying **no foundation statement at all** is not reported
+either: it is a document not carrying a foundation, not one that failed the
+minimum.
 
 **The pending section is optional on purpose**: its appearance and disappearance
 cause Typst to update the visible sequence without an authored title change.
@@ -834,11 +859,8 @@ cause Typst to update the visible sequence without an authored title change.
 **The `index_only` exemption.** A multi-context **root** that only indexes its
 child contexts exports `#let index_only = true` and is waived from the per-kind
 minimum. It then carries only genuinely cross-context foundation and points
-down to each context for the rest, never restating a context-owned goal or
-invariant. The waiver is a declaration rather than a guess, because nothing in
-a document's own text distinguishes an index root from a leaf that forgot its
-foundation. The **order** rule still binds whatever foundation the root does
-carry.
+down to each context for the rest. The **order** rule still binds whatever
+foundation the root does carry.
 
 ### Principles and goals are never conflated
 
@@ -912,14 +934,14 @@ domain document for a domain-scoped delta, the root for a cross-cutting one.
 
 ### Structural recursion
 
-When a document needs deeper views, each documented unit has an overview,
-its documented child units, and a pointer to its parent. This structure permits
-recursion; it does not require documenting every implementation unit. Stop at
-the depth justified by [document-design](../document-design/SKILL.md).
+A deeper view is a nested `#unit` (§5): a unit's body holds its child units,
+and nesting is the hierarchy. This structure permits recursion; it does not
+require documenting every implementation unit. Stop at the depth justified by
+[document-design](../document-design/SKILL.md).
 
-`context`, `component`, and a nested subsection are **depth labels on
-one node type**, not different things. The root indexes contexts, a context
-indexes its components, a component indexes its nested sub-parts. The same
+`context`, `unit`, and a nested unit are **depth labels on one node type**, not
+different things. The root indexes contexts, a context holds its units, a unit
+holds its nested units. The same
 ladder names a diagram's altitude — `L1` boundary, `L2` contexts, `L3`
 components, `L4` internals — which `#diagram` and `#diagram-native` require on every drawing,
 so a reader can tell which zoom level they are looking at before reading the
@@ -934,7 +956,7 @@ Two rules follow, both **convention**:
   off-node unit with a pointer, or scope the section to this unit's children,
   and say which.
 - **Recursion is not the file split.** A unit recurses deeply inside one file
-  through nested subsections without any split. Where the recursion breaks into separate
+  through nested units without any split. Where the recursion breaks into separate
   `design.typ` files is the second-real-vocabulary judgment of §1 — a semantic
   call, not a depth counter.
 
@@ -946,9 +968,292 @@ the context map. Those edges are cross-references, not the recursion.
 
 ## 5 · Block reference
 
-Two block families carry nested clause calls rather than prose. Their bodies
-are **not** free content, and the library validates the presence, count, and
-order of their children.
+`#unit` is the one block with a required shape. Two further block families
+carry nested clause calls rather than prose: their bodies are **not** free
+content, and the library validates the presence, count, and order of their
+children.
+
+### `#unit` — the design unit
+
+A unit states one part of the design in a fixed shape. The shape is the same at
+every depth.
+
+```typst
+#unit(
+  id: "billing-ledger",
+  title: "Billing ledger",
+  overview: [Records what each customer was charged.],
+  interface: (
+    [`append(entry)` adds one entry and returns its position.],
+    [Emits one `EntryAppended` event per entry.],
+  ),
+  invariants: ([An entry is never rewritten.],),
+  side-effects: (),
+  verification: [`cargo test -p ledger`],
+  paths: ("src/ledger", "migrations/ledger"),
+)[
+  Optional body: prose, any other block, and nested units.
+
+  #unit(
+    id: "ledger-export",
+    title: "Ledger export",
+    overview: "Writes a day of entries to the reporting store.",
+    interface: ("export(day)",),
+    invariants: (),
+    side-effects: ("Writes the reporting store.",),
+    verification: "None. Exercised in the nightly run only.",
+    paths: ("src/ledger/export",),
+  )
+]
+```
+
+**Every argument is required and machine-checked.** A missing one fails the
+render naming the unit and the field.
+
+| Argument        | Shape                | Holds                                                                      |
+| --------------- | -------------------- | -------------------------------------------------------------------------- |
+| `id:`           | string               | a kebab-case slug, unique across the whole layer; the unit's stable anchor |
+| `title:`        | string or content    | the unit's name; it becomes the unit's heading                             |
+| `overview:`     | string or content    | what the unit is and what it is for                                        |
+| `interface:`    | list                 | what the unit exposes to its callers                                       |
+| `invariants:`   | list                 | what always holds                                                          |
+| `side-effects:` | list                 | what the unit changes outside itself                                       |
+| `verification:` | string or content    | a command or a short statement                                             |
+| `paths:`        | list of path strings | the repo-relative directories that realize the unit                        |
+
+- **An empty list is a legal answer.** Write `()`; it renders as `None`. A
+  field left out is not the same thing and fails. `overview:` and
+  `verification:` have no empty form: when there is no verification, say so in
+  words.
+- **A one-item list needs its trailing comma**: `("one item",)`. Typst reads
+  `("one item")` as a string, and the render fails saying so.
+- **A list item is a string or a content block.** Use a content block when the
+  item carries markup, a citation, or inline code.
+- **A field holds prose, and only prose**: text, emphasis, inline code, a
+  code block, a link to a URL or a path, a reference, mathematics, and the
+  library's inline citations (`#term`, `#ctx`, `#adr`, `#pill`, `#lens-pill`).
+  A code block — a fenced block in markup, or `#raw(..., block: true)` — is
+  written to the projection and to a folder contract as a fenced block whose
+  fence is longer than any run of backticks in it: in `verification:` or
+  `overview:` below the field's label, in a list item indented under the
+  item's marker. `title:` is the exception: a title is one heading line, and a
+  code block there fails the render. Anything else written inside `title:`,
+  `overview:`, `verification:`, or one list item fails the render, naming the
+  field and the content function: a bullet, numbered, or term list, a
+  footnote, a box or any other layout call, a heading, a `context`
+  expression. The projection and a folder contract write a text field as a
+  paragraph and a list field as one entry per item, so such content has no
+  form there. State each point as its own item of
+  `interface:`, `invariants:`, or `side-effects:`, and put anything else in
+  the unit's body.
+- **An unknown argument fails the render**, naming it.
+- **`id:`** matches `^[a-z0-9]+(-[a-z0-9]+)*$`. A second unit with the same id
+  anywhere in the layer fails the render. `id:` may stand anywhere among the
+  arguments; the gate reads it wherever it stands. An id is never repurposed
+  for a different unit.
+- **The body is optional.** `#unit(...)` with no trailing block is complete.
+- **The body holds no `#section` and no `#subsection`.** Both are the
+  document's spine and keep their fixed heading level, which would sit above
+  the unit that holds them. The render, the projection, and the gate each
+  refuse one inside a unit, naming it. Inside a unit, a nested unit carries
+  the structure.
+
+**Guidelines**: a title over 64 characters, a list item over three sentences,
+and an `overview:` or `verification:` over five sentences are each reported and
+block only under strict.
+
+#### Paths
+
+Each entry of `paths:` is one exact repo-relative directory. **Machine-checked
+by the renderer**:
+
+- not empty, not absolute, not `.`;
+- no `*`, `?`, `[`, `]`, `{`, `}`, or backslash;
+- no empty, `.`, or `..` segment, so no leading, trailing, or doubled slash;
+- listed at most once in one unit.
+
+**Machine-checked by the gate and by `units`**:
+
+- the path exists in the repository and is a directory;
+- it is the path the file system stores: it resolves inside the repository
+  root, through no symbolic link, in the spelling its parent directory lists.
+  `src/link` where `link` points at `src/a`, and `src/A` for a directory
+  stored as `src/a`, each fail naming both paths, so one directory has one
+  folder contract;
+- it is not `.git` or inside it, and not the layer directory or inside it;
+- it is not inside a nested project: a directory that holds its own
+  `docs/design/design.typ`, whether or not the run was given it.
+
+Paths are relative to the root the gate is given — the repository root, or a
+nested project's own root for that project's layer.
+
+A unit that only groups other units has no code of its own and writes
+`paths: ()`. Several units may list one directory, and one unit may list
+several.
+
+#### Nesting, headings, and anchors
+
+- A unit nested in another unit's body is its child. The heading level follows
+  the nesting: a unit directly in a document body is a section-level heading,
+  a unit inside a `#section` body is one level below it, and each nested unit
+  is one level below its parent.
+- A document has six heading levels and the chapter is the first. In the
+  root design document the deepest nesting is five units directly in the
+  body, four inside a `#section`, and three inside a `#subsection`.
+- The Markdown projection writes the root as the document title and each
+  context document as a heading below it, so a context document nests one
+  unit fewer: four in the body, three inside a section, two inside a
+  subsection.
+- One unit deeper fails the render and the projection alike, naming the unit
+  and its level.
+- The page draws `#section` and `#subsection` at their fixed levels, and the
+  projection nests every heading below its host. A section inside a section
+  is therefore deeper in the projection than on the page, and a unit there
+  can render and still be past the projection's sixth level. The gate's unit
+  step applies the projection's rule, so `check` refuses that layer naming
+  the unit.
+- A heading written in markup keeps the level its `=` signs give it inside a
+  section or subsection body. Inside a unit's body it nests below the unit,
+  and one pushed past the sixth level fails the render.
+- A unit's anchor is `unit-<id>`. `@unit-billing-ledger` references it inside
+  the rendered document. `design.typ#unit-billing-ledger` links to it from
+  `COVERAGE.md` or another layer file, and the gate's integrity check resolves
+  that fragment.
+
+#### Folder contracts — generated `AGENTS.md` regions
+
+The `units` app writes each unit's contract into every directory the unit
+lists:
+
+```sh
+nix run github:lostbean/design-layer#units -- docs/design .
+nix run github:lostbean/design-layer#units -- docs/design . --check
+```
+
+For each listed directory it writes **one** generated region in
+`<directory>/AGENTS.md`:
+
+```markdown
+<!-- design-units:begin -->
+<!-- Generated from the design layer by design-units. Do not edit between these markers: change the unit in its Typst source and regenerate. -->
+<!-- prettier-ignore-start -->
+
+## Design unit: Billing ledger
+
+Overview: Records what each customer was charged.
+
+Interface:
+
+- `append(entry)` adds one entry and returns its position.
+- Emits one `EntryAppended` event per entry.
+
+Invariants:
+
+- An entry is never rewritten.
+
+Side effects: None
+
+Verification: `cargo test -p ledger`
+
+Source: [docs/design/design.typ#unit-billing-ledger](../../docs/design/design.typ#unit-billing-ledger)
+
+Full unit: `nix run github:lostbean/design-layer#context -- docs/design --unit billing-ledger`
+
+<!-- prettier-ignore-end -->
+<!-- design-units:end -->
+```
+
+- The region holds every unit that lists the directory, in layer order.
+- **Text outside the region is never changed.** A file with other content
+  keeps it; a new region is appended below it. The file is created when absent.
+  The region takes the line ending the file already uses, and a file that ends
+  without a newline still ends without one. Removing a region restores the
+  file it was added to, byte for byte.
+- **A region is recognized by its whole shape**: the begin marker, the
+  generated notice, and the opening `prettier-ignore` line, in that order with
+  nothing between them, closed by the closing `prettier-ignore` line and the
+  end marker. Each is compared exactly and stands alone on its line.
+- Spaces at the end of one of those lines and blank lines between two of them
+  are read past, so a region a formatter touched is still found. It no longer
+  matches a fresh generation: `--check` reports it stale and `units` writes it
+  again.
+- A marker inside a fenced or indented code block, or inside a raw HTML block
+  — `<pre>`, `<details>`, a comment, or any other — is an example and is
+  never read: the search for a region's opening lines and the search for its
+  closing lines both pass over such a block whole, so a copy shown there is
+  neither removed nor taken for the end of a real region. A marker line
+  anywhere else that is not part of that shape, a region that is never
+  closed — its closing lines deleted — and a second region each make the file
+  **malformed**:
+  it is reported and left exactly as it is. To recover, delete the region's
+  lines, from the begin marker through the end marker, and run `units` again.
+- **The target is a regular file in the listed directory.** An `AGENTS.md`
+  that is a symbolic link, a directory, or not UTF-8 text is a violation; the
+  generator never writes through a link. An `AGENTS.md` in a directory no unit
+  lists is read only when it holds a marker.
+- **A run writes every folder contract or none.** Every unit path and every
+  target is examined first, and one violation leaves every file untouched.
+  Every new text is then staged in a temporary file beside its target, and
+  only when all are staged is each renamed into place. A failure while staging
+  leaves every file as it was; a failure while renaming is reported naming the
+  files already replaced and the files not written.
+- When `<directory>/CLAUDE.md` does not exist, it is created as a symlink to
+  `AGENTS.md`. An existing `CLAUDE.md` is never replaced.
+- Removing a path from a unit removes that unit from the directory's region.
+  A region no unit lists is removed, with the blank line the generator placed
+  above it and nothing else. The file is deleted only when it holds the region
+  alone, as the generator created it. A file that was empty before its region
+  was written is left empty.
+- **The `CLAUDE.md` link is the generator's only in the form it creates**: a
+  symbolic link whose target is the bare name `AGENTS.md`. When the region
+  leaves the folder and `AGENTS.md` is left with nothing to read — deleted,
+  or holding only whitespace — that link is removed. When `AGENTS.md` keeps
+  text of its own, the link stays, because it still links something worth
+  reading. A `CLAUDE.md` in any other form is never touched.
+- **git's spelling of a listed directory is the file system's.** On a file
+  system that folds letter case, a directory renamed in case only keeps its
+  old spelling in git. A folder contract tracked that way is a violation
+  naming both spellings, and it is never removed; rename the directory in git.
+- The region is wrapped in `prettier-ignore` markers. A Markdown formatter
+  that does not honor them must exclude the listed `AGENTS.md` files, or the
+  region stops matching a fresh generation.
+- Commit the generated regions and links with the design change.
+
+**The printed command.** The root `design.typ` may export
+`#let context_command = "nix run .#design-gate-context --"`, a one-line string
+naming the host's own app. The generator appends the layer root and
+`--unit <id>`. Without the binding it prints
+`nix run github:lostbean/design-layer#context --`. Only the root document
+exports it.
+
+`units` exits 0 after writing, 1 on a violation, and 2 on an error. With
+`--check` it writes nothing. The gate runs it with `--check` (§6).
+
+**Nested projects.** A directory holding its own `docs/design/design.typ` is a
+nested project, and the folder contracts below it belong to its own layer.
+`units` never touches one by default: a unit path inside one is a violation,
+declared or not, and a region found there is reported and left in place, in
+both modes. Pass the argument `check` takes:
+
+```sh
+nix run github:lostbean/design-layer#units -- docs/design . --nested-project packages/api
+```
+
+| Argument                   | Effect                                                                                                    |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `--nested-project <path>`  | leaves the project out of the outer run, then writes or checks its own layer against the project's root   |
+| `--exclude-project <path>` | leaves the project out and does not process it; the gate passes it, because it checks each project itself |
+
+Both are repeatable and take one exact repo-relative path under the rules of
+`paths:`. A unit path of the outer layer inside either is a violation.
+
+`units` and the gate both print a **report** of the git-tracked directories no
+unit path covers. A directory is listed at the highest level that holds no
+unit path; a directory holding files of its own beside a claimed subdirectory
+is listed for those files. The layer is not source and is never listed: the
+layer directory, the ADR directory, and `CONTEXT-MAP.md` and `COVERAGE.md`
+beside the layer directory. The report never changes an exit code, and it is
+skipped, with a line saying so, outside a git work tree.
 
 ### `#behavior` — the conditional rule
 
@@ -1258,9 +1563,13 @@ so a stale artifact is reported rather than trusted:
 nix run github:lostbean/design-layer#check -- docs/design .
 ```
 
-That composite runs three things in sequence and exits 0 clean, 1 on a
-violation, 2 on an error: render freshness, token coverage, and layer
-integrity. Two further entry points sit beside it — the author-requested
+That composite runs four things in sequence and exits 0 clean, 1 on a
+violation, 2 on an error: render freshness, token coverage, layer integrity,
+and the unit checks. The unit checks fail on a unit path that does not exist,
+a folder contract that differs from a fresh generation, and a folder contract
+in a directory no unit lists. The gate never rewrites a stale region; run
+`units` to regenerate. A layer that declares no unit passes these checks
+unchanged. Two further entry points sit beside it — the author-requested
 guideline sweep, and the schema-to-library projection:
 
 ```sh
@@ -1287,6 +1596,39 @@ there is no local copy to drift. To read the schema this skill describes:
 ```sh
 cat "$(nix build --no-link --print-out-paths github:lostbean/design-layer#gate-bundle)/schema/design-schema.json"
 ```
+
+### Reading the layer as Markdown
+
+The `context` app projects the layer to Markdown for an agent:
+
+```sh
+nix run github:lostbean/design-layer#context -- docs/design
+nix run github:lostbean/design-layer#context -- docs/design --manifest
+nix run github:lostbean/design-layer#context -- docs/design --section 1.2
+nix run github:lostbean/design-layer#context -- docs/design --unit billing-ledger
+nix run github:lostbean/design-layer#context -- docs/design --path src/ledger/entry.rs
+```
+
+| Selector         | Prints                                                                                 |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `--section ADDR` | the heading subtree at a manifest address                                              |
+| `--unit ID`      | one unit: its contract, its body, and its nested units, and nothing that follows it    |
+| `--path PATH`    | every unit whose `paths:` contain the path or a parent directory of it, in layer order |
+
+- The modes `--estimate`, `--manifest`, `--preview`, `--section`, `--unit`,
+  and `--path` are mutually exclusive. The three selectors accept `--output`
+  and `--expect-digest`.
+- `--path` takes one repo-relative path. A leading `./` and a trailing `/` are
+  dropped; an absolute path, a `..` segment, or a character the schema's
+  `unit_contract.path_forbidden_characters` lists is a usage error. The path
+  need not exist: matching compares path segments.
+- A unit nested inside another selected unit is printed once, inside its
+  parent.
+- An unknown unit id, and a path no unit governs, exit 2.
+- When the layer declares units, the manifest carries a `units` list with each
+  unit's `id`, `title`, `address`, `parent`, `document`, and `paths`.
+- The projection requires `docs/COVERAGE.md`, and `docs/CONTEXT-MAP.md` in a
+  multi-context layer. The gate's unit checks do not.
 
 Passing the gate means the layer is **well-formed**. It does not mean the
 design is right.

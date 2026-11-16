@@ -2,9 +2,10 @@ name: check
 
 # nix flake check runs everything this repo has to prove: the formatter check,
 # the gate's own fixture-based self-tests (the correctness proof this repo
-# relies on in place of a dogfooded design layer — see README.md), and the
-# projector's determinism check. One job, one command, matching exactly what
-# a contributor runs locally.
+# relies on — see README.md), the projector's determinism check, and the gate
+# over this repo's own design layer, which holds its rendered PDF and its
+# generated folder contracts to their Typst source. One job, one command,
+# matching exactly what a contributor runs locally.
 on:
   push:
     branches: [main]

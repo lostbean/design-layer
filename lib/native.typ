@@ -189,10 +189,113 @@
 // inserting or moving a section updates the displayed sequence without a
 // source rewrite.
 
+// THE HEADING A NESTED BLOCK SITS UNDER. A `unit` is the same shape at every
+// depth, so it cannot carry a fixed heading level the way `section` (2) and
+// `subsection` (3) do: its level is one below whatever encloses it. A function
+// cannot see its caller, so each heading-owning block scopes its own level
+// over its body as a heading STYLE, and a unit reads the style in force where
+// it is called.
+//
+// THE CARRIER IS A STYLE, NOT A STATE. A style is resolved in the pass that
+// lays the content out, at any depth. A state holding the level would make
+// each nested unit's value depend on the read above it, and Typst settles one
+// such dependency per layout pass: three or four nested units then exhaust its
+// five passes and the render stops with "layout did not converge".
+//
+// TWO PROPERTIES CARRY IT, because the two kinds of host differ in what they
+// may do to a heading the author writes in markup.
+//
+//   A `section` or `subsection` sets `heading.depth`, and only that. Typst
+//   reads `depth` for a heading that names neither its level nor its depth,
+//   and every heading in a layer names one: the library's headings name their
+//   level, and a markup heading names its depth by its `=` signs. So `===`
+//   inside a section body is the level-three heading it was before a unit
+//   existed — numbered and listed in the contents as it always was — and a
+//   layer that authors no unit keeps its headings exactly.
+//
+//   A `unit` sets `heading.offset` to its own level and resets the depth. The
+//   offset is what makes a markup heading in a unit's body nest below the
+//   unit, whatever depth the unit sits at, and a non-zero offset is how a
+//   block knows it is inside a unit at all.
+//
+// The host's level is then `offset + depth - 1`, and the document body, which
+// sets neither, is the chapter at level one.
+//
+// What does change for a layer that authors no unit: where prose runs on from
+// a hosted body into the same paragraph, that paragraph crosses a style
+// boundary, and one justified line of it can move by a fraction of a point.
+// And a heading CALLED with no level — `#heading[...]`, which no library block
+// and no markup heading is — takes the level below its host instead of level
+// one.
+#let _hosted(level, body) = {
+  set heading(depth: level + 1)
+  body
+}
+
+// A unit's body. A heading the author writes in markup here is drawn below
+// the unit, so a deep unit could push one past the sixth level, where the
+// outline and the numbering have no form for it. That fails naming the
+// heading rather than rendering it.
+//
+// A heading CALLED with its own level, `#heading(level: 2)[...]`, ignores the
+// offset. At or above the unit's own level it would leave the unit: the page
+// would number what follows it, the unit's nested units among it, under that
+// heading, while the projection keeps them in the unit. It fails naming both
+// levels, as a section does.
+#let _hosted-unit(level, max, body) = {
+  set heading(offset: level, depth: 1)
+  show heading: it => {
+    if it.level <= level {
+      panic("unit block: a heading inside a unit body is drawn at level "
+        + str(it.level) + ", at or above the unit that holds it, which is at "
+        + "level " + str(level) + ", so the heading would leave the unit: the "
+        + "page would number what follows it under the heading while the "
+        + "Markdown projection keeps it in the unit. Write the heading in "
+        + "markup (`= Title`) or call it without a level, and it nests below "
+        + "the unit; or give the structure to a nested unit")
+    }
+    if it.level > max {
+      panic("unit block: a heading inside a unit body is drawn at level "
+        + str(it.level) + " — a design document has " + str(max)
+        + " heading levels. The unit above it is at level " + str(level)
+        + ", and a heading written in markup nests below its unit. Write it "
+        + "with fewer `=` signs, or flatten the units above it")
+    }
+    it
+  }
+  body
+}
+
+// The level of the innermost host, read inside `context`. No host is the
+// document body, whose own heading is the chapter at level one.
+#let _host-level() = calc.max(heading.offset + heading.depth - 1, 1)
+
+// Whether the call is laid out inside a unit's body, read inside `context`.
+#let _in-unit() = heading.offset > 0
+
+// A SECTION BELONGS TO THE DOCUMENT, NEVER TO A UNIT. `section` and
+// `subsection` draw the fixed levels two and three: they are the document's
+// spine. Inside a unit's body that fixed level would sit ABOVE the unit that
+// holds it — a level-three subsection under a level-five unit — so the page
+// outline would run out of order, and the Markdown projection, which nests
+// every heading below its host, would place the same blocks at other levels
+// than the page does. A unit's inner structure is its nested units, so the
+// call is refused where it is written.
+#let _refuse-in-unit(kind) = context {
+  if _in-unit() {
+    _fail(kind, "is written inside a unit's body. A " + kind + " is part of "
+      + "the document's own spine and keeps its fixed heading level, which "
+      + "would sit above the unit that holds it. Inside a unit, give the "
+      + "structure to a nested unit, or move the " + kind + " out of the "
+      + "unit's body")
+  }
+}
+
 #let section(title: none, lead: none, visual: none, notes: none, body: none) = {
   _need("section", "title", title)
   _max-lead("section lead", lead)
   let visual-content = {
+    _refuse-in-unit("section")
     if visual != none {
       block(width: 100%, breakable: false)[
         #heading(level: 2)[#title]
@@ -209,7 +312,7 @@
       }
     }
     if notes != none { notes }
-    if body != none { body }
+    if body != none { _hosted(2, body) }
   }
   semantic-result("section", visual-content,
     fields: (title: title, lead: lead, visual: visual, notes: notes, body: body))
@@ -218,8 +321,9 @@
 #let subsection(title: none, body) = {
   _need("subsection", "title", title)
   let visual = {
+    _refuse-in-unit("subsection")
     heading(level: 3)[#title]
-    body
+    _hosted(3, body)
   }
   semantic-result("subsection", visual, fields: (title: title, body: body))
 }
@@ -269,7 +373,7 @@
   if context-projection {
     semantic("context-reference", fields: (name: name, accent: accent))
   } else {
-    context {
+    _inline-visual(context {
       let declared = CONTEXT-NAMES.final()
       if declared.len() > 0 and name not in declared {
         panic("ctx(" + repr(name) + ") names no context this layer declares. " +
@@ -282,7 +386,7 @@
         TINT-COLOR.at(accent)
       }
       chip(name, tone: tone)
-    }
+    })
   }
 }
 
@@ -308,35 +412,40 @@
   if context-projection {
     semantic("adr", fields: (number: n))
   } else {
-    chip("ADR-" + padded, tone: TINT-COLOR.at("slate"))
+    _inline-visual(chip("ADR-" + padded, tone: TINT-COLOR.at("slate")))
   }
 }
 
 #let term(slug) = {
-  CITED-TERMS.update(xs => xs + (slug,))
   if context-projection {
+    CITED-TERMS.update(xs => xs + (slug,))
     semantic("term-reference", fields: (slug: slug))
   } else {
-    context {
-      let titles = TERM-TITLES.final()
-      if titles.len() == 0 {
-        chip(slug, tone: luma(110))
-      } else if slug in titles {
-        let owner = TERM-OWNERS.final().at(slug, default: none)
-        chip(titles.at(slug), tone: if owner == none {
-          luma(110)
+    // The citation is recorded INSIDE the marks, so the whole call is one
+    // inline visual to a block that reads its own content.
+    _inline-visual({
+      CITED-TERMS.update(xs => xs + (slug,))
+      context {
+        let titles = TERM-TITLES.final()
+        if titles.len() == 0 {
+          chip(slug, tone: luma(110))
+        } else if slug in titles {
+          let owner = TERM-OWNERS.final().at(slug, default: none)
+          chip(titles.at(slug), tone: if owner == none {
+            luma(110)
+          } else {
+            let tint = _context-tint(owner)
+            if tint == none { luma(110) } else { tint }
+          })
         } else {
-          let tint = _context-tint(owner)
-          if tint == none { luma(110) } else { tint }
-        })
-      } else {
-        panic("term(" + repr(slug) + ") cites a term no CONTEXT.typ declares. " +
-              "A term citation renders the declared TITLE, so an undeclared " +
-              "slug has no text to render and would print the raw identifier " +
-              "into the prose. Declare the term in a CONTEXT.typ, or correct " +
-              "the slug.")
+          panic("term(" + repr(slug) + ") cites a term no CONTEXT.typ declares. " +
+                "A term citation renders the declared TITLE, so an undeclared " +
+                "slug has no text to render and would print the raw identifier " +
+                "into the prose. Declare the term in a CONTEXT.typ, or correct " +
+                "the slug.")
+        }
       }
-    }
+    })
   }
 }
 
@@ -396,7 +505,7 @@
   if context-projection {
     semantic("lens-pill", fields: (name: name))
   } else {
-    chip(name, tone: LENS-COLOR.at(name))
+    _inline-visual(chip(name, tone: LENS-COLOR.at(name)))
   }
 }
 
@@ -1085,8 +1194,13 @@
 // expression ends at the newline, the chain is dropped, and the unfiltered
 // list flows on. That failure is SILENT — it renders every field including the
 // absent ones — so the shape is kept where it cannot recur.
-#let _answer-rows(data) = {
-  let pairs = ANSWER-FIELDS.map(f => (f.at(1), data.at(f.at(0), default: none)))
+//
+// `fields` is the label table the rows are read through. The component card,
+// the contract card and the answers panel read ANSWER-FIELDS; the `unit` block
+// reads the schema's unit sections through the same rows, so the two card
+// families share one anatomy rather than each drawing its own.
+#let _answer-rows(data, fields: ANSWER-FIELDS) = {
+  let pairs = fields.map(f => (f.at(1), data.at(f.at(0), default: none)))
   pairs.filter(r => r.at(1) != none)
 }
 

@@ -9,5 +9,6 @@ authoritative for implementation detail.
 | Checked library, schema, and validation scopes                | captured     | [Progressive breakdown](design/design.typ#progressive-breakdown)                          |
 | PDF, Markdown, and document gate                              | captured     | [Progressive breakdown](design/design.typ#progressive-breakdown)                          |
 | Authoring flow, projection limits, and bundle reproducibility | captured     | [End-to-end walkthrough](design/design.typ#end-to-end-walkthrough)                        |
+| Unit contracts and generated folder contracts                 | captured     | [Folder contracts](design/design.typ#unit-folder-contracts)                               |
 | Individual widgets and command options                        | standard     | Library contracts, the syntax skill, and executable examples carry this reference detail. |
 | Host architecture decisions and implementation correctness    | out-of-scope | The host owns these; this repository documents and validates their representation.        |

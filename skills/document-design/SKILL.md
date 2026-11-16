@@ -40,14 +40,39 @@ Before minting an ADR number or a CONTEXT term, read `git worktree list` and the
 
 Ask only for missing owner intent that materially changes the explanation; continue supported work meanwhile. When code contradicts accepted intent, describe the implemented state and preserve the discrepancy through the existing pending mechanism. Preserve decision history and do not invent rationale or ADRs.
 
-### 2. Establish the system view
+### 2. Establish the baseline contract
 
-Always include these clearly labeled sections, placed within the pinned syntax's section structure:
+Every part of the design is a `unit`, and every unit states the same contract. This baseline is the one shape every part has, at every depth. State each field from evidence. When the honest answer is none, say none with an empty list; never invent an answer to fill a field.
 
-- **Use cases and scope:** identify users or consumers, their problems, representative inputs or actions, and observable outcomes. State what the system provides, what the user or host supplies, external dependencies and trust boundaries, and deliberate exclusions. Put this before internal architecture; for a library, include the integrating developer or calling system.
-- **Domain model:** explain the main problem-domain concepts and their relationships, connected to those use cases. Use a high-level model or focus on the main elements; a glossary or component inventory alone is insufficient. A library may model inputs, transformations, results, and errors without business entities or persistence.
+| Field        | State                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------- |
+| Overview     | What the unit is and whose outcome it serves, in a few sentences.                      |
+| Interface    | What the unit exposes to its callers: operations, commands, events, files.             |
+| Invariants   | What always holds, whoever calls the unit and in whatever order.                       |
+| Side effects | What the unit changes outside itself: storage, network, files, other units.            |
+| Verification | The command or short statement by which the contract is checked.                       |
+| Paths        | The directories that realize the unit. A unit that only groups other units lists none. |
 
-Establish goals, non-goals, constraints, invariants, and design principles from evidence. Show how the system interacts with the outside world before decomposing it. Keep the overview readable in a few pages and understandable without opening deeper views; length is guidance, not a gate.
+Nest units to express the hierarchy; a parent unit states what its children share, and each child states its own contract. Give each unit a stable id and keep it when the unit is renamed or moved.
+
+The root design document also carries the layer's foundation: at least one goal, one invariant, and one principle, established from evidence. It orients a reader before it decomposes the system: who uses the system, what they supply, what the system provides, and what is deliberately excluded. A context document carries none of this unless its aims differ from the root's.
+
+Every other block is optional. Use one only when its rule holds:
+
+| Block                    | Use it when                                                                | Never for                    |
+| ------------------------ | -------------------------------------------------------------------------- | ---------------------------- |
+| behavior                 | A person or caller acts on the unit and the outcome depends on conditions  | Internal modules             |
+| entity                   | The data's shape is a contract: persisted, or read by another unit         | Every table                  |
+| state-machine            | Three or more states and an illegal transition would be a bug              | A status flag                |
+| sequence                 | Three or more parties and the order or a failure between them is the point | A call chain inside one unit |
+| diagram                  | Relationships a list cannot hold; one question per diagram                 | Restating the folder tree    |
+| pseudocode               | The branch order of a procedure is itself the design                       | Describing code that exists  |
+| contract                 | Two independently owned units agree on something                           | A unit's own interface       |
+| formula                  | A calculation is a domain rule                                             | Arithmetic                   |
+| goal, no-goal, principle | The root, or a context whose aims differ from the root                     | Every document               |
+| ADR                      | Costly to reverse, surprising, a real trade-off                            | Routine choices              |
+
+A section, a subsection, and prose remain available for explanation that belongs to no single unit. Write a section or a subsection in the document body, never inside a unit: within a unit, a nested unit carries the structure. A fixed section order, a `System at a glance` section, and an `End-to-end walkthrough` section are conventions of the root document only.
 
 ### 3. Explain and selectively refine
 
@@ -70,13 +95,13 @@ Describe the actual modeling approach and its consequences, not just its technol
 
 **Stop when the reader can explain the role, concepts, interactions, state ownership, and important constraints, and knows where to investigate further.** Do not require reconstruction from documentation alone. Functions, classes, fields, endpoint catalogues, retry constants, and full schemas normally belong in code or reference documentation; include one only when it changes the architectural explanation. An interface, state, or directory does not by itself justify another view.
 
-Domains, deployment units, storage boundaries, and source modules are different relationships. Do not force them into one hierarchy or invent domains, aggregates, state machines, or databases to match available widgets. Give shared concepts one canonical home and link to them rather than duplicating their explanation. Recursion need not create another file or repeat the system's required sections verbatim.
+Domains, deployment units, storage boundaries, and source modules are different relationships. Do not force them into one hierarchy or invent domains, aggregates, state machines, or databases to match available widgets. Give shared concepts one canonical home and link to them rather than duplicating their explanation. Recursion need not create another file: a deeper view is a nested unit, and it states the same contract as its parent.
 
 Adapt the questions to the system: libraries emphasize host responsibilities, resource lifetimes, extension points, side effects, and compatibility; frontends emphasize user journeys, local/server state, rendering, accessibility, offline behavior, and synchronization; backends emphasize callers, authorization, transactions, and asynchronous work. Pipelines emphasize stage inputs, outputs, side effects, reproducibility, and restart behavior. These are lenses, not mandatory architectures.
 
 ### 4. Represent and reconcile
 
-Choose the smallest representation that answers the question:
+A unit's contract answers most questions. Add a block from the table in step 2 only when its rule holds, and choose the smallest representation that answers the question:
 
 | Meaning                                     | Carrier                                                                          |
 | ------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -96,7 +121,8 @@ Walk a representative use case across the completed views. Resolve inconsistent 
 
 ### 5. Validate and maintain
 
-- Confirm **Use cases and scope** and **Domain model** appear in both PDF and Markdown. A newcomer should be able to connect consumer outcomes to domain concepts and cooperating abstractions, including significant state and failure boundaries.
+- Confirm every unit states its five sections and its paths in both PDF and Markdown, and that each optional block meets its rule in step 2. A newcomer should be able to connect consumer outcomes to the units that produce them, including significant state and failure boundaries.
+- After changing a unit, regenerate the folder contracts with the pinned tools and commit them with the design change. A listed directory's `AGENTS.md` carries the unit's contract; the gate fails when it is stale.
 - Check claims against evidence and label remaining uncertainty. Review each deeper view's named question and stopping point; remove duplicate or implementation-level detail without losing consequential meaning.
 - Render with the pinned tools and run the declared gate. Inspect affected PDF pages for legibility, clipping, and broken relationships; inspect Markdown for the same claims, directions, boundaries, and transitions. Use manifests and exact sections for large projections.
 - During a run of many small accepted deltas, save the sources after each delta and render, gate, and inspect at checkpoints: after a coherent group of deltas and before reporting. A host whose pre-commit hook requires a fresh rendered artifact needs a render before each commit.

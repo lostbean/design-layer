@@ -19,7 +19,8 @@
 #   2. the rendered page carries the contract, an empty list reads `None`, and
 #      nesting is the heading hierarchy down to the sixth heading level, in a
 #      document body, a section, and a subsection; a section inside a unit is
-#      refused by the page, the projection, and the gate alike; and a heading
+#      refused by the page, the projection, and the gate alike, and so is a
+#      heading called with a level at or above its unit's; and a heading
 #      written in markup keeps its level outside a unit and nests inside one
 #   3. a context document is not held to the foundation minimum, and a
 #      statement inside a unit is not read as the document's foundation
@@ -27,10 +28,12 @@
 #   5. the generator: create, replace, several units in one folder, one unit in
 #      several folders, an existing CLAUDE.md, and removal — and what it
 #      refuses to touch: a symlinked or unusable target, a marker someone wrote
-#      in their own text, two spellings of one directory, the line endings and
-#      final newline of a file it shares, a file it has no reason to read, and
-#      a nested project's contracts, declared or not; and what a failure while
-#      writing leaves behind
+#      in their own text, a region copied into raw HTML, a region whose
+#      closing lines were deleted, two spellings of one directory, the line
+#      endings and final newline of a file it shares, a file it has no reason
+#      to read, and a nested project's contracts, declared or not; what a
+#      failure or an interrupt while writing leaves behind; and a code block in
+#      a field, which every carrier writes as one fenced block
 #   6. the gate: a missing path, a stale contract, a contract no unit lists —
 #      through the scripts and through the public check app — the links a
 #      generated region carries into the layer, which the host-link check
@@ -293,6 +296,13 @@ unit_invariant context-in-field "verification holds context" \
 unit_invariant heading-in-field "overview holds heading" "$(with overview 'overview: [
 = Appends what was charged
 ],')"
+# A code block is prose a field may hold, but not the title: a title is the
+# one line that heads the unit, in every carrier.
+unit_invariant code-block-in-title "title holds a code block" "$(with title 'title: [Run ```sh
+make test
+```],')"
+unit_invariant raw-block-in-title "title holds a code block" \
+  "$(with title 'title: [Run #raw("make test", block: true)],')"
 unit_invariant layout-in-list-item "an item of invariants holds box" \
   "$(with invariants 'invariants: ([An entry is #box[never] rewritten.],),')"
 unit_invariant field-content-names-the-rule "A unit field is prose" \
@@ -730,6 +740,45 @@ depth_layer "$(depth_nest_around 5 '
 Text.')"
 run 1 "a markup heading pushed past the sixth level fails the render" -- depth_render
 has "a heading inside a unit body is drawn at level 8" "the render names the heading's level"
+# A heading CALLED WITH ITS OWN LEVEL ignores the unit. At the unit's level or
+# above it left the unit: the page numbered the nested unit after it under the
+# heading, 1.3.1, while the projection kept that unit inside its parent. All
+# three carriers now refuse it, as they refuse a section.
+escaping_heading() { # <name> <the heading call>
+  depth_layer "$(depth_unit 1 "[Body.
+
+$2
+
+$(depth_unit 2)]")"
+  rm -f "$DEPTH/out.pdf"
+  run 1 "$1: a heading that leaves its unit fails the render" -- depth_render
+  has "drawn at level" "$1: the render names the heading's level"
+  has "at or above the unit that holds it" "$1: the render says the heading leaves the unit"
+  absent "$DEPTH/out.pdf" "$1: no page is written"
+  run 1 "$1: a heading that leaves its unit fails the projection" -- depth_context
+  has "a heading inside the body of unit 'd1'" "$1: the projection names the unit"
+  run 1 "$1: a heading that leaves its unit fails the unit checks" -- depth_units
+  has "at or above the unit that holds it" "$1: the gate's unit step names the rule"
+}
+escaping_heading level-of-unit '#heading(level: 2)[Zescape]'
+escaping_heading above-unit '#heading(level: 1)[Zescape]'
+escaping_heading offset-zero '#heading(offset: 0)[Zescape]'
+# One level below the unit is inside it, and so is a call with no level.
+for call in '#heading(level: 3)[Zinside]' '#heading[Zinside]'; do
+  depth_layer "$(depth_unit 1 "[Body.
+
+$call
+
+$(depth_unit 2)]")"
+  run 0 "a heading below its unit renders: $call" -- depth_render
+  text="$(pdftotext -layout "$DEPTH/out.pdf" - 2>/dev/null)"
+  case "$text" in
+  *"1.2.1 Zinside"*"1.2.2 Zdeep2"*) pass_line "the heading and the nested unit both number under the unit: $call" ;;
+  *) fail_line "the heading or the nested unit left the unit: $call" ;;
+  esac
+  run 0 "the projection accepts a heading below its unit: $call" -- depth_context --manifest
+  run 0 "the unit checks accept a heading below its unit: $call" -- depth_units
+done
 
 # EVERY KIND OF PROSE A FIELD MAY HOLD passes all three carriers: the render
 # accepts it, the projection writes it, and the unit checks read it. The
@@ -1187,8 +1236,8 @@ chmod u+w "$SAFE/src/a"
 # second left the first one written. The generator runs in-process here with
 # one system call made to fail, which is the only portable way to reach the
 # apply phase's own failures.
-apply_fault() { # <mkstemp|replace> <which call fails>
-  DESIGN_LIB_DIR="$SAFE/docs/design/.render" python3 - "$SAFE" "$1" "$2" <<'PY'
+apply_fault() { # <mkstemp|replace> <which call fails> [interrupt]
+  DESIGN_LIB_DIR="$SAFE/docs/design/.render" python3 - "$SAFE" "$1" "$2" "${3:-}" <<'PY'
 import importlib.util, os, sys, tempfile
 from importlib.machinery import SourceFileLoader
 
@@ -1200,6 +1249,7 @@ sys.modules[loader.name] = module
 loader.exec_module(module)
 
 repo, name, failing_call = sys.argv[1], sys.argv[2], int(sys.argv[3])
+interrupt = sys.argv[4] == "interrupt"
 owner = {"mkstemp": tempfile, "replace": os}[name]
 real = getattr(owner, name)
 calls = 0
@@ -1209,12 +1259,18 @@ def failing(*args, **kwargs):
     global calls
     calls += 1
     if calls == failing_call:
+        if interrupt:
+            raise KeyboardInterrupt
         raise OSError(28, "No space left on device")
     return real(*args, **kwargs)
 
 
 setattr(owner, name, failing)
-sys.exit(module.main([repo + "/docs/design", repo]))
+try:
+    sys.exit(module.main([repo + "/docs/design", repo]))
+except KeyboardInterrupt:
+    # The interrupt reached the caller, as it must; 3 says so.
+    sys.exit(3)
 PY
 }
 no_temporary_files() { # <label>
@@ -1252,6 +1308,25 @@ fi
 has "correct the cause and run the units app again" "the error says what to do"
 no_temporary_files "a failed rename leaves no temporary file"
 run 0 "the generator completes the layer on the next run" -- safe_units
+run 0 "the gate is clean after the completed run" -- safe_units --check
+
+# AN INTERRUPT is cleaned up like a full disk. Only a system error removed the
+# staged files, so Ctrl-C while staging, or between two renames, left
+# `.AGENTS.md.*.tmp` files in the repository's directories.
+safe_repo stage-interrupted
+printf '# Notes A\n' >"$SAFE/src/a/AGENTS.md"
+cp "$SAFE/src/a/AGENTS.md" "$WORK/interrupt.before"
+run 3 "an interrupt while staging the second file reaches the caller" -- \
+  apply_fault mkstemp 2 interrupt
+no_temporary_files "an interrupt while staging leaves no temporary file"
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/interrupt.before" \
+  "an interrupt while staging replaces no file"
+nothing_written "an interrupt while staging writes no folder"
+safe_repo rename-interrupted
+run 3 "an interrupt between two renames reaches the caller" -- \
+  apply_fault replace 2 interrupt
+no_temporary_files "an interrupt between two renames leaves no temporary file"
+run 0 "the generator completes the layer after an interrupt" -- safe_units
 run 0 "the gate is clean after the completed run" -- safe_units --check
 
 # The well-formed run leaves no temporary file behind and keeps a file's mode.
@@ -1379,6 +1454,226 @@ has "found 2 generated regions" "the violation counts the regions"
 has "Delete every one of them" "the violation says what to do about two regions"
 same_file "$SAFE/src/a/AGENTS.md" "$WORK/two.before" "a file holding two regions is left as it was"
 
+# A COPY OF A REGION IN RAW HTML IS NOT A REGION. A person may show the
+# generated text inside `<pre>`, fold it into `<details>`, or comment it out.
+# The region reader read straight through raw HTML: in a directory no unit
+# lists it removed the copy, and emptied a `<pre>` of its text. Each copy is
+# an exact region, taken from a real generation.
+safe_repo html-copies
+safe_units >/dev/null 2>&1
+cp "$SAFE/src/a/AGENTS.md" "$WORK/region.copy"
+html_copy() { # <name> <opening lines> <closing lines>
+  {
+    printf '# Notes\n\n%s\n' "$2"
+    cat "$WORK/region.copy"
+    printf '%s\n\nMy own closing text.\n' "$3"
+  } >"$SAFE/other/AGENTS.md"
+  cp "$SAFE/other/AGENTS.md" "$WORK/html-$1.before"
+  (cd "$SAFE" && git add -A >/dev/null 2>&1)
+  run 0 "$1: the generator runs beside a region copied into raw HTML" -- safe_units
+  has "removed 0 stale region(s)" "$1: the copy is not removed as a stale region"
+  same_file "$SAFE/other/AGENTS.md" "$WORK/html-$1.before" \
+    "$1: the file holding the copy is byte-identical after generation"
+  run 0 "$1: the gate does not read the copy as a region" -- safe_units --check
+  lacks "other/AGENTS.md" "$1: the gate reports nothing about the copy"
+}
+html_copy pre '<pre>' '</pre>'
+html_copy details '<details>
+<summary>What the generator writes</summary>
+' '
+</details>'
+html_copy comment '<!--' '-->'
+html_copy div '<div class="example">
+' '
+</div>'
+# In a listed directory the copy is kept and the real region goes below it.
+html_copy_listed() {
+  {
+    printf '<pre>\n'
+    cat "$WORK/region.copy"
+    printf '</pre>\n'
+  } >"$SAFE/src/a/AGENTS.md"
+  cp "$SAFE/src/a/AGENTS.md" "$WORK/html-listed.before"
+}
+safe_repo html-listed
+html_copy_listed
+run 0 "the generator adds a region below a copy shown in <pre>" -- safe_units
+if head -c "$(wc -c <"$WORK/html-listed.before")" "$SAFE/src/a/AGENTS.md" | cmp -s - "$WORK/html-listed.before"; then
+  pass_line "the copy in <pre> is kept byte for byte above the generated region"
+else
+  fail_line "the copy in <pre> was changed in a listed directory"
+fi
+run 0 "the gate reads the real region and not the copy" -- safe_units --check
+safe_root '()' '("src/b",)'
+run 0 "the generator removes the real region and keeps the copy" -- safe_units
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/html-listed.before" \
+  "removing the region restores the file that showed the copy"
+
+# A REGION WHOSE CLOSING LINES WERE DELETED is malformed, never closed by the
+# tail of an example further down. The search for the closing lines did not
+# skip code fences, so it found them inside a fenced copy of a region below
+# the person's own notes, and the generator replaced everything in between —
+# the notes deleted and a dangling fence left behind.
+safe_repo truncated-before-example
+{
+  sed '$d' "$WORK/region.copy" | sed '$d'
+  printf '\nMy notes, written below the region.\n\n```markdown\n'
+  cat "$WORK/region.copy"
+  printf '```\n'
+} >"$SAFE/src/a/AGENTS.md"
+malformed_case truncated-before-fence "is never closed"
+OUT="$(cat "$SAFE/src/a/AGENTS.md")"
+has "My notes, written below the region." "truncated-before-fence: the notes below the cut region are kept"
+# The same cut region followed by a copy in raw HTML.
+safe_repo truncated-before-html
+{
+  sed '$d' "$WORK/region.copy" | sed '$d'
+  printf '\nMy notes.\n\n<details>\n\n'
+  cat "$WORK/region.copy"
+  printf '\n</details>\n'
+} >"$SAFE/src/a/AGENTS.md"
+malformed_case truncated-before-html "is never closed"
+# The same cut region in a directory no unit lists: reported, never removed.
+safe_repo truncated-unlisted
+{
+  sed '$d' "$WORK/region.copy" | sed '$d'
+  printf '\nMy notes.\n\n```\n'
+  cat "$WORK/region.copy"
+  printf '```\n'
+} >"$SAFE/other/AGENTS.md"
+cp "$SAFE/other/AGENTS.md" "$WORK/truncated-unlisted.before"
+(cd "$SAFE" && git add -A >/dev/null 2>&1)
+run 1 "a cut region where no unit lists the directory is a violation" -- safe_units
+has "other/AGENTS.md: malformed folder contract region" "the violation names the file"
+same_file "$SAFE/other/AGENTS.md" "$WORK/truncated-unlisted.before" \
+  "a cut region where no unit lists the directory is left as it was"
+# A cut region followed by a marker of its own is cut off, not closed there.
+safe_repo truncated-before-marker
+{
+  sed '$d' "$WORK/region.copy" | sed '$d'
+  printf '\nMy notes.\n\n<!-- design-units:end -->\n'
+} >"$SAFE/src/a/AGENTS.md"
+malformed_case truncated-before-marker "is cut off: line"
+
+# THE OTHER PLACES A MARKER MAY STAND keep their readings: a copy in a block
+# quote is not a region and is left alone; a copy indented under a list item
+# holds marker lines outside any region and is reported, and left alone too.
+safe_repo quoted-copy
+sed 's/^/> /' "$WORK/region.copy" >"$SAFE/other/AGENTS.md"
+cp "$SAFE/other/AGENTS.md" "$WORK/quoted.before"
+(cd "$SAFE" && git add -A >/dev/null 2>&1)
+run 0 "a region copied into a block quote is not read" -- safe_units
+same_file "$SAFE/other/AGENTS.md" "$WORK/quoted.before" "a block-quoted copy is byte-identical after generation"
+safe_repo listed-copy
+{
+  printf -- '- An example:\n\n'
+  sed 's/^\(.\)/  \1/' "$WORK/region.copy"
+} >"$SAFE/other/AGENTS.md"
+cp "$SAFE/other/AGENTS.md" "$WORK/listed-copy.before"
+(cd "$SAFE" && git add -A >/dev/null 2>&1)
+run 1 "a region copied under a list item is reported" -- safe_units
+has "other/AGENTS.md: malformed folder contract region" "the report names the file"
+same_file "$SAFE/other/AGENTS.md" "$WORK/listed-copy.before" "a copy under a list item is left as it was"
+
+# A CODE BLOCK IN A FIELD. A verification command is most naturally written
+# as one. The projection wrote it inside a fixed three-backtick fence and
+# after the field's label on the same line, so its closing fence opened a new
+# fence that swallowed the next unit's heading: every selector — `--unit` on
+# either unit, `--path`, `--manifest` — then failed, while the render, the
+# generator, and the gate all passed, and the folder contract carried the
+# same broken fence. A field's code block is now a fenced block in all three
+# Markdown carriers, its fence longer than any backtick run it holds; an
+# item's later lines are indented under its marker. Each layer puts one in
+# every list field and in `verification`: fenced in markup, then
+# `raw(..., block: true)`.
+code_case() { # <name> <interface> <invariants> <side-effects> <verification>
+  safe_repo "code-$1"
+  printf '# Map\n' >"$SAFE/docs/CONTEXT-MAP.md"
+  printf '# Coverage\n' >"$SAFE/docs/COVERAGE.md"
+  python3 - "$SAFE/docs/design/design.typ" "$2" "$3" "$4" "$5" <<'PY'
+import sys
+path, interface, invariants, side_effects, verification = sys.argv[1:]
+s = open(path, encoding="utf-8").read()
+old = 'interface: (),\n    invariants: (), side-effects: (), verification: "none", paths: ("src/a",))'
+assert old in s, "the fixture's unit ua changed shape"
+s = s.replace(
+    old,
+    f"interface: {interface},\n    invariants: {invariants},\n"
+    f"    side-effects: {side_effects},\n    verification: {verification},\n"
+    '    paths: ("src/a",))',
+)
+open(path, "w", encoding="utf-8").write(s)
+PY
+  run 0 "$1: a code block in every list field and in verification renders" -- \
+    env DESIGN_LIB_DIR="$SAFE/docs/design/.render" python3 ./scripts/design-aggregate \
+    "$SAFE/docs/design" "$WORK/code-$1.pdf"
+  run 0 "$1: the generator writes the folder contracts" -- safe_units
+  run 0 "$1: the gate finds them fresh" -- safe_units --check
+  run 0 "$1: --unit selects the unit holding the code blocks" -- safe_context --unit ua
+  has "## unit: Zunit A" "$1: --unit prints that unit"
+  printf '%s\n' "$OUT" >"$WORK/code-$1.unit"
+  run 0 "$1: --unit selects the unit after it" -- safe_context --unit ub
+  has "## unit: Zunit B" "$1: the next unit's heading is not swallowed by a fence"
+  run 0 "$1: --path selects by the unit's folder" -- safe_context --path src/a
+  has "## unit: Zunit A" "$1: --path prints the unit"
+  run 0 "$1: --manifest lists both units" -- safe_context --manifest
+  has '"id": "ub"' "$1: the manifest addresses the unit after the code blocks"
+  # The projection and the folder contract carry one text for the contract.
+  run 0 "$1: the projection and the folder contract carry the same contract" -- \
+    python3 - "$WORK/code-$1.unit" "$SAFE/src/a/AGENTS.md" <<'PY'
+import sys
+unit = open(sys.argv[1], encoding="utf-8").read()
+region = open(sys.argv[2], encoding="utf-8").read()
+projected = unit[unit.index("Overview:"):].strip()
+generated = region[region.index("Overview:"):region.index("\nSource: ")].strip()
+if projected != generated:
+    print("projection:\n" + projected + "\n\nfolder contract:\n" + generated)
+    sys.exit(1)
+PY
+  OUT="$(cat "$SAFE/src/a/AGENTS.md")"
+}
+safe_context() {
+  DESIGN_LIB_DIR="$SAFE/docs/design/.render" python3 ./scripts/design-context \
+    "$SAFE/docs/design" "$@"
+}
+code_case fenced '([```sh
+make test
+```],)' '([Holds:
+
+```text
+a == b
+```
+
+as stated.],)' '([````md
+```sh
+inner
+```
+````],)' '[```sh
+make test
+```]'
+has $'Verification:\n\n```sh\nmake test\n```' \
+  "fenced: a text field that opens with a code block puts its label on its own line"
+has $'- ```sh\n  make test\n  ```' "fenced: an item's code block is indented under its marker"
+has $'- Holds:\n\n  ```text\n  a == b\n  ```\n\n  as stated.' \
+  "fenced: prose around an item's code block stays inside the item"
+has $'- ````md\n  ```sh\n  inner\n  ```\n  ````' \
+  "fenced: a code block holding a fence is fenced one backtick longer"
+code_case raw '(raw("make test", block: true, lang: "sh"),)' \
+  '(raw("a == b\nb == c", block: true),)' \
+  '([Writes: #raw("rm -rf build", block: true, lang: "sh")],)' \
+  'raw("make test\nmake lint", block: true, lang: "sh")'
+has $'Verification:\n\n```sh\nmake test\nmake lint\n```' \
+  "raw: a raw block in verification is a fenced block"
+has $'- ```sh\n  make test\n  ```' "raw: a raw block in an item is a fenced block"
+has $'- ```\n  a == b\n  b == c\n  ```' "raw: a raw block with no language keeps its lines"
+has $'- Writes:\n\n  ```sh\n  rm -rf build\n  ```' "raw: a raw block after prose in an item follows it"
+# Inline code is still inline, in an item and in a text field.
+code_case inline '([`append(entry)` returns a receipt.],)' '(raw("a == b"),)' '()' \
+  '[`make test`]'
+has 'Verification: `make test`' "inline: inline code in a text field stays on the label's line"
+has '- `append(entry)` returns a receipt.' "inline: inline code in an item stays inline"
+has '- `a == b`' "inline: raw without block is inline code"
+
 # WHAT A FORMATTER ADDS. A space at the end of a marker line, or a blank line
 # after the begin marker, used to make the whole region "malformed", with no
 # way forward but to guess. The shape is still found: the region is stale,
@@ -1451,18 +1746,32 @@ safe_root '("src/core",)' '("src/b",)'
 run 0 "the generator writes a contract into a directory renamed in letter case only" -- safe_units
 cp "$SAFE/src/core/AGENTS.md" "$WORK/spelling-git.generated"
 (cd "$SAFE" && git add -A >/dev/null 2>&1)
+# WHICH BRANCH RUNS is decided by the file system the test runs on, and each
+# branch asserts what that file system must produce. The first runs where the
+# file system folds case — macOS's default. The second runs where it is
+# case-sensitive — Linux, and so the `nix flake check` sandbox there. Either
+# way the uncovered-directory report must not list the directory a unit
+# claims under a second spelling: it read git's spelling, so after a rename
+# in letter case only it listed `src/Core/` as uncovered beside the violation
+# that names the same directory.
 if (cd "$SAFE" && git ls-files) | grep -q '^src/Core/AGENTS.md$'; then
   # The file system folds case, and git kept its own spelling.
-  run 1 "the gate reports a contract git tracks under another spelling" -- safe_units --check
+  run 1 "case-folding file system: the gate reports a contract git tracks under another spelling" -- safe_units --check
   has "src/Core/AGENTS.md: folder contract is tracked under another spelling" \
     "the violation names the spelling git lists"
   has "the file system stores it as src/core/AGENTS.md" "the violation names the spelling the file system stores"
   has "git mv src/Core src/core" "the violation says how to make the two agree"
   lacks "stale folder contract" "a contract a unit lists is not reported as one no unit lists"
+  lacks "  src/Core/ (" "case-folding file system: the report does not list the claimed directory under git's spelling"
+  has "  other/ (" "case-folding file system: the report still lists the directory no unit claims"
   run 1 "the generator reports the same spelling violation" -- safe_units
+  lacks "  src/Core/ (" "case-folding file system: the generator's report does not list it either"
 else
   # The file system tells the two apart, so the rename is real to git too.
-  run 0 "on a case-sensitive file system the renamed directory's contract is fresh" -- safe_units --check
+  run 0 "case-sensitive file system: the renamed directory's contract is fresh" -- safe_units --check
+  lacks "  src/Core/ (" "case-sensitive file system: the report does not list the old spelling"
+  lacks "  src/core/ (" "case-sensitive file system: the report does not list the renamed directory"
+  has "  other/ (" "case-sensitive file system: the report still lists the directory no unit claims"
   run 0 "and the generator has nothing to change" -- safe_units
 fi
 # Whatever the file system does, a contract a unit lists is never removed.
@@ -1575,6 +1884,10 @@ if [ -f "$SAFE/src/a/AGENTS.md" ] && [ ! -s "$SAFE/src/a/AGENTS.md" ]; then
 else
   fail_line "a file that existed before the generator ran was deleted or left with content"
 fi
+# The link the generator made beside it goes with the region: the file it
+# points at is kept only because it was there first, and holds nothing left
+# to read. It used to stay, linking an empty file.
+absent "$SAFE/src/a/CLAUDE.md" "the generator's link beside a file left empty goes with the region"
 # A file the generator created holds the region and nothing else, and is
 # deleted with the link made for it; the fixture's src/b is that case.
 safe_root '()' '()'
@@ -1592,6 +1905,20 @@ if cmp -s "$SAFE/src/a/AGENTS.md" <(printf '\n'); then
   pass_line "a file holding one blank line is restored, not deleted"
 else
   fail_line "a file holding one blank line was deleted or changed"
+fi
+absent "$SAFE/src/a/CLAUDE.md" "the generator's link beside a file left blank goes with the region"
+# A CLAUDE.md the generator did not make in that form stays, however empty
+# the file beside it is left.
+safe_repo blank-own-link
+: >"$SAFE/src/a/AGENTS.md"
+ln -s ./AGENTS.md "$SAFE/src/a/CLAUDE.md"
+run 0 "the generator adds a region beside a link it did not make" -- safe_units
+safe_root '()' '("src/b",)'
+run 0 "the generator removes that region" -- safe_units
+if [ -L "$SAFE/src/a/CLAUDE.md" ] && [ "$(readlink "$SAFE/src/a/CLAUDE.md")" = "./AGENTS.md" ]; then
+  pass_line "a link in another form than the generator's is never removed"
+else
+  fail_line "a link the generator did not make was removed"
 fi
 
 # TEXT BELOW A REGION AT THE TOP OF A FILE keeps its blank lines. Removal
@@ -1697,6 +2024,21 @@ printf '| Ghost | captured | [Zghost](design/alpha/design.typ#unit-ghost) |\n' \
   >>"$REPO/docs/COVERAGE.md"
 run 1 "a unit call inside a comment declares no anchor" -- python3 ./scripts/layer-integrity "$REPO"
 has 'no heading renders id "unit-ghost"' "the violation names the commented-out unit's anchor"
+# Nor does a call inside a block comment, inside raw text, or written as prose:
+# in markup `unit(` is text, and only `#unit(` calls. The scan read all three
+# as units, so a link to one of them passed although no such unit renders.
+cat >>"$LAYER/alpha/design.typ" <<'EOF'
+/* #unit(id: "ghost-block", title: "Commented out", paths: ()) */
+Raw text shows `#unit(id: "ghost-raw")` and prose names unit(id: "ghost-prose").
+EOF
+printf '| Ghosts | captured | [a](design/alpha/design.typ#unit-ghost-block) [b](design/alpha/design.typ#unit-ghost-raw) [c](design/alpha/design.typ#unit-ghost-prose) |\n' \
+  >>"$REPO/docs/COVERAGE.md"
+run 1 "a unit call in a block comment, raw text, or prose declares no anchor" -- \
+  python3 ./scripts/layer-integrity "$REPO"
+has 'no heading renders id "unit-ghost-block"' "the violation names the unit inside a block comment"
+has 'no heading renders id "unit-ghost-raw"' "the violation names the unit inside raw text"
+has 'no heading renders id "unit-ghost-prose"' "the violation names the unit written as prose"
+lacks 'no heading renders id "unit-shared-kernel"' "the real unit beside them still resolves"
 cp "$WORK/alpha.good" "$LAYER/alpha/design.typ"
 cp "$WORK/coverage.good" "$REPO/docs/COVERAGE.md"
 # The overview's text changed and is restored, so the page is rendered again.

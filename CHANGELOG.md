@@ -114,3 +114,14 @@
 - The shared render function refuses a layer with no `design.typ` by name, as
   the `render` app already did, and writes nothing. A caller other than the
   app used to get a Typst type error instead.
+- The design review workflow no longer loses or reverts its pull request
+  comment. Re-running only a failed comment job used to look for the review
+  under the new attempt's name, miss it, and post that the review could not
+  be produced; the review job now passes the name it uploaded under. Runs for
+  one pull request now take turns, so two runs no longer both create a
+  comment: a new push cancels the review still running for an older head, and
+  a re-run of an older run waits instead of cancelling the current one. The
+  comment job posts nothing when the pull request has moved past the head its
+  run reviewed, so neither an older run finishing late nor a re-run of one
+  replaces a newer summary. A repository that copied the workflow should carry
+  these changes.

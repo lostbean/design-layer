@@ -27,7 +27,7 @@
 #import "semantic.typ": *
 #import "statements.typ": _foundation-unit-close, _foundation-unit-open
 #import "native.typ": (
-  _answer-row, _answer-rows, _card, _card-anatomy, _host-level, _hosted,
+  _answer-row, _answer-rows, _card, _card-anatomy, _host-level, _hosted-unit,
   _sentences, _unit-furniture,
 )
 
@@ -73,32 +73,90 @@
   value == none or (type(value) == str and value.trim() == "") or value == []
 )
 
-// A UNIT FIELD HOLDS NO LIST OF ITS OWN. The five sections are read by three
+// A UNIT FIELD IS PROSE, AND ONLY PROSE. The five sections are read by three
 // carriers — the page, the Markdown projection, and a folder's `AGENTS.md` —
 // and the last two write a text section as one paragraph and a list section as
-// one line per item. A bullet, numbered, or term list written INSIDE a field
-// has no form there: the page would draw it, and the projection and the
-// generator would then stop on a layer the render had accepted. So the render
-// refuses it, in the words the projection uses for the same content, and the
-// three carriers accept exactly the same units.
-#let _unit-holds-list(value) = {
-  if type(value) != content { return false }
-  if value.func() in (list.item, enum.item, terms.item) { return true }
-  let fields = value.fields()
-  // `children` is a sequence or an explicit list call, `body` an element's
-  // content, `child` a styled run.
-  for key in ("children", "body", "child") {
-    let inner = fields.at(key, default: none)
-    let parts = if type(inner) == array { inner } else { (inner,) }
-    for part in parts {
-      if _unit-holds-list(part) { return true }
+// one line per item. So a field holds what a sentence holds: text, emphasis,
+// inline code, a link, a reference, mathematics, and the library's own inline
+// citations. Anything else has no form in Markdown — a list, a footnote, a
+// box, a heading, a `context` — and the page would draw it while the
+// projection and the generator stopped on a layer the render had accepted.
+// The render refuses it here, naming the content function.
+//
+// THE RENDER IS THE STRICTER OF THE TWO, and that is the guarantee: whatever
+// passes here the projection can express. The reverse does not hold. The
+// projection reads a field in its own mode, where a library citation is a
+// semantic node rather than the chip the page draws, and it walks through
+// layout wrappers this check refuses. The names below are the content
+// functions `design-context` projects as prose; a function added there is
+// added here, and `design-units.test.sh` renders and projects one field of
+// each to hold the two together.
+#let _UNIT-PROSE = (
+  "sequence", "styled", "text", "space", "symbol", "smartquote", "linebreak",
+  "parbreak", "strong", "emph", "raw", "link", "ref", "equation", "frac",
+  "attach", "root", "vec",
+)
+// Where each of those keeps the content it wraps.
+#let _UNIT-PROSE-CHILDREN = (
+  "children", "child", "body", "num", "denom", "base", "t", "b", "tl", "tr",
+  "bl", "br", "radicand", "index",
+)
+#let _UNIT-LISTS = ("item", "list", "enum", "terms")
+// The semantic kinds of the library's inline citations.
+#let _UNIT-INLINE-KINDS = (
+  "term-reference", "context-reference", "adr", "lens-pill", "pill",
+)
+
+// The first content function in `value` that is not prose, or none. What
+// stands between the library's inline marks is one of its own citations and is
+// not read.
+#let _unit-not-prose(value) = {
+  if type(value) == array {
+    let inside = 0
+    for part in value {
+      if type(part) == content and part.func() == metadata {
+        if part.value == _INLINE-OPEN { inside += 1; continue }
+        if part.value == _INLINE-CLOSE { inside -= 1; continue }
+      }
+      if inside > 0 { continue }
+      let found = _unit-not-prose(part)
+      if found != none { return found }
     }
+    return none
   }
-  false
+  if type(value) != content { return none }
+  let name = repr(value.func())
+  if value.func() == metadata {
+    let label = value.at("label", default: none)
+    // A guideline note is a diagnostic the render records, never content.
+    if label == <design-guideline> { return none }
+    // In the projection a library citation is its semantic node.
+    if (
+      context-projection and label == <design-semantic>
+        and type(value.value) == dictionary
+        and value.value.at("kind", default: none) in _UNIT-INLINE-KINDS
+    ) { return none }
+    return name
+  }
+  // A term citation records itself in a state the page reads; in the
+  // projection that update stands bare beside the citation's node.
+  if context-projection and name == "state-update" { return none }
+  if name not in _UNIT-PROSE { return name }
+  let fields = value.fields()
+  if name == "link" and type(fields.at("dest", default: none)) != str {
+    return "link to a label or a location"
+  }
+  for key in _UNIT-PROSE-CHILDREN {
+    let found = _unit-not-prose(fields.at(key, default: none))
+    if found != none { return found }
+  }
+  none
 }
 
 #let _unit-check-prose(id, where, value) = {
-  if _unit-holds-list(value) {
+  let found = _unit-not-prose(value)
+  if found == none { return }
+  if found in _UNIT-LISTS {
     _unit-fail(id, where + " holds a list — unsupported Typst content "
       + "function 'item' in a unit field. The Markdown projection and a "
       + "folder's AGENTS.md carry a text section as one paragraph and a list "
@@ -106,6 +164,14 @@
       + "no form there. State each point as its own item of interface, "
       + "invariants or side-effects, and write the other fields as sentences")
   }
+  _unit-fail(id, where + " holds " + found + " — unsupported Typst content "
+    + "function '" + found + "' in a unit field. A unit field is prose: "
+    + "text, emphasis, inline code, a link to a URL or a path, a reference, "
+    + "mathematics, and the library's inline citations (term, ctx, adr, "
+    + "pill, lens-pill). The Markdown projection and a folder's AGENTS.md "
+    + "carry a field as a paragraph or as one line of a list, and this "
+    + "content has no form there. Say it in words, or move it into the "
+    + "unit's body")
 }
 
 // ONE PATH, by the spelling rule the schema declares. Whether the path EXISTS
@@ -358,7 +424,7 @@
     // minimum never read a statement a unit carries.
     if body != none {
       _foundation-unit-open
-      _hosted(level, body)
+      _hosted-unit(level, _UNIT-LEVEL-MAX, body)
       _foundation-unit-close
     }
   }

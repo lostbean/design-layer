@@ -13,12 +13,14 @@
 #
 # What it covers:
 #   1. the block's INVARIANTS — a missing required field, a malformed or
-#      duplicate id, an illegal path, an unknown attribute, a list written
-#      inside a field — each fail the compile; its GUIDELINES report and block
-#      only under strict
+#      duplicate id, an illegal path, an unknown attribute, content in a field
+#      that is not prose — each fail the compile; its GUIDELINES report and
+#      block only under strict
 #   2. the rendered page carries the contract, an empty list reads `None`, and
 #      nesting is the heading hierarchy down to the sixth heading level, in a
-#      document body, a section, and a subsection
+#      document body, a section, and a subsection; a section inside a unit is
+#      refused by the page, the projection, and the gate alike; and a heading
+#      written in markup keeps its level outside a unit and nests inside one
 #   3. a context document is not held to the foundation minimum, and a
 #      statement inside a unit is not read as the document's foundation
 #   4. the projection, and selection by unit id and by code path
@@ -26,10 +28,14 @@
 #      several folders, an existing CLAUDE.md, and removal — and what it
 #      refuses to touch: a symlinked or unusable target, a marker someone wrote
 #      in their own text, two spellings of one directory, the line endings and
-#      final newline of a file it shares, and a nested project's contracts
+#      final newline of a file it shares, a file it has no reason to read, and
+#      a nested project's contracts, declared or not; and what a failure while
+#      writing leaves behind
 #   6. the gate: a missing path, a stale contract, a contract no unit lists —
-#      through the scripts and through the public check app — and the
-#      uncovered-directory report, which never changes an exit code
+#      through the scripts and through the public check app — the links a
+#      generated region carries into the layer, which the host-link check
+#      resolves, and the uncovered-directory report, which never changes an
+#      exit code
 #   7. a layer that authors no unit is untouched, including under the schema
 #      as it stood before the block existed
 #
@@ -273,6 +279,26 @@ unit_invariant list-in-list-item "an item of interface holds a list" \
 - `read`],),')"
 unit_invariant explicit-list-in-field "overview holds a list" \
   "$(with overview 'overview: [Parts: #list([one], [two])],')"
+# A FIELD IS PROSE. Each of these rendered, and then stopped the projection and
+# the generator: a footnote and a box as content functions with no Markdown
+# form, a context and a heading as content the projection drops, leaving the
+# section empty. The render refuses each, naming the function, so the three
+# carriers never disagree about a unit the page accepted.
+unit_invariant footnote-in-field "overview holds footnote" \
+  "$(with overview 'overview: [Appends what was charged.#footnote[An aside.]],')"
+unit_invariant box-in-field "overview holds rect" \
+  "$(with overview 'overview: [#rect[Appends what was charged.]],')"
+unit_invariant context-in-field "verification holds context" \
+  "$(with verification 'verification: context [make test-ledger],')"
+unit_invariant heading-in-field "overview holds heading" "$(with overview 'overview: [
+= Appends what was charged
+],')"
+unit_invariant layout-in-list-item "an item of invariants holds box" \
+  "$(with invariants 'invariants: ([An entry is #box[never] rewritten.],),')"
+unit_invariant field-content-names-the-rule "A unit field is prose" \
+  "$(with overview 'overview: [Appends.#footnote[An aside.]],')"
+unit_invariant field-content-names-the-remedy "move it into the unit" \
+  "$(with overview 'overview: [Appends.#footnote[An aside.]],')"
 # A duplicate id fails at the second call.
 out="$(block_compile duplicate plain "#unit($UNIT_OK)
 #unit($UNIT_OK)")"
@@ -373,7 +399,11 @@ write_root() { # $1 = the ledger unit's paths, $2 = the ledger overview
         verification: "None. Exercised only in staging.",
         paths: ("src/gateway",),
       )
+
+      Zafterchild is the group's own closing prose.
     ]
+
+    Zafterparent is the section's closing prose.
   ])
 ]
 EOF
@@ -534,7 +564,20 @@ depth_render() {
 }
 depth_context() {
   DESIGN_LIB_DIR="$DEPTH/docs/design/.render" python3 ./scripts/design-context \
-    "$DEPTH/docs/design"
+    "$DEPTH/docs/design" "$@"
+}
+depth_units() {
+  DESIGN_LIB_DIR="$DEPTH/docs/design/.render" python3 ./scripts/design-units \
+    "$DEPTH/docs/design" "$DEPTH" --check
+}
+# <count> units, each in the body of the one before, the last holding <innermost>
+depth_nest_around() {
+  local count="$1" inner="$2" at="${3:-1}"
+  if [ "$at" -eq "$count" ]; then
+    depth_unit "$at" "[ $inner ]"
+  else
+    depth_unit "$at" "[ $(depth_nest_around "$count" "$inner" $((at + 1))) ]"
+  fi
 }
 # <where> <deepest count> <host template>. The template holds NEST where the
 # nested units go. In every host the deepest unit is the sixth heading level,
@@ -553,6 +596,11 @@ depth_case() {
   esac
   run 0 "the projection accepts $count nested units $where" -- depth_context
   has "###### unit: Zdeep$count" "the projection heads the deepest unit $where at level six"
+  # The manifest compares the level the projection wrote each unit at with the
+  # level the gate's unit reader computed for it, so the two cannot drift.
+  run 0 "the manifest addresses $count nested units $where" -- depth_context --manifest
+  has "\"id\": \"d$count\"" "the manifest lists the deepest unit $where"
+  run 0 "the unit checks accept $count nested units $where" -- depth_units
 
   depth_layer "${host/NEST/$(depth_nest $((count + 1)))}"
   run 1 "$((count + 1)) nested units $where fail the render" -- depth_render
@@ -560,6 +608,8 @@ depth_case() {
   lacks "did not converge" "the render fails on the depth rule, not on convergence"
   run 1 "$((count + 1)) nested units $where fail the projection" -- depth_context
   has "nested past Markdown's 6 heading levels" "the projection names the same limit"
+  run 1 "$((count + 1)) nested units $where fail the unit checks" -- depth_units
+  has "nested past Markdown's 6 heading levels" "the gate's unit step names the same limit"
 }
 depth_case "directly in a document body" 5 'NEST'
 depth_case "inside a section" 4 '#section(title: "Parts", body: [ NEST ])'
@@ -591,6 +641,130 @@ run 1 "5 nested units in a context document's body fail the projection" -- depth
 has "nested past Markdown's 6 heading levels" "the projection names the same limit for a context document"
 rm -rf "$DEPTH/docs/design/alpha"
 
+# A SECTION BELONGS TO THE DOCUMENT, NEVER TO A UNIT. `section` and
+# `subsection` draw the fixed levels two and three. Inside a unit they kept
+# them: four nested units and then a subsection holding a fifth rendered with
+# the page levels 2, 3, 4, 5, 3, 4 — an outline out of order — passed the unit
+# checks, and stopped every projection, which nests each heading below its
+# host. All three carriers now refuse the call, in the same words.
+spine_in_unit() { # <kind> <the call> <units above it>
+  depth_layer "$(depth_nest_around "$3" "$2")"
+  rm -f "$DEPTH/out.pdf"
+  run 1 "a $1 inside $3 nested unit(s) fails the render" -- depth_render
+  has "$1 block: is written inside a unit" "the render names the $1 and the rule"
+  absent "$DEPTH/out.pdf" "no page is written for a $1 inside $3 nested unit(s)"
+  run 1 "a $1 inside $3 nested unit(s) fails the projection" -- depth_context
+  has "is written inside the body of unit 'd$3'" "the projection names the $1's unit"
+  run 1 "a $1 inside $3 nested unit(s) fails the unit checks" -- depth_units
+  has "is written inside the body of unit 'd$3'" "the gate's unit step names it too"
+}
+spine_in_unit section '#section(title: "Zinner", body: [Text.])' 1
+spine_in_unit subsection '#subsection(title: "Zinner")[Text.]' 1
+spine_in_unit subsection "#subsection(title: \"Zinner\")[ $(depth_unit 5) ]" 4
+# Outside a unit the page keeps a section at its fixed level while the
+# projection nests it, so a layer can render that the projection cannot
+# address. The gate's unit step runs the projection's depth rule, so the gate
+# refuses it rather than passing a layer no selector can read.
+depth_layer "#section(title: \"Zouter\", body: [#section(title: \"Zinner\", body: [ $(depth_nest 4) ])])"
+run 0 "four units inside a section inside a section render" -- depth_render
+run 1 "the projection cannot address the fourth of them" -- depth_context
+has "nested past Markdown's 6 heading levels" "the projection names the limit"
+run 1 "the unit checks refuse the layer the projection cannot address" -- depth_units
+has "unit 'd4'" "the gate's unit step names the unit"
+has "nested past Markdown's 6 heading levels" "the gate's unit step runs the projection's depth rule"
+# A unit inside a notes block: the projection places it below the notes
+# heading, and the manifest holds the unit reader to the same level.
+depth_layer "#section(title: \"Zparts\", notes: notes(title: \"Znotes\")[ $(depth_unit 1) ], body: [Text.])"
+run 0 "a unit inside a notes block renders" -- depth_render
+run 0 "the manifest addresses a unit inside a notes block" -- depth_context --manifest
+has '"id": "d1"' "the manifest lists the unit inside the notes block"
+
+# A HEADING WRITTEN IN MARKUP. Outside a unit it is the level its `=` signs
+# say, numbered and listed in the contents, as it was before the unit block
+# existed: the level a nested unit reads is carried without moving it. It used
+# to be shifted by its host's level — `===` in a section body became level
+# five, numbered 1.2.0.0.1, and left the contents.
+depth_layer '#section(title: "Zparts", body: [Intro.
+
+=== Zrawthree
+
+Text.
+
+#subsection(title: "Zsub")[Sub text.
+
+==== Zrawfour
+
+More.]])'
+run 0 "markup headings in a section and a subsection render" -- depth_render
+text="$(pdftotext -layout "$DEPTH/out.pdf" - 2>/dev/null)"
+if [ "$(printf '%s\n' "$text" | grep -c '1\.2\.1 Zrawthree')" = "2" ]; then
+  pass_line "a === heading in a section body is level three: numbered 1.2.1 on its page and in the contents"
+else
+  fail_line "a === heading in a section body is not numbered 1.2.1 in the contents and on its page"
+fi
+case "$text" in
+*"1.2.2.1 Zrawfour"*) pass_line "a ==== heading in a subsection body is level four" ;;
+*) fail_line "a ==== heading in a subsection body is not numbered 1.2.2.1" ;;
+esac
+case "$text" in
+*"1.2.0"*) fail_line "a markup heading was shifted below its host and numbered through a missing level" ;;
+*) pass_line "no markup heading is numbered through a missing level" ;;
+esac
+# Inside a unit a markup heading nests below the unit, at any depth, and one
+# pushed past the sixth level fails naming itself instead of rendering.
+depth_layer "$(depth_unit 1 '[Body.
+
+= Zrawinunit
+
+Text.]')"
+run 0 "a markup heading in a unit body renders" -- depth_render
+text="$(pdftotext -layout "$DEPTH/out.pdf" - 2>/dev/null)"
+case "$text" in
+*"1.2.1 Zrawinunit"*) pass_line "a markup heading in a unit body nests below the unit" ;;
+*) fail_line "a markup heading in a unit body is not numbered below its unit" ;;
+esac
+depth_layer "$(depth_nest_around 5 '
+
+== Zrawdeep
+
+Text.')"
+run 1 "a markup heading pushed past the sixth level fails the render" -- depth_render
+has "a heading inside a unit body is drawn at level 8" "the render names the heading's level"
+
+# EVERY KIND OF PROSE A FIELD MAY HOLD passes all three carriers: the render
+# accepts it, the projection writes it, and the unit checks read it. The
+# render is the strictest of the three, so this is the list it must not
+# shrink below what authors write.
+cat >"$DEPTH/docs/design/CONTEXT.typ" <<'EOF'
+#let terms = (
+  (slug: "term-zthing", title: [Zthing], body: [A thing the fixture cites.]),
+)
+EOF
+depth_layer '#unit(
+  id: "prose",
+  title: [Zprose *title*],
+  overview: [Plain *strong* _emph_ `code` "quoted" it'"'"'s https://example.org
+    #link("https://example.org/x")[a link] $x^2 + a/b$ #adr(3)
+    #lens-pill("state") #pill("state") #term("term-zthing") and @unit-prose. \
+    A second line.],
+  interface: ([`call()` returns #sym.arrow.r a #term("term-zthing").],),
+  invariants: ("A plain string.",),
+  side-effects: (),
+  verification: [```sh
+make test
+```],
+  paths: (),
+)'
+run 0 "a unit whose fields hold every kind of prose renders" -- depth_render
+has "0 guideline(s)" "prose in a field fires no guideline"
+run 0 "the projection writes every kind of prose a field holds" -- depth_context
+has 'Overview: Plain **strong** *emph* `code` "quoted"' "the projection carries emphasis, code, and quotes"
+has "[a link](https://example.org/x)" "the projection carries a link"
+has "Zthing" "the projection carries a term citation by its title"
+has "ADR-0003" "the projection carries an ADR citation"
+run 0 "the unit checks read every kind of prose a field holds" -- depth_units
+rm -f "$DEPTH/docs/design/CONTEXT.typ"
+
 # --- 4. THE PROJECTION AND ITS SELECTORS ----------------------------------------
 context >"$WORK/full.md" 2>"$WORK/full.err"
 OUT="$(cat "$WORK/full.md")"
@@ -606,9 +780,27 @@ has "#### unit: Zledger" "--unit returns the named unit"
 has "##### principle: Zunitprin" "--unit returns the unit's body"
 lacks "Zgateway" "--unit does not return a sibling unit"
 lacks "<!-- source:" "--unit stops at the end of the unit"
+# ONE UNIT IS ITS CONTRACT, ITS BODY, AND ITS NESTED UNITS — and nothing that
+# follows it. The selector used to return the unit's heading subtree, which
+# runs to the next heading of the same level: prose after a nested unit in its
+# parent's body, and prose after the parent in its section, were both printed
+# as though they belonged to the last nested unit.
+run 0 "--unit selects the last nested unit" -- context --unit gateway
+has "#### unit: Zgateway" "--unit returns the last nested unit"
+lacks "Zafterchild" "--unit does not return the parent's prose that follows a nested unit"
+lacks "Zafterparent" "--unit does not return the section's prose that follows the parent"
 context --unit billing >"$WORK/billing.md"
 OUT="$(cat "$WORK/billing.md")"
 has "#### unit: Zgateway" "--unit on a parent returns its nested units"
+has "Zafterchild" "--unit on a parent returns the prose its own body closes with"
+lacks "Zafterparent" "--unit on a parent does not return the prose that follows it"
+if [ "$(tail -n 1 "$WORK/billing.md")" = "Zafterchild is the group's own closing prose." ]; then
+  pass_line "--unit ends on the last line the unit itself wrote"
+else
+  fail_line "--unit does not end on the unit's own last line"
+fi
+run 0 "--path selects the last nested unit by its path" -- context --path src/gateway
+lacks "Zafterchild" "--path does not return prose that follows the unit it selects"
 run 2 "--unit on an unknown id is an error" -- context --unit nope
 has "unit not found: nope" "the error names the unknown id"
 
@@ -648,13 +840,27 @@ PY
 else
   fail_line "the manifest's unit listing is wrong"
 fi
-# A unit selected by id is the same bytes as its section address, and the
-# digest guard and --output behave as they do for --section.
+# A unit selected by id is NOT the heading subtree at its address. The two
+# begin at the same heading; the subtree runs on to the next heading of that
+# level, through whatever the unit's parents wrote after it, and the unit
+# stops where its own node does. The digest guard and --output behave as they
+# do for --section.
 address="$(python3 -c 'import json,sys; print([u["address"] for u in json.load(open(sys.argv[1]))["units"] if u["id"]=="gateway"][0])' "$WORK/manifest.json")"
 digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["projection"]["sha256"])' "$WORK/manifest.json")"
 context --unit gateway >"$WORK/by-unit.md"
 context --section "$address" >"$WORK/by-section.md"
-same_file "$WORK/by-unit.md" "$WORK/by-section.md" "--unit returns the bytes --section returns at the unit's address"
+if head -c "$(wc -c <"$WORK/by-unit.md")" "$WORK/by-section.md" | cmp -s - "$WORK/by-unit.md"; then
+  pass_line "--unit returns the bytes the unit's heading subtree begins with"
+else
+  fail_line "--unit does not begin as the heading subtree at the unit's address does"
+fi
+OUT="$(cat "$WORK/by-section.md")"
+has "Zafterchild" "--section at a unit's address runs on into the prose that follows the unit"
+if cmp -s "$WORK/by-unit.md" "$WORK/by-section.md"; then
+  fail_line "--unit returned the whole heading subtree, with the prose that follows the unit"
+else
+  pass_line "--unit stops where the unit does, short of its heading subtree"
+fi
 run 0 "--unit accepts the projection digest" -- context --unit gateway --expect-digest "$digest"
 run 2 "--unit refuses a digest from another snapshot" -- \
   context --unit gateway --expect-digest sha256:0000

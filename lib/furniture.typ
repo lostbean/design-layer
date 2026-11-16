@@ -18,7 +18,7 @@
       }
     ]
   }
-  semantic-result("pill", visual, fields: (names: ns))
+  semantic-result("pill", _inline-visual(visual), fields: (names: ns))
 }
 
 #let chip(body, tone: none) = {

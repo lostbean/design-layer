@@ -259,16 +259,31 @@ def parse_args(argv: list[str]) -> CliOptions:
 
 
 def locate_schema() -> Path:
-    """The declared schema: $DESIGN_SCHEMA, else beside this script, else the
-    checkout's schema/ directory — the lookup every gate script shares."""
-    override = os.environ.get("DESIGN_SCHEMA")
-    if override:
-        return Path(override)
-    here = Path(os.path.realpath(__file__)).parent
-    sibling = here / "design-schema.json"
-    if sibling.is_file():
-        return sibling
-    return here.parent / "schema" / "design-schema.json"
+    """The declared schema, found by the one lookup every gate script shares.
+
+    The chain — $DESIGN_SCHEMA, else beside the script, else the checkout's
+    schema/ directory — is written once, in layer-integrity, and called here
+    with this script's own path. A copy of it kept in this file could come to
+    resolve a different schema than the gate's other steps read.
+    """
+    path = Path(__file__).with_name("layer-integrity")
+    name = "layer_integrity_for_context"
+    module = sys.modules.get(name)
+    if module is None:
+        loader = SourceFileLoader(name, str(path))
+        spec = importlib.util.spec_from_loader(name, loader)
+        if spec is None or spec.loader is None:
+            fail(f"cannot load the shared schema lookup from {path}")
+        module = importlib.util.module_from_spec(spec)
+        # A dataclass resolves its own module while the class body runs, so
+        # the module is registered before it executes.
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception as error:
+            del sys.modules[name]
+            fail(f"cannot load the shared schema lookup from {path}: {error}")
+    return Path(module.locate_schema(__file__))
 
 
 def path_forbidden_characters() -> frozenset[str]:
@@ -933,6 +948,47 @@ def design_unit_contract_markdown(sections: list[UnitSection], empty_label: str)
     return "\n\n".join(blocks)
 
 
+# WHERE A UNIT BEGINS AND ENDS IN THE PROJECTION. A unit's heading tells where
+# it begins and not where it ends: prose that follows a nested unit in its
+# parent's body, or follows the parent in its section, sits under the same
+# heading as far as a heading scan can tell. So the unit's own node marks its
+# two ends while it is written, and the marks are taken out of the finished
+# projection, leaving the offsets a selector cuts by. A mark is a control
+# character around the unit id: no authored text holds one, and none of the
+# whitespace rules the projection normalizes with reads one.
+_UNIT_MARK = "\x01"
+_UNIT_MARK_RE = re.compile("\x01unit-(open|close):([^\x01]*)\x01")
+
+
+def _unit_mark(side: str, unit_id: str) -> str:
+    return f"{_UNIT_MARK}unit-{side}:{unit_id}{_UNIT_MARK}"
+
+
+def strip_unit_marks(marked: str) -> tuple[str, dict[str, tuple[int, int]]]:
+    """The projection without its unit marks, and each unit's character span.
+
+    A span runs from the first character of the unit's heading to the end of
+    the last line the unit's node wrote.
+    """
+    pieces: list[str] = []
+    opened: dict[str, int] = {}
+    spans: dict[str, tuple[int, int]] = {}
+    position = 0
+    length = 0
+    for match in _UNIT_MARK_RE.finditer(marked):
+        piece = marked[position : match.start()]
+        pieces.append(piece)
+        length += len(piece)
+        position = match.end()
+        side, unit_id = match.group(1), match.group(2)
+        if side == "open":
+            opened.setdefault(unit_id, length)
+        elif unit_id in opened and unit_id not in spans:
+            spans[unit_id] = (opened[unit_id], length)
+    pieces.append(marked[position:])
+    return "".join(pieces), spans
+
+
 def design_unit_markdown(
     value: dict[str, object],
     level: int,
@@ -969,7 +1025,15 @@ def design_unit_markdown(
     parts = [f"{'#' * level} unit: {title}", f"ID: {unit_id}", f"Paths: {listed}", contract]
     if body:
         parts.append(body)
-    return "\n\n" + "\n\n".join(parts) + "\n\n"
+    # The marks bracket exactly what this node wrote, so a selector can return
+    # the unit and nothing that merely follows it under the same heading.
+    return (
+        "\n\n"
+        + _unit_mark("open", unit_id)
+        + "\n\n".join(parts)
+        + _unit_mark("close", unit_id)
+        + "\n\n"
+    )
 
 
 def unit_markdown(
@@ -2215,6 +2279,8 @@ class UnitRecord:
     # unit's heading and a folder contract repeats.
     contract: str
     node: dict[str, object]
+    # The heading level the projection writes the unit at.
+    level: int = 0
 
 
 @dataclass
@@ -2240,6 +2306,8 @@ class Projection:
 
     markdown: bytes
     units: list[UnitRecord]
+    # Each unit's own text in `markdown`, as a half-open range of bytes.
+    spans: dict[str, tuple[int, int]]
 
 
 @dataclass
@@ -2255,25 +2323,49 @@ class _LayerSemantics:
     units: list[UnitRecord]
 
 
+# THE HEADING LEVEL A NESTED BLOCK IS PROJECTED AT. The projection hands each
+# block the level its host leaves it: these kinds write a heading and place
+# the named fields one level below it. Every other semantic kind projects its
+# fields with no level of its own, and a block found there takes its default.
+# `collect_units` follows the same rule without projecting anything, so the
+# gate can refuse a unit past the sixth level in a layer the projection cannot
+# otherwise represent; `locate_units` then compares the two wherever the
+# projection does run.
+_LEVEL_HOSTS: dict[str, tuple[int, frozenset[str]]] = {
+    "section": (2, frozenset({"visual", "notes", "body"})),
+    "subsection": (3, frozenset({"body"})),
+    "unit": (3, frozenset({"body"})),
+    "entity": (3, frozenset({"body"})),
+    "notes": (3, frozenset({"body"})),
+}
+# The document's own spine. Each draws a fixed heading level on the page, so
+# the library refuses one inside a unit's body, and so does this reader.
+_SPINE_KINDS = frozenset({"section", "subsection"})
+
+
 def collect_units(
     records: list[object],
     term_titles: Mapping[str, str] | None = None,
     context_names: frozenset[str] | None = None,
 ) -> list[UnitRecord]:
-    """Every unit the layer declares, with its parent unit and its document.
+    """Every unit the layer declares, with its parent, document, and level.
 
     Nesting is read off the semantic tree: a unit found while walking another
-    unit's fields is that unit's child. Ids are checked here because the
-    projection never lays the document out, so the renderer's own duplicate
-    check — which reads a layout-time trail — does not run in this mode.
+    unit's fields is that unit's child. Three rules are checked here because
+    the projection never lays the document out, so the renderer's own checks —
+    which read layout-time styles and trails — do not run in this mode: an id
+    is unique across the layer, no unit is projected past the sixth heading
+    level, and a unit's body holds no section or subsection.
     """
     found: list[UnitRecord] = []
     seen: dict[str, str] = {}
 
-    def walk(current: object, parent: str | None, document: str) -> None:
+    def walk(
+        current: object, parent: str | None, document: str, level: int | None
+    ) -> None:
         if isinstance(current, list):
             for item in current:
-                walk(item, parent, document)
+                walk(item, parent, document, level)
             return
         if not isinstance(current, dict):
             return
@@ -2281,14 +2373,37 @@ def collect_units(
             node = current.get("value")
             if not isinstance(node, dict):
                 raise ProjectionError("semantic metadata value is not an object")
-            visit(node, parent, document)
+            visit(node, parent, document, level)
             return
         for child in current.values():
-            walk(child, parent, document)
+            walk(child, parent, document, level)
 
-    def visit(node: dict[str, object], parent: str | None, document: str) -> None:
+    def visit(
+        node: dict[str, object], parent: str | None, document: str, level: int | None
+    ) -> None:
+        kind = node.get("kind")
         inner = parent
-        if node.get("kind") == "unit":
+        below: dict[str, int | None] = {}
+        if kind == "document":
+            own = node.get("level", 1)
+            if isinstance(own, int):
+                below = {"body": own + 1}
+        elif isinstance(kind, str) and kind in _LEVEL_HOSTS:
+            default, hosted = _LEVEL_HOSTS[kind]
+            own = level if level is not None else default
+            below = {name: own + 1 for name in hosted}
+        if kind in _SPINE_KINDS and parent is not None:
+            title = field_text(
+                node.get("title"), f"{kind}.title", term_titles, context_names
+            )
+            raise ProjectionError(
+                f"{kind} {title!r} is written inside the body of unit "
+                f"{parent!r}. A {kind} is part of the document's own spine and "
+                "keeps its fixed heading level, which would sit above the unit "
+                "that holds it. Give the structure to a nested unit, or move "
+                f"the {kind} out of the unit's body"
+            )
+        if kind == "unit":
             unit_id = node.get("id")
             if not isinstance(unit_id, str) or not unit_id:
                 raise ProjectionError("unit id is invalid")
@@ -2302,6 +2417,16 @@ def collect_units(
                     f"and {document}); a unit id is unique across the layer"
                 )
             seen[unit_id] = document
+            if own > MAX_HEADING_LEVEL:
+                raise ProjectionError(
+                    f"unit {unit_id!r} in {document} is nested past Markdown's "
+                    f"{MAX_HEADING_LEVEL} heading levels and cannot be "
+                    f"addressed: the projection would write it at level {own}. "
+                    "The projection nests every heading below its host, so a "
+                    "unit inside a section inside a section is deeper there "
+                    "than on the page. Flatten the nesting, or split the "
+                    "unit's subtree into sibling units"
+                )
             found.append(
                 UnitRecord(
                     id=unit_id,
@@ -2321,18 +2446,19 @@ def collect_units(
                         design_unit_empty_label(node, f"unit {unit_id}"),
                     ),
                     node=node,
+                    level=own,
                 )
             )
             inner = unit_id
         for key, child in node.items():
             if key != "kind":
-                walk(child, inner, document)
+                walk(child, inner, document, below.get(key))
 
     for record in records:
         if not isinstance(record, dict):
             continue
         name = record.get("name") if record.get("kind") == "document" else ""
-        visit(record, None, name if isinstance(name, str) else "")
+        visit(record, None, name if isinstance(name, str) else "", None)
     return found
 
 
@@ -2425,8 +2551,15 @@ def project_layer(layer: Path) -> Projection:
             raise ProjectionError(f"cannot read semantic map {path}: {error}") from error
         parts.append(f"<!-- source: docs/{filename} -->\n\n{raw}")
 
-    markdown = ("\n\n".join(part.rstrip("\n") for part in parts) + "\n").encode("utf-8")
-    return Projection(markdown=markdown, units=semantics.units)
+    marked = "\n\n".join(part.rstrip("\n") for part in parts) + "\n"
+    text, character_spans = strip_unit_marks(marked)
+    spans = {
+        unit_id: (len(text[:start].encode("utf-8")), len(text[:end].encode("utf-8")))
+        for unit_id, (start, end) in character_spans.items()
+    }
+    return Projection(
+        markdown=text.encode("utf-8"), units=semantics.units, spans=spans
+    )
 
 
 def estimate(markdown: bytes) -> dict[str, int | str]:
@@ -2592,6 +2725,18 @@ def locate_units(index: SectionIndex, units: list[UnitRecord]) -> dict[str, str]
             "unit(s) have no addressable heading in the projection: "
             + ", ".join(missing)
         )
+    # The gate judges a unit's depth from `collect_units`, which follows the
+    # projection's level rule without projecting. Here both have run, so a
+    # difference between them is found rather than left for the gate to act on.
+    for unit in units:
+        projected = index.nodes[located[unit.id]].level
+        if projected != unit.level:
+            raise ProjectionError(
+                f"unit {unit.id!r} is projected at heading level {projected}, "
+                f"and the unit reader placed it at level {unit.level}; the two "
+                "must agree, because the gate refuses a unit by the reader's "
+                "level. This is a defect in design-context, not in the layer"
+            )
     return located
 
 
@@ -2739,64 +2884,58 @@ def selected_section(
     return subtree
 
 
-_SOURCE_COMMENT_RE = re.compile(r"^<!-- source: .* -->\s*$")
+def unit_text(projection: Projection, unit_id: str) -> bytes:
+    """One unit as its own node wrote it: heading, contract, body, nested units.
 
-
-def unit_subtree(index: SectionIndex, located: Mapping[str, str], unit_id: str) -> bytes:
-    """A unit's heading subtree, ending where the unit does.
-
-    This is the subtree `--section` returns at the unit's address, with one
-    exception. A heading subtree runs to the next heading of the same or a
-    higher level, and for the last unit of the last document that reaches past
-    the document into the `<!-- source: ... -->` line introducing the next
-    corpus file. That line belongs to no unit, so it is dropped with the blank
-    lines around it.
+    The bytes are cut at the marks the unit's node left, never at the next
+    heading. A heading subtree would also carry whatever follows the unit
+    under the same heading — prose after a nested unit in its parent's body,
+    prose after the parent in its section, the next corpus file's source line
+    — and none of that is the unit.
     """
-    node = index.nodes[located[unit_id]]
-    end = node.end_line
-    last = end
-    while last > node.start_line + 1 and not index.lines[last - 1].strip():
-        last -= 1
-    if _SOURCE_COMMENT_RE.match(index.lines[last - 1]):
-        end = last - 1
-        while end > node.start_line + 1 and not index.lines[end - 1].strip():
-            end -= 1
-    return section_bytes(index, node.start_line, end)
+    span = projection.spans.get(unit_id)
+    if span is None:
+        raise ProjectionError(
+            f"unit {unit_id!r} is declared and has no text in the projection"
+        )
+    return projection.markdown[span[0] : span[1]].rstrip(b"\n") + b"\n"
 
 
 def selected_unit(
-    markdown: bytes,
+    projection: Projection,
     index: SectionIndex,
-    units: list[UnitRecord],
     unit_id: str,
     expect_digest: str | None,
 ) -> bytes:
-    """One unit's whole subtree: its contract, its body, and its nested units."""
-    located = locate_units(index, units)
-    if unit_id not in located:
+    """One unit: its contract, its body, and its nested units."""
+    units = projection.units
+    # Every declared unit must have a heading the manifest can address, the
+    # selected one included, so a selector and the manifest read one layer.
+    locate_units(index, units)
+    if not any(unit.id == unit_id for unit in units):
         known = ", ".join(unit.id for unit in units) or "none"
         raise ProjectionOperationalError(
             f"unit not found: {unit_id} (declared units: {known})"
         )
-    subtree = unit_subtree(index, located, unit_id)
-    guard_digest(markdown, subtree, f"unit {unit_id}", expect_digest)
-    return subtree
+    selected = unit_text(projection, unit_id)
+    guard_digest(projection.markdown, selected, f"unit {unit_id}", expect_digest)
+    return selected
 
 
 def selected_path(
-    markdown: bytes,
+    projection: Projection,
     index: SectionIndex,
-    units: list[UnitRecord],
     query: str,
     expect_digest: str | None,
 ) -> bytes:
-    """Every unit governing a path, each as its whole subtree, in layer order.
+    """Every unit governing a path, each as its own text, in layer order.
 
-    A unit already inside another selected unit's subtree is not repeated: its
-    text is part of that subtree, and emitting it twice would hand the reader
-    one contract as though it were two.
+    A unit already inside another selected unit is not repeated: its text is
+    part of that unit, and emitting it twice would hand the reader one
+    contract as though it were two.
     """
-    located = locate_units(index, units)
+    units = projection.units
+    locate_units(index, units)
     governing = units_for_path(units, query)
     if not governing:
         raise ProjectionOperationalError(
@@ -2814,13 +2953,13 @@ def selected_path(
         return False
 
     outermost = [unit for unit in governing if not nested_in_chosen(unit.id)]
-    subtrees = [unit_subtree(index, located, unit.id) for unit in outermost]
+    texts = [unit_text(projection, unit.id) for unit in outermost]
     selected = (
-        subtrees[0]
-        if len(subtrees) == 1
-        else b"\n\n".join(subtree.rstrip(b"\n") for subtree in subtrees) + b"\n"
+        texts[0]
+        if len(texts) == 1
+        else b"\n\n".join(text.rstrip(b"\n") for text in texts) + b"\n"
     )
-    guard_digest(markdown, selected, f"path {query}", expect_digest)
+    guard_digest(projection.markdown, selected, f"path {query}", expect_digest)
     return selected
 
 
@@ -2881,12 +3020,12 @@ def main(argv: list[str]) -> int:
             if options.mode == "unit":
                 assert options.unit is not None
                 selected = selected_unit(
-                    markdown, index, units, options.unit, options.expect_digest
+                    projection, index, options.unit, options.expect_digest
                 )
             elif options.mode == "path":
                 assert options.path is not None
                 selected = selected_path(
-                    markdown, index, units, options.path, options.expect_digest
+                    projection, index, options.path, options.expect_digest
                 )
             else:
                 assert options.section is not None

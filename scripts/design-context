@@ -464,8 +464,11 @@ def semantic_probe(layer: Path, scratch: Path, library: Path) -> Path:
     return probe
 
 
-def query_semantics(layer: Path) -> list[object]:
+def query_semantics(layer: Path, *, review: bool = False) -> list[object]:
     library = renderer_library(layer)
+    local_library = layer / ".render" / "designlib.typ"
+    if review and local_library.is_file():
+        library = local_library.resolve()
     # Keep the probe one directory below the layer root, matching the
     # aggregate's `.render/_aggregate.typ` location. Glossary bodies are
     # intentionally spliced source and may import `../refs.typ`; moving the
@@ -485,6 +488,7 @@ def query_semantics(layer: Path) -> list[object]:
                 "value",
                 "--input",
                 "context=1",
+                *(["--input", "review-projection=1"] if review else []),
                 "--root",
                 root,
             ],

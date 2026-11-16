@@ -129,3 +129,12 @@ Walk a representative use case across the completed views. Resolve inconsistent 
 - After resolving a merge conflict in `design.typ` or `CONTEXT.typ`, re-check bracket balance and entry separators around every resolved hunk, and compare term and statement counts with both sides. Cutting text at conflict markers can drop a `]` or a `),` `(`, and not every such slip fails the gate.
 - Report authored sources, rendered outputs, checks performed, and limitations. An unavailable check is not a pass; well-formed documentation neither accepts the architecture nor proves the code implements its claims.
 - On later changes, revisit affected views and their parent interactions when purpose, ownership, abstractions, constraints, or important cooperation changes. Ordinary refactoring should usually leave the layer unchanged. Keep current architecture, proposals, and history distinct through existing artifacts.
+
+## Show design changes
+
+When a reader asks what changed between revisions, use the host's forwarded
+review app if it is available. The source app is `nix run .#review -- docs/design
+--base <revision> -o <new temporary HTML path>`. Add `--pdf` when the reader
+wants rendered context. Share the report and any PDF companions as temporary
+artifacts. The report compares evaluated design fields and calls out native
+drawing or formula edits that require manual review.

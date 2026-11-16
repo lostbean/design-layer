@@ -1,0 +1,186 @@
+{
+  "document-shell": [
+    "The block gallery",
+    "Design widgets"
+  ],
+  "section": [
+    "How this file is read",
+    "Reading the gallery"
+  ],
+  "points": [
+    "A bullet holds one property.",
+    "One property per bullet."
+  ],
+  "goal": [
+    "Author content, never styling",
+    "Author the design content"
+  ],
+  "no-goal": [
+    "A general document system",
+    "General-purpose publishing"
+  ],
+  "principle": [
+    "One name per concept",
+    "Use one name per concept"
+  ],
+  "subsection": [
+    "Enforcement and evidence",
+    "Evidence of enforcement"
+  ],
+  "invariant": [
+    "Every diagram edge names a declared node",
+    "Every edge has declared endpoints"
+  ],
+  "notes": [
+    "On enforcement labels",
+    "On enforcement kinds"
+  ],
+  "diagram-group": [
+    "label: \"Adopter\", kind: \"domain\", tint: \"slate\"",
+    "label: \"Host\", kind: \"domain\", tint: \"slate\""
+  ],
+  "diagram-node": [
+    "label: \"design-schema\"",
+    "label: \"block schema\""
+  ],
+  "diagram-edge": [
+    "relation: \"call\", label: \"called directly\"",
+    "relation: \"call\", label: \"imports widget\""
+  ],
+  "diagram-native": [
+    "pos: (2, 0), label: [publish]",
+    "pos: (2, 1), label: [publish]"
+  ],
+  "components": [
+    "cols: \"3\",",
+    "cols: \"2\","
+  ],
+  "component": [
+    "name: \"projector\",",
+    "name: \"assembler\","
+  ],
+  "answers-data": [
+    "One schema in, one library out.",
+    "One schema feeds the library."
+  ],
+  "answers": [
+    "Decide pass or fail on a whole layer.",
+    "Validate the entire layer."
+  ],
+  "contract": [
+    "The projection contract",
+    "The assembly contract"
+  ],
+  "stat-tile": [
+    "value: \"2.4M\"",
+    "value: \"2.6M\""
+  ],
+  "coverage": [
+    "Conventional Nix packaging.",
+    "Standard Nix packaging."
+  ],
+  "pending-entry": [
+    "since: \"2026-08-23\",\n    adr:",
+    "since: \"2026-08-24\",\n    adr:"
+  ],
+  "references": [
+    "#term(\"term-pending-ledger\")",
+    "#term(\"term-design-layer\")"
+  ],
+  "chip": [
+    "#chip[chip]",
+    "#chip[token]"
+  ],
+  "pill": [
+    "#pill(\"modeling\", \"composition\")",
+    "#pill(\"modeling\", \"state\")"
+  ],
+  "link": [
+    "#lnk(\"https://typst.app\", \"link\")",
+    "#lnk(\"https://typst.app\", \"Typst\")"
+  ],
+  "entity": [
+    "owner: \"the author\"",
+    "owner: \"the editor\""
+  ],
+  "attribute": [
+    "type: \"Authoring notation\"",
+    "type: \"Typst syntax\""
+  ],
+  "relates": [
+    "cardinality: \"1 : 0..n\"",
+    "cardinality: \"1 : 1..n\""
+  ],
+  "behavior": [
+    "The check reports the document as stale and exits non-zero.",
+    "The check names the stale PDF and exits non-zero."
+  ],
+  "info": [
+    "What a gate proves",
+    "What freshness shows"
+  ],
+  "warning": [
+    "title: \"A degrading check\", tint: \"amber\"",
+    "title: \"A degrading check\", tint: \"rose\""
+  ],
+  "cards": [
+    "title: \"Invariant\", tint: \"rose\"",
+    "title: \"Invariant\", tint: \"blue\""
+  ],
+  "table": [
+    "[whether it is current]",
+    "[whether it is stale]"
+  ],
+  "code": [
+    "#code-block(\"bash\", \"nix run .#check -- docs/design .\")",
+    "#code-block(\"bash\", \"nix run .#check -- docs/design\")"
+  ],
+  "column-chart": [
+    "(\"invariant\", 31)",
+    "(\"invariant\", 34)"
+  ],
+  "bar-chart": [
+    "(\"captured\", 24)",
+    "(\"captured\", 28)"
+  ],
+  "line-chart": [
+    "(\"v3\", 71)",
+    "(\"v3\", 62)"
+  ],
+  "pie-chart": [
+    "(\"library\", 2240)",
+    "(\"library\", 2420)"
+  ],
+  "figure": [
+    "a drawing would sit here",
+    "a boxed diagram appears here"
+  ],
+  "embedded-svg": [
+    "file: \"diagram.svg\"",
+    "file: \"flow.svg\""
+  ],
+  "landscape-figure": [
+    "[Gateway], rgb(\"#ede9fe\")",
+    "[Gateway], rgb(\"#f2caa7\")"
+  ],
+  "formula": [
+    "$ A = 1 - frac(D, T) $",
+    "$ A = frac(T - D, T) $"
+  ],
+  "pseudocode": [
+    "bind the criterion to one check",
+    "choose one executable check"
+  ],
+  "sequence": [
+    "\"dispatch one chunk\", activate: true",
+    "\"assign one change\", activate: true"
+  ],
+  "state-type": [
+    "title: \"Issue state\"",
+    "title: \"Issue status\""
+  ],
+  "state-machine": [
+    "\"needs_triage\", \"wontfix\", \"reject\"",
+    "\"needs_triage\", \"wontfix\", \"decline\""
+  ]
+}

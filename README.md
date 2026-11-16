@@ -499,6 +499,39 @@ the PDF remains the published rendered artifact, and the Markdown output is not
 committed. A semantic violation exits 1 without usable output; an invocation,
 runtime, digest, selection, or output-write error exits 2.
 
+### Review design changes
+
+Generate a standalone HTML report against a Git revision:
+
+```sh
+review_dir=$(mktemp -d)
+nix run .#review -- docs/design --base origin/main -o "$review_dir/design-review.html"
+```
+
+The base comes from Git, and the second revision is the current working tree.
+To compare two already available revisions, pass their layer directories
+instead of `--base`. Two standalone Typst entry points also work when they
+emit design-layer semantic records. Use `--format json` for the versioned
+`design-review/v1` result. A successful comparison exits zero even when it
+finds changes. Supply fresh output paths.
+
+The report reads the same evaluated Typst records as the Markdown projection.
+Diagram coordinates and decorative tints in the tested widgets are
+presentation. It compares directed edges, labels, data values, and sequence
+order. Changed native drawing code and formula bodies need manual review.
+The report includes those limits even when no projected fields changed.
+
+Add `--pdf` to write a before and an after PDF beside the HTML report. A stable,
+unique `review-id:` on `diagram` or `diagram-native` allows comparison across
+sections and adds a margin mark where a changed diagram appears. Use letters,
+digits, underscores, or hyphens in the ID. Every change still appears in the
+report if it has no PDF mark. Without `--pdf`, the command only evaluates the
+projections and formats the report.
+
+For CI, pass the PR merge-base commit as `--base` and upload the HTML and its
+optional PDF companions together from a temporary directory. The JSON output
+is also available to review tools that consume structured artifacts.
+
 ## Development
 
 `nix develop` provides the vendored Typst renderer (a version-exact package
@@ -597,9 +630,10 @@ apps.design-gate-render = design-layer.apps.${system}.render;
 apps.design-gate-check = design-layer.apps.${system}.check;
 apps.design-gate-context = design-layer.apps.${system}.context;
 apps.design-gate-units = design-layer.apps.${system}.units;
+apps.design-gate-review = design-layer.apps.${system}.review;
 ```
 
-These apps prepare or refresh the generated `.render` library beside the root
+The render, check, and context apps prepare or refresh the generated `.render` library beside the root
 `design.typ` before using it. The selected bundle owns this operation; consumers
 need no projection wrapper or copied bootstrap script. `check` and `units` also
 prepare each validated `--nested-project` layer. `check` still reports a stale
@@ -609,3 +643,8 @@ without network access.
 `DESIGN_LIB_DIR` remains an explicit library override: preparation uses that
 library when supplied. Direct script invocation retains its existing contract
 and does not refresh a divergent layer library automatically.
+
+The review app prepares a missing projection in either revision and validates
+an existing projection against the selected renderer. A stale projection must
+be refreshed before review. When comparing with `--base`, the archived base
+uses the same selected renderer as the working tree.

@@ -899,7 +899,7 @@
 #let _diagram(
   altitude: none, title: none, caption: none, accent: "teal",
   layout: "manual", flow: "left-to-right", spacing: (16mm, 11mm), nodes: (),
-  edges: (), viewpoint: none, groups: (),
+  edges: (), viewpoint: none, groups: (), review-id: none,
 ) = {
   _diagram-check-implementation()
   _req-altitude(altitude)
@@ -1030,6 +1030,7 @@
       altitude: altitude, title: title, caption: caption, accent: accent,
       layout: layout, flow: flow, spacing: spacing, viewpoint: viewpoint,
       groups: groups, nodes: nodes, edges: edges,
+      ..if sys.inputs.at("review-projection", default: "0") == "1" { (review-id: review-id) } else { (:) },
     ))
   }
   let manual = if layout == "manual" {
@@ -1134,6 +1135,9 @@
     ).map(edge => edge.relation))
     [#graph #_diagram-legend(groups, nodes, used-relations, accent)]
   } else { none }
+  if review-id != none and review-id in sys.inputs.at("design-review-diagrams", default: "").split(",") {
+    place(left, dx: -12pt, rect(width: 3pt, height: 14pt, fill: rgb("#2870a6"), stroke: none))
+  }
   _drawing-frame(
     tint: ac,
     kind: if viewpoint != none and altitude == none [
@@ -1154,21 +1158,21 @@
 // declared nodes and edges. Use this unless a reader needs an authored grid.
 #let diagram(
   altitude: none, title: none, caption: none, accent: "teal",
-  flow: "left-to-right", viewpoint: none, groups: (), nodes: (), edges: (),
+  flow: "left-to-right", viewpoint: none, groups: (), nodes: (), edges: (), review-id: none,
 ) = _diagram(
   altitude: altitude, title: title, caption: caption, accent: accent,
   layout: "solved", flow: flow, viewpoint: viewpoint, groups: groups,
-  nodes: nodes, edges: edges,
+  nodes: nodes, edges: edges, review-id: review-id,
 )
 
 // THE POSITIONED STRUCTURE DIAGRAM — use only where the authored coordinates
 // carry meaning or a human requires precise visual control.
 #let diagram-native(
   altitude: none, title: none, caption: none, accent: "teal",
-  spacing: (16mm, 11mm), nodes: (), edges: (),
+  spacing: (16mm, 11mm), nodes: (), edges: (), review-id: none,
 ) = _diagram(
   altitude: altitude, title: title, caption: caption, accent: accent,
-  layout: "manual", spacing: spacing, nodes: nodes, edges: edges,
+  layout: "manual", spacing: spacing, nodes: nodes, edges: edges, review-id: review-id,
 )
 
 // THE FIVE ANSWERS — the repeated component unit, made composable. EVERY FIELD

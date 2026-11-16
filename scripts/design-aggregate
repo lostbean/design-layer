@@ -163,7 +163,7 @@ class TermParseError(Exception):
 
 
 def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
-                       n_contexts, n_terms):
+                       n_contexts, n_terms, review_diagrams=()):
     """Render the assembled document, then build-or-verify it.
 
     The assembly and the freshness contract are separate concerns, so the part
@@ -193,6 +193,7 @@ def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
     try:
         proc = subprocess.run(
             [typst, "compile", agg, target, *strict,
+             *(["--input", "design-review-diagrams=" + ",".join(review_diagrams)] if review_diagrams else []),
              # the renderer refuses any source outside its project root, and
              # the library may sit outside the layer under $DESIGN_LIB_DIR, so
              # the root must span both the layer and the library.
@@ -240,7 +241,7 @@ def compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
     return 0
 
 
-def aggregate_typst(root, out_pdf, check, lib, docs):
+def aggregate_typst(root, out_pdf, check, lib, docs, review_diagrams=()):
     """Assemble the layer into the one rendered document.
 
     There is no conversion step: each context's design.typ is imported as a
@@ -420,11 +421,15 @@ def aggregate_typst(root, out_pdf, check, lib, docs):
     L.append("#assert-references-resolvable")
     L.append("")
 
-    agg = os.path.join(gen_dir, "_aggregate.typ")
-    open(agg, "w", encoding="utf-8").write("\n".join(L) + "\n")
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", prefix="_aggregate-", suffix=".typ",
+        dir=gen_dir, delete=False,
+    ) as stream:
+        stream.write("\n".join(L) + "\n")
+        agg = stream.name
     cleanup.append(agg)
     return compile_and_verify(agg, root, out_pdf, check, lib, cleanup,
-                              len(docs), len(terms))
+                              len(docs), len(terms), review_diagrams)
 
 
 def typst_glossary_terms(root, docs):

@@ -1153,6 +1153,107 @@ has "it is not UTF-8 text" "the violation says why the file cannot be shared"
 same_file "$SAFE/src/a/AGENTS.md" "$WORK/binary.before" "the undecodable file is left as it was"
 nothing_written "an undecodable target stops every write"
 
+# A FILE THE GENERATOR HAS NO REASON TO TOUCH IS NOT READ AS TEXT. A file named
+# AGENTS.md in a directory no unit lists is scanned only for a region to
+# remove. One that holds no marker has none, whatever else it holds, and it
+# used to stop every write for not being UTF-8.
+safe_repo binary-elsewhere
+printf '\377\376 not text\n' >"$SAFE/other/AGENTS.md"
+cp "$SAFE/other/AGENTS.md" "$WORK/elsewhere.before"
+(cd "$SAFE" && git add -A >/dev/null 2>&1)
+run 0 "an undecodable file in a directory no unit lists does not stop the generator" -- safe_units
+has "wrote 2 folder contract(s)" "the listed folders are written beside it"
+same_file "$SAFE/other/AGENTS.md" "$WORK/elsewhere.before" "the undecodable file is left as it was"
+run 0 "the gate passes beside it" -- safe_units --check
+lacks "other/AGENTS.md" "the gate reports nothing about a file it has no reason to read"
+# The same file holding a marker may hold a region, so it is still refused.
+printf '\377\376 not text\n<!-- design-units:begin -->\n' >"$SAFE/other/AGENTS.md"
+run 1 "an undecodable file that holds a region marker is still a violation" -- safe_units --check
+has "other/AGENTS.md: unreadable folder contract file" "the gate names the file it cannot read"
+
+# A DIRECTORY THAT CANNOT BE WRITTEN is found before anything is written.
+safe_repo unwritable
+chmod a-w "$SAFE/src/a"
+run 1 "a listed directory that is not writable is a violation" -- safe_units
+has "src/a/AGENTS.md: folder contract cannot be written" "the violation names the target"
+has "the directory src/a is not writable" "the violation says why"
+lacks "Errno" "no raw system error reaches the reader for an unwritable directory"
+nothing_written "an unwritable directory stops every write"
+chmod u+w "$SAFE/src/a"
+
+# A FAILURE WHILE WRITING. Every new text is staged in a temporary file before
+# any target is replaced, so a full disk stops the run with every file as it
+# was. The run used to replace the files one by one, and a failure on the
+# second left the first one written. The generator runs in-process here with
+# one system call made to fail, which is the only portable way to reach the
+# apply phase's own failures.
+apply_fault() { # <mkstemp|replace> <which call fails>
+  DESIGN_LIB_DIR="$SAFE/docs/design/.render" python3 - "$SAFE" "$1" "$2" <<'PY'
+import importlib.util, os, sys, tempfile
+from importlib.machinery import SourceFileLoader
+
+sys.path.insert(0, "scripts")
+loader = SourceFileLoader("design_units_under_test", "scripts/design-units")
+spec = importlib.util.spec_from_loader(loader.name, loader)
+module = importlib.util.module_from_spec(spec)
+sys.modules[loader.name] = module
+loader.exec_module(module)
+
+repo, name, failing_call = sys.argv[1], sys.argv[2], int(sys.argv[3])
+owner = {"mkstemp": tempfile, "replace": os}[name]
+real = getattr(owner, name)
+calls = 0
+
+
+def failing(*args, **kwargs):
+    global calls
+    calls += 1
+    if calls == failing_call:
+        raise OSError(28, "No space left on device")
+    return real(*args, **kwargs)
+
+
+setattr(owner, name, failing)
+sys.exit(module.main([repo + "/docs/design", repo]))
+PY
+}
+no_temporary_files() { # <label>
+  if [ -z "$(find "$SAFE/src" -name '.AGENTS.md.*')" ]; then
+    pass_line "$1"
+  else
+    fail_line "$1: a temporary file was left behind"
+  fi
+}
+safe_repo stage-fails
+printf '# Notes A\n' >"$SAFE/src/a/AGENTS.md"
+cp "$SAFE/src/a/AGENTS.md" "$WORK/stage.before"
+run 2 "a failure while staging the second file is an error" -- apply_fault mkstemp 2
+has "No space left on device" "the error carries the system's reason"
+has "Nothing was written" "the error says every file is as it was"
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/stage.before" \
+  "the file staged first is not replaced when a later one cannot be staged"
+nothing_written "no folder is written when staging fails"
+no_temporary_files "a failed staging leaves no temporary file"
+run 0 "the generator runs normally after the failure" -- safe_units
+has "wrote 2 folder contract(s)" "the next run writes every contract"
+
+safe_repo rename-fails
+run 2 "a failure while renaming the second file is an error" -- apply_fault replace 2
+has "The run stopped part way" "the error says the run is incomplete"
+has "1 change(s) were already made (" "the error counts the files already replaced"
+has "src/a/AGENTS.md), and 1 file(s) were not written (" "the error names the file already replaced"
+has "src/b/AGENTS.md). The folder contracts now describe two versions" \
+  "the error names the file not written"
+if [ -f "$SAFE/src/a/AGENTS.md" ] && [ ! -e "$SAFE/src/b/AGENTS.md" ]; then
+  pass_line "the tree is as the error describes it"
+else
+  fail_line "the tree does not match what the error says was written"
+fi
+has "correct the cause and run the units app again" "the error says what to do"
+no_temporary_files "a failed rename leaves no temporary file"
+run 0 "the generator completes the layer on the next run" -- safe_units
+run 0 "the gate is clean after the completed run" -- safe_units --check
+
 # The well-formed run leaves no temporary file behind and keeps a file's mode.
 safe_repo atomic
 printf '# Private notes\n' >"$SAFE/src/a/AGENTS.md"
@@ -1236,6 +1337,18 @@ safe_repo malformed-bare-markers
 printf 'Notes.\n\n<!-- design-units:begin -->\nhand-written between bare markers\n<!-- design-units:end -->\n' \
   >"$SAFE/src/a/AGENTS.md"
 malformed_case bare-markers "holds a region marker outside a generated region"
+# The violation says what to do. Running the generator is not it — the
+# generator refuses the file for the same reason — so the remedy is to delete
+# the region first.
+has "delete the region's lines, from the begin marker through the end marker" \
+  "bare-markers: the violation says how to recover the region"
+has "put it in a code block" "bare-markers: the violation says what to do with one's own text"
+# Bare markers with blank lines between them are still not a region: the
+# whitespace a formatter adds is read past only inside the generator's shape.
+safe_repo malformed-bare-markers-spaced
+printf '<!-- design-units:begin --> \n\nhand-written\n\n<!-- design-units:end -->\n' \
+  >"$SAFE/src/a/AGENTS.md"
+malformed_case bare-markers-spaced "holds a region marker outside a generated region"
 
 safe_repo malformed-end-first
 printf '<!-- design-units:end -->\nx\n<!-- design-units:begin -->\n' >"$SAFE/src/a/AGENTS.md"
@@ -1249,6 +1362,8 @@ safe_repo malformed-unclosed
   printf '<!-- prettier-ignore-start -->\n\ntext with no closing lines\n'
 } >"$SAFE/src/a/AGENTS.md"
 malformed_case unclosed "is never closed"
+has "delete the region's lines, from the begin marker through the end marker" \
+  "unclosed: the violation says how to recover the region"
 
 safe_repo malformed-open-fence
 printf '# Notes\n\n```\nan example that never closes its fence\n' >"$SAFE/src/a/AGENTS.md"
@@ -1261,7 +1376,36 @@ cat "$SAFE/src/b/AGENTS.md" "$SAFE/src/b/AGENTS.md" >"$SAFE/src/a/AGENTS.md"
 cp "$SAFE/src/a/AGENTS.md" "$WORK/two.before"
 run 1 "a file holding two regions is a violation" -- safe_units
 has "found 2 generated regions" "the violation counts the regions"
+has "Delete every one of them" "the violation says what to do about two regions"
 same_file "$SAFE/src/a/AGENTS.md" "$WORK/two.before" "a file holding two regions is left as it was"
+
+# WHAT A FORMATTER ADDS. A space at the end of a marker line, or a blank line
+# after the begin marker, used to make the whole region "malformed", with no
+# way forward but to guess. The shape is still found: the region is stale,
+# the gate says to generate, and the generator writes it again exactly.
+formatter_case() { # <name> <python expression rewriting the text `s`>
+  safe_repo "formatter-$1"
+  safe_units >/dev/null 2>&1
+  cp "$SAFE/src/a/AGENTS.md" "$WORK/formatter.generated"
+  python3 - "$SAFE/src/a/AGENTS.md" "$2" <<'PY'
+import sys
+path, rewrite = sys.argv[1], sys.argv[2]
+s = open(path, encoding="utf-8").read()
+changed = eval(rewrite)
+assert changed != s, "the fixture's rewrite changed nothing"
+open(path, "w", encoding="utf-8").write(changed)
+PY
+  run 1 "$1: a reformatted region is stale in the gate" -- safe_units --check
+  has "src/a/AGENTS.md: stale folder contract" "$1: the gate names the reformatted region as stale"
+  lacks "malformed" "$1: a reformatted region is not called malformed"
+  has "run the units app" "$1: the gate says what to do"
+  run 0 "$1: the generator rewrites a reformatted region" -- safe_units
+  same_file "$SAFE/src/a/AGENTS.md" "$WORK/formatter.generated" \
+    "$1: the rewritten region is the generator's exact form again"
+}
+formatter_case trailing-space 's.replace("<!-- design-units:begin -->\n", "<!-- design-units:begin --> \n")'
+formatter_case blank-after-begin 's.replace("<!-- design-units:begin -->\n", "<!-- design-units:begin -->\n\n")'
+formatter_case blank-before-end 's.replace("<!-- design-units:end -->", "\n<!-- design-units:end -->\t")'
 
 # TWO SPELLINGS OF ONE DIRECTORY. The expected output was keyed by the path as
 # written, so two spellings of one directory overwrote each other's region and
@@ -1290,6 +1434,70 @@ else
     "on a case-sensitive file system the other case is a missing path"
 fi
 absent "$SAFE/src/a/AGENTS.md" "no contract is written while one directory has two spellings"
+
+# GIT'S SPELLING OF A DIRECTORY AGAINST THE FILE SYSTEM'S. git keeps the
+# spelling a path was first added under. Rename `src/Core` to `src/core` on a
+# file system that folds case and git sees no change: the index still says
+# `src/Core`, the directory is stored as `src/core`, and a unit lists the
+# stored spelling. The stale scan read the index's spelling, took the contract
+# the generator had just written for a region no unit lists, and the next run
+# deleted it — and the run after wrote it again, for ever.
+safe_repo spelling-git
+mkdir "$SAFE/src/Core"
+printf 'x\n' >"$SAFE/src/Core/x.rs"
+(cd "$SAFE" && git add -A && git -c user.name=t -c user.email=t@localhost commit -qm core) >/dev/null 2>&1
+mv "$SAFE/src/Core" "$SAFE/src/renaming" && mv "$SAFE/src/renaming" "$SAFE/src/core"
+safe_root '("src/core",)' '("src/b",)'
+run 0 "the generator writes a contract into a directory renamed in letter case only" -- safe_units
+cp "$SAFE/src/core/AGENTS.md" "$WORK/spelling-git.generated"
+(cd "$SAFE" && git add -A >/dev/null 2>&1)
+if (cd "$SAFE" && git ls-files) | grep -q '^src/Core/AGENTS.md$'; then
+  # The file system folds case, and git kept its own spelling.
+  run 1 "the gate reports a contract git tracks under another spelling" -- safe_units --check
+  has "src/Core/AGENTS.md: folder contract is tracked under another spelling" \
+    "the violation names the spelling git lists"
+  has "the file system stores it as src/core/AGENTS.md" "the violation names the spelling the file system stores"
+  has "git mv src/Core src/core" "the violation says how to make the two agree"
+  lacks "stale folder contract" "a contract a unit lists is not reported as one no unit lists"
+  run 1 "the generator reports the same spelling violation" -- safe_units
+else
+  # The file system tells the two apart, so the rename is real to git too.
+  run 0 "on a case-sensitive file system the renamed directory's contract is fresh" -- safe_units --check
+  run 0 "and the generator has nothing to change" -- safe_units
+fi
+# Whatever the file system does, a contract a unit lists is never removed.
+same_file "$SAFE/src/core/AGENTS.md" "$WORK/spelling-git.generated" \
+  "a second run does not delete the contract it wrote for a listed directory"
+if [ -L "$SAFE/src/core/CLAUDE.md" ]; then
+  pass_line "the link made for that contract stays"
+else
+  fail_line "the link made for a listed directory's contract was removed"
+fi
+
+# A NESTED PROJECT NOBODY DECLARED. A directory holding its own
+# docs/design/design.typ is a project with its own layer, whether or not an
+# argument names it. An outer unit listing a folder inside it had a contract
+# written there, and the project's own generator then removed it as a region
+# none of ITS units lists.
+safe_repo nested-undeclared
+mkdir -p "$SAFE/sub/src" "$SAFE/sub/docs/design"
+printf 'x\n' >"$SAFE/sub/src/x.rs"
+printf '#let title = [Zsub]\n#let body = []\n' >"$SAFE/sub/docs/design/design.typ"
+(cd "$SAFE" && git add -A >/dev/null 2>&1)
+safe_root '("sub/src",)' '("src/b",)'
+run 1 "a unit path inside an undeclared nested project is a violation" -- safe_units
+has "unit ua: unit path is inside a nested project" "the violation names the unit and the rule"
+has "sub/src lies in sub, which holds a design layer of its own at sub/docs/design" \
+  "the violation names the project and where its layer is"
+absent "$SAFE/sub/src/AGENTS.md" "no contract is written into the undeclared nested project"
+absent "$SAFE/sub/src/CLAUDE.md" "no link is made there either"
+nothing_written "an undeclared nested project stops every write"
+run 1 "the gate reports the same path" -- safe_units --check
+has "unit path is inside a nested project" "the gate names the nested-project rule"
+# The same folder, listed by the nested project's OWN layer, is legal: the
+# rule is about whose layer a folder belongs to.
+safe_root '("src/a",)' '("src/b",)'
+run 0 "the outer layer is clean once the path is gone" -- safe_units
 
 # LINE ENDINGS AND THE FINAL NEWLINE belong to the file. A file with CRLF
 # endings used to be rewritten wholesale with LF, and a file with no final
@@ -1347,6 +1555,59 @@ safe_root '()' '("src/b",)'
 run 0 "the generator removes that region" -- safe_units
 same_file "$SAFE/src/a/AGENTS.md" "$WORK/nofinal.before" \
   "add-then-remove restores a file with no final newline exactly"
+
+# AN EMPTY FILE THAT WAS THERE FIRST is emptied again, never deleted. Removal
+# deleted any file with nothing left in it, and could not tell a file the
+# generator created from one that existed, empty, before the first run.
+safe_repo empty-first
+: >"$SAFE/src/a/AGENTS.md"
+run 0 "the generator adds a region to an empty file" -- safe_units
+OUT="$(cat "$SAFE/src/a/AGENTS.md")"
+has "## Design unit: Zunit A" "the empty file now carries the region"
+run 0 "a region in a once-empty file is fresh" -- safe_units --check
+cp "$SAFE/src/a/AGENTS.md" "$WORK/empty.generated"
+run 0 "regenerating a once-empty file is idempotent" -- safe_units
+same_file "$SAFE/src/a/AGENTS.md" "$WORK/empty.generated" "a second run leaves it byte-identical"
+safe_root '()' '("src/b",)'
+run 0 "the generator removes the region of a once-empty file" -- safe_units
+if [ -f "$SAFE/src/a/AGENTS.md" ] && [ ! -s "$SAFE/src/a/AGENTS.md" ]; then
+  pass_line "a file that was empty before its region is empty again, not deleted"
+else
+  fail_line "a file that existed before the generator ran was deleted or left with content"
+fi
+# A file the generator created holds the region and nothing else, and is
+# deleted with the link made for it; the fixture's src/b is that case.
+safe_root '()' '()'
+run 0 "the generator removes a region from a file it created" -- safe_units
+absent "$SAFE/src/b/AGENTS.md" "a file the generator created is deleted when its region goes"
+absent "$SAFE/src/b/CLAUDE.md" "the link made for it goes with it"
+
+# A file holding one blank line and nothing else is not "nothing".
+safe_repo blank-line-first
+printf '\n' >"$SAFE/src/a/AGENTS.md"
+run 0 "the generator adds a region below a single blank line" -- safe_units
+safe_root '()' '("src/b",)'
+run 0 "the generator removes that region" -- safe_units
+if cmp -s "$SAFE/src/a/AGENTS.md" <(printf '\n'); then
+  pass_line "a file holding one blank line is restored, not deleted"
+else
+  fail_line "a file holding one blank line was deleted or changed"
+fi
+
+# TEXT BELOW A REGION AT THE TOP OF A FILE keeps its blank lines. Removal
+# stripped them, which changed bytes the generator does not own.
+safe_repo blank-below
+safe_units >/dev/null 2>&1
+printf '\n\nHand-written below a region the generator created.\n' >>"$SAFE/src/a/AGENTS.md"
+run 0 "a region with hand-written text below it is fresh" -- safe_units --check
+safe_root '()' '("src/b",)'
+run 0 "the generator removes a region that opens the file" -- safe_units
+if cmp -s "$SAFE/src/a/AGENTS.md" <(printf '\n\nHand-written below a region the generator created.\n'); then
+  pass_line "the blank lines below a removed region are kept byte for byte"
+else
+  fail_line "removing a region at the top of a file changed the text below it"
+  od -c "$SAFE/src/a/AGENTS.md" | head -3 | sed 's/^/       /'
+fi
 
 # --- 6. THE GATE -----------------------------------------------------------------
 # Restore the full fixture and generate, so each broken variant starts clean.
@@ -1684,6 +1945,45 @@ open(p, "w").write(s.replace(head, head + '#let context_command = 42\n'))
 PY
 run 1 "a context_command that is not a one-line string is a violation" -- units --check
 has "unusable context_command" "the violation names the binding"
+# One layer prints one command, so only the root design.typ may export it.
+cp "$LAYER/alpha/design.typ" "$WORK/alpha.before-command"
+printf '#let context_command = "nix run .#other --"\n' >>"$LAYER/alpha/design.typ"
+run 1 "a context_command declared outside the root is a violation" -- units --check
+has "alpha/design.typ: context_command outside the root" "the violation names the context document"
+has "only the root design.typ exports it" "the violation says where the binding belongs"
+run 1 "the generator refuses it too" -- units
+has "nothing was written" "a context_command outside the root stops every write"
+cp "$WORK/alpha.before-command" "$LAYER/alpha/design.typ"
+
+# AN INCOMPLETE SCHEMA CONTRACT is an error naming what is missing, never a
+# run that generates with a marker it guessed.
+schema_without() { # <output> <python statement over `contract`>
+  python3 - schema/design-schema.json "$1" "$2" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+contract = doc["design_doc"]["unit_contract"]
+exec(sys.argv[3])
+json.dump(doc, open(sys.argv[2], "w", encoding="utf-8"))
+PY
+}
+schema_without "$WORK/no-begin-schema.json" 'del contract["folder_contract"]["begin"]'
+run 2 "a schema whose folder contract declares no begin marker is an error" -- \
+  env DESIGN_SCHEMA="$WORK/no-begin-schema.json" python3 ./scripts/design-units "$LAYER" "$REPO" --check
+has "declares an incomplete design_doc.unit_contract: missing 'begin'" "the error names the missing key"
+schema_without "$WORK/no-command-schema.json" 'del contract["context_command"]'
+run 2 "a schema that declares no context command is an error" -- \
+  env DESIGN_SCHEMA="$WORK/no-command-schema.json" python3 ./scripts/design-units "$LAYER" "$REPO"
+has "declares an incomplete design_doc.unit_contract: missing 'context_command'" \
+  "the error names the missing declaration"
+schema_without "$WORK/empty-end-schema.json" 'contract["folder_contract"]["end"] = ""'
+run 2 "a schema whose end marker is empty is an error" -- \
+  env DESIGN_SCHEMA="$WORK/empty-end-schema.json" python3 ./scripts/design-units "$LAYER" "$REPO" --check
+has "declares an unusable design_doc.unit_contract value for end" "the error names the unusable value"
+schema_without "$WORK/same-marker-schema.json" \
+  'contract["folder_contract"]["end"] = contract["folder_contract"]["begin"]'
+run 2 "a schema whose two markers are one line is an error" -- \
+  env DESIGN_SCHEMA="$WORK/same-marker-schema.json" python3 ./scripts/design-units "$LAYER" "$REPO" --check
+has "declares the same line twice" "the error says the markers must differ"
 
 # A unit whose text holds a marker line is refused before it is written: the
 # region would close early and read as malformed on every later run.

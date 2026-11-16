@@ -3,12 +3,16 @@ name: Design review
 on:
   pull_request:
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
+  # Runs the pull request's own code, so it reads and never writes.
   review:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact-url: ${{ steps.upload.outputs.artifact-url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,7 +29,8 @@ jobs:
           base="$(git merge-base "$BASE_SHA" HEAD)"
           mkdir -p "$RUNNER_TEMP/design-review"
           nix run .#review -- docs/design --base "$base" --pdf \
-            -o "$RUNNER_TEMP/design-review/design-review.html"
+            -o "$RUNNER_TEMP/design-review/design-review.html" \
+            --summary "$RUNNER_TEMP/design-review/summary.md"
       - name: Upload the review
         id: upload
         if: ${{ !cancelled() && steps.review.outcome != 'skipped' }}
@@ -33,10 +38,62 @@ jobs:
         with:
           name: design-review-${{ github.run_attempt }}
           path: ${{ runner.temp }}/design-review/
-      - name: Link the review from the check summary
+      - name: Show the review in the check summary
         if: ${{ !cancelled() && steps.upload.outputs.artifact-url != '' }}
         env:
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
         run: |
-          printf '[Download the design review](%s)\n\n' "$ARTIFACT_URL" >>"$GITHUB_STEP_SUMMARY"
+          summary="$RUNNER_TEMP/design-review/summary.md"
+          if [ -f "$summary" ]; then
+            cat "$summary" >>"$GITHUB_STEP_SUMMARY"
+          fi
+          printf '\n[Download the design review](%s)\n\n' "$ARTIFACT_URL" >>"$GITHUB_STEP_SUMMARY"
           printf 'Extract the archive and open design-review.html. Keep any PDF companions beside it to follow the report links.\n' >>"$GITHUB_STEP_SUMMARY"
+
+  # Writes to the pull request and runs none of its code. The summary is data:
+  # it reaches the comment through a file, never through the shell.
+  comment:
+    needs: review
+    if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Fetch the summary
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: design-review-${{ github.run_attempt }}
+          path: design-review
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          ARTIFACT_URL: ${{ needs.review.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          summary=design-review/summary.md
+          ours='.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- design-review"))) | .id'
+          found="$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq "$ours")"
+          existing="${found%%$'\n'*}"
+          if [ -f "$summary" ]; then
+            changes="$(sed -n '1s/^<!-- design-review changes=\([0-9][0-9]*\) -->$/\1/p' "$summary")"
+            cp "$summary" body.md
+            if [ -n "$ARTIFACT_URL" ]; then
+              printf '\n[Download the full report](%s). Extract the archive and open design-review.html.\n' "$ARTIFACT_URL" >>body.md
+            fi
+          else
+            changes=unknown
+            printf '<!-- design-review -->\n## Design review\n\nThe design review could not be produced. [See the run](%s).\n' "$RUN_URL" >body.md
+          fi
+          if [ -z "$existing" ] && [ "$changes" = 0 ]; then
+            echo "No design change and no earlier comment: nothing to post."
+            exit 0
+          fi
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$existing" -F body=@body.md >/dev/null
+          else
+            gh api --method POST "repos/$REPO/issues/$PR/comments" -F body=@body.md >/dev/null
+          fi

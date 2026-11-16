@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `review` accepts `--summary <path>` and writes a Markdown summary beside the
+  report: the confirmed and need-review counts, the changes counted by section,
+  and each change that needs review. Design text appears in it only inside code
+  spans. The design review workflow now has a second job that posts that
+  summary as one pull request comment and updates it on every push. The job
+  that runs the pull request's code keeps read access alone.
 - Added the `#unit` block: one required shape for every design unit — `id`,
   `title`, `overview`, `interface`, `invariants`, `side-effects`,
   `verification`, and `paths` — with an optional body that holds any other

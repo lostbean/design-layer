@@ -58,6 +58,47 @@ added, = compare([], [unchanged])
 removed, = compare([unchanged], [])
 assert added["kind"] == "added" and added["anchor"] == "diagram/stable", added
 assert removed["kind"] == "removed" and removed["anchor"] == "diagram/stable", removed
+
+# The summary is posted where anyone can read it, so design text stays inert:
+# one table row per section and one line per uncertain change, whatever the
+# text holds.
+from review_model import render_summary
+
+def change(kind, *path):
+    row = {"kind": kind, "path": list(path), "before": None, "after": None, "anchor": None}
+    return {**row, "reason": "Formula notation changed."} if kind == "needs-review" else row
+
+hostile = "a | b `c` ``d`` @someone <img src=x>\n| forged | row |"
+report = {
+    "sources": {"before": "abc123", "after": "docs/design"},
+    "changes": [
+        change("changed", "section " + hostile, "body"),
+        change("added", "section " + hostile, "item"),
+        change("needs-review", "section Rates", "formula " + hostile),
+        change("removed", "term Ledger"),
+    ],
+    "coverage": {"before": {}, "after": {"formula": 1}},
+}
+summary = render_summary(report).splitlines()
+assert summary[0] == "<!-- design-review changes=4 -->", summary[0]
+assert "**3 confirmed · 1 need review**" in summary, summary
+rows = [line for line in summary if line.startswith("| `")]
+inert = "```a \\| b `c` ``d`` @someone <img src=x> \\| forged \\| row \\|```"
+assert rows == [
+    f"| {inert} | 1 | 1 | 0 | 0 |",
+    "| `Rates` | 0 | 0 | 0 | 1 |",
+    "| `Document and shared records` | 0 | 0 | 1 | 0 |",
+], rows
+uncertain = [line for line in summary if line.startswith("- ")]
+assert len(uncertain) == 1 and uncertain[0].endswith("```: Formula notation changed."), uncertain
+assert "\\|" not in uncertain[0] and "| forged | row |" in uncertain[0], uncertain
+assert summary[-1].startswith("Native figures"), summary[-1]
+many = {**report, "changes": [change("added", f"section {n}", "item") for n in range(45)]}
+assert "5 more sections are in the full report." in render_summary(many)
+empty = render_summary({**report, "changes": [], "coverage": {"before": {}, "after": {}}})
+assert empty.startswith("<!-- design-review changes=0 -->\n") and "No changes" in empty
+long = render_summary({**report, "changes": [change("changed", "section " + "x" * 500)]})
+assert max(map(len, long.splitlines())) < 260, long
 PY
 
 # Use the same directory mode as the packaged renderer.
@@ -153,6 +194,16 @@ for side in ("before", "after"):
                 matches += pixels[offset:offset+3] == bytes((40,112,166))
     assert matches >= 12, (side, matches)
 PYTEST
+"$APP" "$LAYER" --base HEAD --format json -o "$WORK/summary.json" --summary "$WORK/summary.md"
+head -n 1 "$WORK/summary.md" | rg -qx -- '<!-- design-review changes=2 -->'
+rg -qx -- '\*\*2 confirmed · 0 need review\*\*' "$WORK/summary.md"
+rg -qx -- '\| `Introduction` \| 1 \| 0 \| 0 \| 0 \|' "$WORK/summary.md"
+rg -qx -- '\| `Document and shared records` \| 1 \| 0 \| 0 \| 0 \|' "$WORK/summary.md"
+if "$APP" "$LAYER" --base HEAD --format json --summary "$WORK/summary.md" >"$WORK/summary.out" 2>&1; then
+  echo "review overwrote an existing summary" >&2
+  exit 1
+fi
+rg -q 'output already exists' "$WORK/summary.out"
 if "$APP" "$LAYER" --base HEAD -o "$WORK/review.html" >"$WORK/overwrite" 2>&1; then
   echo "review overwrote an existing report" >&2
   exit 1
@@ -171,4 +222,4 @@ if "$APP" "$APP_FIXTURE" "$APP_FIXTURE" >"$WORK/duplicate.out" 2>"$WORK/duplicat
   exit 1
 fi
 rg -q 'duplicate diagram review-id' "$WORK/duplicate.err"
-echo "design-review: Git, cross-section identity, PDF companions and duplicate detection passed"
+echo "design-review: Git, cross-section identity, PDF companions, the summary and duplicate detection passed"

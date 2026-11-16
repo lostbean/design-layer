@@ -334,6 +334,84 @@ def display(value):
     return key(value)
 
 
+SUMMARY_ROWS = 40
+SUMMARY_TEXT_LENGTH = 200
+SHARED_RECORDS = "Document and shared records"
+
+
+def section_of(change):
+    return next(
+        (
+            part.removeprefix("section ")
+            for part in change["path"]
+            if part.startswith("section ")
+        ),
+        SHARED_RECORDS,
+    )
+
+
+def code_span(text, table=False):
+    """A Markdown code span that keeps design text inert where it is posted."""
+    text = " ".join(str(text).split()) or " "
+    if len(text) > SUMMARY_TEXT_LENGTH:
+        text = text[: SUMMARY_TEXT_LENGTH - 1] + "…"
+    fence = "`" * (max(map(len, re.findall(r"`+", text)), default=0) + 1)
+    pad = " " if text[0] == "`" or text[-1] == "`" else ""
+    span = f"{fence}{pad}{text}{pad}{fence}"
+    return span.replace("|", "\\|") if table else span
+
+
+def render_summary(report, pdf_error=None, limit=SUMMARY_ROWS):
+    """A Markdown summary short enough to post as one pull request comment."""
+    changes = report["changes"]
+    uncertain = [item for item in changes if item["kind"] == "needs-review"]
+    source = report["sources"]
+    lines = [
+        f"<!-- design-review changes={len(changes)} -->",
+        "## Design review",
+        "",
+        f"{code_span(source['before'])} → {code_span(source['after'])}",
+        "",
+        f"**{len(changes) - len(uncertain)} confirmed · {len(uncertain)} need review**",
+    ]
+    if pdf_error:
+        lines += ["", "The before and after PDFs could not be rendered."]
+    if changes:
+        sections = {}
+        for change in changes:
+            sections.setdefault(section_of(change), Counter())[change["kind"]] += 1
+        kinds = ("changed", "added", "removed", "needs-review")
+        lines += [
+            "",
+            "| Section | Changed | Added | Removed | Need review |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ]
+        for section, counts in list(sections.items())[:limit]:
+            cells = " | ".join(str(counts[kind]) for kind in kinds)
+            lines.append(f"| {code_span(section, table=True)} | {cells} |")
+        if len(sections) > limit:
+            lines += [
+                "",
+                f"{len(sections) - limit} more sections are in the full report.",
+            ]
+    else:
+        lines += ["", "No changes in the projected fields."]
+    if uncertain:
+        lines += ["", "Need review:", ""]
+        lines += [
+            f"- {code_span(shorten(item['path']))}: {item['reason']}"
+            for item in uncertain[:limit]
+        ]
+        if len(uncertain) > limit:
+            lines += ["", f"{len(uncertain) - limit} more are in the full report."]
+    if any(report["coverage"].values()):
+        lines += [
+            "",
+            "Native figures and mathematical equivalence may require manual review.",
+        ]
+    return "\n".join(lines) + "\n"
+
+
 def render_viewer(report, pdf_links, pdf_error):
     """A portable HTML report with escaped data and no remote assets."""
     from html import escape
@@ -364,15 +442,7 @@ def render_viewer(report, pdf_links, pdf_error):
                 )
                 + "</div>"
             )
-        section = next(
-            (
-                part.removeprefix("section ")
-                for part in change["path"]
-                if part.startswith("section ")
-            ),
-            "Document and shared records",
-        )
-        groups.setdefault(section, []).append(
+        groups.setdefault(section_of(change), []).append(
             f'<article class="{change["kind"]}"><p class="status">{status}</p><h3>{heading}</h3>{values}{anchor}</article>'
         )
     body = (

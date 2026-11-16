@@ -575,7 +575,8 @@ Set `BASE_SHA` from `github.event.pull_request.base.sha` on GitHub Actions. Omit
 the output directory as one artifact and put the download link in the check
 summary.
 
-The workflow has two jobs. The `review` job runs the pull request's code with
+The workflow has two jobs, and their checks are named **Design review** and
+**Design review comment**. The `review` job runs the pull request's code with
 read access alone. The `comment` job holds `pull-requests: write`, runs none of
 that code, and posts the summary from the artifact. Keep the two apart. A pull
 request from a fork gets no comment, because its token cannot write; its report

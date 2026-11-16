@@ -217,7 +217,10 @@ the file and line.
 
 - A link into a design source with a fragment,
   `docs/design/design.typ#<slug>` or `docs/design/<context>/design.typ#<slug>`,
-  must name a section's rendered id, by the same slug rule as any section link.
+  must name a section's rendered id, by the same slug rule as any section link,
+  or a unit's anchor `unit-<id>`. A generated folder contract carries one such
+  link per unit it names and is checked like any other `AGENTS.md`: a link to
+  an id no unit declares is reported at the file and line.
 - A link into `docs/adr/` must open an existing ADR. A link to an ADR that a
   successor supersedes is reported as an **advisory** naming the successor;
   the exit code is untouched.

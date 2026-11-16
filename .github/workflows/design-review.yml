@@ -5,6 +5,13 @@ on:
 
 permissions: {}
 
+# Runs for one pull request take turns, so two runs never both create a
+# comment. A new push cancels the review still running for an older head; a
+# re-run of an older run waits instead of cancelling the current one.
+concurrency:
+  group: design-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.run_attempt == 1 }}
+
 jobs:
   # Runs the pull request's own code, so it reads and never writes.
   review:
@@ -15,6 +22,9 @@ jobs:
       contents: read
     outputs:
       artifact-url: ${{ steps.upload.outputs.artifact-url }}
+      # The attempt that uploaded the review: re-running only the comment job
+      # starts a new attempt, and the artifact keeps the name it was given.
+      artifact-name: design-review-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,7 +76,7 @@ jobs:
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          name: design-review-${{ github.run_attempt }}
+          name: ${{ needs.review.outputs.artifact-name }}
           path: design-review
       - name: Post or update the comment
         env:
@@ -75,8 +85,15 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           ARTIFACT_URL: ${{ needs.review.outputs.artifact-url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          # A re-run of an older run must not replace the summary of a newer head.
+          current="$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)"
+          if [ "$current" != "$HEAD_SHA" ]; then
+            echo "The pull request moved past $HEAD_SHA: a newer run owns the comment."
+            exit 0
+          fi
           summary=design-review/summary.md
           ours='.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- design-review"))) | .id'
           found="$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq "$ours")"

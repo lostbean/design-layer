@@ -68,10 +68,10 @@ Interface:
 Invariants:
 
 - Text outside the generated region keeps every byte, its line endings and final newline included.
-- A region is recognized by its whole generated shape. A marker in a code block is never read, and any other stray marker leaves the file untouched.
+- A region is recognized by its whole generated shape. A marker in a code block or a raw HTML block is never read, and any other stray marker, or a region missing its closing lines, leaves the file untouched.
 - A target is a regular file in a directory stored under the listed path. A symbolic link is never written through.
 - A run writes every folder contract or none. Every new text is staged before any file is replaced.
-- An existing `CLAUDE.md` is never replaced.
+- An existing `CLAUDE.md` is never replaced. The link the generator makes goes when its region leaves a file left with nothing to read.
 - A region no unit lists is removed, and its file only when the file is the region alone, as the generator created it.
 - Nothing is written into a nested project. A unit path inside one is refused, and a region found there is reported and left in place.
 

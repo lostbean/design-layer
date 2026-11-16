@@ -532,9 +532,32 @@ result when both paths resolve to the same source. With `--pdf`, it compiles
 each distinct source once for the companions and reports compilation errors.
 Use the regular render command for guideline advisories.
 
-For CI, pass the PR merge-base commit as `--base` and upload the HTML and its
-optional PDF companions together from a temporary directory. The JSON output
-is also available to review tools that consume structured artifacts.
+#### Review design changes in pull requests
+
+Open the PR's **Checks** tab and select **Design review**. Download the artifact
+from the job summary, extract it, and open `design-review.html`. Keep the two
+PDF companions beside the HTML so the report links work. The artifact stays
+with the workflow run and expires according to the repository's retention
+policy.
+
+For a consumer repository, copy the
+[design review workflow](.github/workflows/design-review.yml) and use the
+pinned review app forwarded by your flake, such as `.#design-gate-review`.
+Set the layer path to the location used in both revisions. Check out the exact
+PR head with full Git history and use `git merge-base` with the PR base SHA.
+With Nix installed on the runner, the review step is:
+
+```sh
+base=$(git merge-base "$BASE_SHA" HEAD)
+mkdir -p "$RUNNER_TEMP/design-review"
+nix run .#design-gate-review -- docs/design --base "$base" --pdf \
+  -o "$RUNNER_TEMP/design-review/design-review.html"
+```
+
+Set `BASE_SHA` from `github.event.pull_request.base.sha` on GitHub Actions. Omit
+`--pdf` for HTML alone, or use `--format json` for a structured report. Upload
+the output directory as one artifact and put the download link in the check
+summary. The example uses a read-only `pull_request` job.
 
 ## Development
 

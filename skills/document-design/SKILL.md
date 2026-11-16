@@ -132,9 +132,13 @@ Walk a representative use case across the completed views. Resolve inconsistent 
 
 ## Show design changes
 
-When a reader asks what changed between revisions, use the host's forwarded
-review app if it is available. The source app is `nix run .#review -- docs/design
---base <revision> -o <new temporary HTML path>`. Add `--pdf` when the reader
-wants rendered context. Share the report and any PDF companions as temporary
-artifacts. The report compares evaluated design fields and calls out native
-drawing or formula edits that require manual review.
+When a reader asks what changed between revisions, run the host's forwarded
+review app with the baseline revision and a fresh temporary HTML path. Use
+`--pdf` when rendered context helps the reader inspect the change. Share the
+HTML and any PDF companions together and keep them out of commits.
+
+For a pull request, compare the head with its merge base and link the artifact
+from the CI check. Open the report before summarizing changes for the user and
+call out native drawings and formulas marked for manual review. See
+[design-document-syntax](../design-document-syntax/SKILL.md#reviewing-changes-between-revisions)
+for commands and CI setup.

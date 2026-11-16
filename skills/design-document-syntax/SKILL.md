@@ -1630,5 +1630,29 @@ nix run github:lostbean/design-layer#context -- docs/design --path src/ledger/en
 - The projection requires `docs/COVERAGE.md`, and `docs/CONTEXT-MAP.md` in a
   multi-context layer. The gate's unit checks do not.
 
+### Reviewing changes between revisions
+
+Use the pinned review app or its forwarded name in the host flake.
+
+```sh
+review_dir=$(mktemp -d)
+nix run .#review -- docs/design --base origin/main --pdf \
+  -o "$review_dir/design-review.html"
+```
+
+Pass two layer directories or two standalone Typst files to compare explicit
+inputs. Use `--format json` for the `design-review/v1` schema. For an HTML report,
+`--pdf` adds before and after PDFs beside it. A unique, stable `review-id:` on
+`diagram` or `diagram-native` lets the report follow the diagram across sections
+and mark changed diagrams in the PDFs. IDs start with a letter or digit and
+allow letters, digits, underscores, and hyphens.
+
+In PR CI, check out the PR head with full history, compute its merge base with
+the PR base commit, and pass that SHA to `--base`. Write the review under the
+runner's temporary directory and upload the HTML and PDFs as one artifact.
+Link the artifact from the check summary. Adapt the
+[GitHub Actions example](https://github.com/lostbean/design-layer/blob/main/.github/workflows/design-review.yml)
+to the host's pinned app and layer path.
+
 Passing the gate means the layer is **well-formed**. It does not mean the
 design is right.

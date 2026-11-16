@@ -1026,18 +1026,28 @@ render naming the unit and the field.
   `("one item")` as a string, and the render fails saying so.
 - **A list item is a string or a content block.** Use a content block when the
   item carries markup, a citation, or inline code.
-- **A field holds no list of its own.** A bullet, numbered, or term list
-  written inside `title:`, `overview:`, `verification:`, or one list item fails
-  the render, naming the field. The projection and a folder contract write a
-  text field as one paragraph and a list field as one line per item, so a list
-  inside a field has no form there. State each point as its own item of
-  `interface:`, `invariants:`, or `side-effects:`.
+- **A field holds prose, and only prose**: text, emphasis, inline code, a
+  link to a URL or a path, a reference, mathematics, and the library's inline
+  citations (`#term`, `#ctx`, `#adr`, `#pill`, `#lens-pill`). Anything else
+  written inside `title:`, `overview:`, `verification:`, or one list item
+  fails the render, naming the field and the content function: a bullet,
+  numbered, or term list, a footnote, a box or any other layout call, a
+  heading, a `context` expression. The projection and a folder contract write
+  a text field as one paragraph and a list field as one line per item, so such
+  content has no form there. State each point as its own item of
+  `interface:`, `invariants:`, or `side-effects:`, and put anything else in
+  the unit's body.
 - **An unknown argument fails the render**, naming it.
 - **`id:`** matches `^[a-z0-9]+(-[a-z0-9]+)*$`. A second unit with the same id
   anywhere in the layer fails the render. `id:` may stand anywhere among the
   arguments; the gate reads it wherever it stands. An id is never repurposed
   for a different unit.
 - **The body is optional.** `#unit(...)` with no trailing block is complete.
+- **The body holds no `#section` and no `#subsection`.** Both are the
+  document's spine and keep their fixed heading level, which would sit above
+  the unit that holds them. The render, the projection, and the gate each
+  refuse one inside a unit, naming it. Inside a unit, a nested unit carries
+  the structure.
 
 **Guidelines**: a title over 64 characters, a list item over three sentences,
 and an `overview:` or `verification:` over five sentences are each reported and
@@ -1062,7 +1072,8 @@ by the renderer**:
   stored as `src/a`, each fail naming both paths, so one directory has one
   folder contract;
 - it is not `.git` or inside it, and not the layer directory or inside it;
-- it is not inside a nested project the run was given.
+- it is not inside a nested project: a directory that holds its own
+  `docs/design/design.typ`, whether or not the run was given it.
 
 Paths are relative to the root the gate is given — the repository root, or a
 nested project's own root for that project's layer.
@@ -1085,7 +1096,16 @@ several.
   unit fewer: four in the body, three inside a section, two inside a
   subsection.
 - One unit deeper fails the render and the projection alike, naming the unit
-  and its level. The two never disagree about which units a layer may hold.
+  and its level.
+- The page draws `#section` and `#subsection` at their fixed levels, and the
+  projection nests every heading below its host. A section inside a section
+  is therefore deeper in the projection than on the page, and a unit there
+  can render and still be past the projection's sixth level. The gate's unit
+  step applies the projection's rule, so `check` refuses that layer naming
+  the unit.
+- A heading written in markup keeps the level its `=` signs give it inside a
+  section or subsection body. Inside a unit's body it nests below the unit,
+  and one pushed past the sixth level fails the render.
 - A unit's anchor is `unit-<id>`. `@unit-billing-ledger` references it inside
   the rendered document. `design.typ#unit-billing-ledger` links to it from
   `COVERAGE.md` or another layer file, and the gate's integrity check resolves
@@ -1141,24 +1161,40 @@ Full unit: `nix run github:lostbean/design-layer#context -- docs/design --unit b
   without a newline still ends without one. Removing a region restores the
   file it was added to, byte for byte.
 - **A region is recognized by its whole shape**: the begin marker, the
-  generated notice, and the opening `prettier-ignore` line on three
-  consecutive lines, closed by the closing `prettier-ignore` line and the end
-  marker. Each is compared exactly and stands alone on its line.
+  generated notice, and the opening `prettier-ignore` line, in that order with
+  nothing between them, closed by the closing `prettier-ignore` line and the
+  end marker. Each is compared exactly and stands alone on its line.
+- Spaces at the end of one of those lines and blank lines between two of them
+  are read past, so a region a formatter touched is still found. It no longer
+  matches a fresh generation: `--check` reports it stale and `units` writes it
+  again.
 - A marker inside a fenced or indented code block is an example and is never
   read. A marker line anywhere else that is not part of that shape, a region
   that is never closed, and a second region each make the file **malformed**:
-  it is reported and left exactly as it is.
+  it is reported and left exactly as it is. To recover, delete the region's
+  lines, from the begin marker through the end marker, and run `units` again.
 - **The target is a regular file in the listed directory.** An `AGENTS.md`
   that is a symbolic link, a directory, or not UTF-8 text is a violation; the
-  generator never writes through a link. Each file is replaced through a
-  temporary file and a rename.
+  generator never writes through a link. An `AGENTS.md` in a directory no unit
+  lists is read only when it holds a marker.
 - **A run writes every folder contract or none.** Every unit path and every
   target is examined first, and one violation leaves every file untouched.
+  Every new text is then staged in a temporary file beside its target, and
+  only when all are staged is each renamed into place. A failure while staging
+  leaves every file as it was; a failure while renaming is reported naming the
+  files already replaced and the files not written.
 - When `<directory>/CLAUDE.md` does not exist, it is created as a symlink to
   `AGENTS.md`. An existing `CLAUDE.md` is never replaced.
 - Removing a path from a unit removes that unit from the directory's region.
-  A region no unit lists is removed. The file is deleted only when nothing
-  else remains in it, and a `CLAUDE.md` link the generator made goes with it.
+  A region no unit lists is removed, with the blank line the generator placed
+  above it and nothing else. The file is deleted only when it holds the region
+  alone, as the generator created it, and a `CLAUDE.md` link the generator
+  made goes with it. A file that was empty before its region was written is
+  left empty.
+- **git's spelling of a listed directory is the file system's.** On a file
+  system that folds letter case, a directory renamed in case only keeps its
+  old spelling in git. A folder contract tracked that way is a violation
+  naming both spellings, and it is never removed; rename the directory in git.
 - The region is wrapped in `prettier-ignore` markers. A Markdown formatter
   that does not honor them must exclude the listed `AGENTS.md` files, or the
   region stops matching a fresh generation.
@@ -1176,8 +1212,9 @@ exports it.
 
 **Nested projects.** A directory holding its own `docs/design/design.typ` is a
 nested project, and the folder contracts below it belong to its own layer.
-`units` never touches one by default: a region found there is reported and
-left in place, in both modes. Pass the argument `check` takes:
+`units` never touches one by default: a unit path inside one is a violation,
+declared or not, and a region found there is reported and left in place, in
+both modes. Pass the argument `check` takes:
 
 ```sh
 nix run github:lostbean/design-layer#units -- docs/design . --nested-project packages/api
@@ -1556,7 +1593,7 @@ nix run github:lostbean/design-layer#context -- docs/design --path src/ledger/en
 | Selector         | Prints                                                                                 |
 | ---------------- | -------------------------------------------------------------------------------------- |
 | `--section ADDR` | the heading subtree at a manifest address                                              |
-| `--unit ID`      | one unit: its contract, its body, and its nested units                                 |
+| `--unit ID`      | one unit: its contract, its body, and its nested units, and nothing that follows it    |
 | `--path PATH`    | every unit whose `paths:` contain the path or a parent directory of it, in layer order |
 
 - The modes `--estimate`, `--manifest`, `--preview`, `--section`, `--unit`,

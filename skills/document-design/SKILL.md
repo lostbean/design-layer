@@ -72,7 +72,7 @@ Every other block is optional. Use one only when its rule holds:
 | goal, no-goal, principle | The root, or a context whose aims differ from the root                     | Every document               |
 | ADR                      | Costly to reverse, surprising, a real trade-off                            | Routine choices              |
 
-A section, a subsection, and prose remain available for explanation that belongs to no single unit. A fixed section order, a `System at a glance` section, and an `End-to-end walkthrough` section are conventions of the root document only.
+A section, a subsection, and prose remain available for explanation that belongs to no single unit. Write a section or a subsection in the document body, never inside a unit: within a unit, a nested unit carries the structure. A fixed section order, a `System at a glance` section, and an `End-to-end walkthrough` section are conventions of the root document only.
 
 ### 3. Explain and selectively refine
 

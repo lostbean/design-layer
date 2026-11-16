@@ -64,7 +64,7 @@ assuming the sandbox has it.
 
 ```sh
 nix develop                       # the dev shell: lefthook, typst, pdftotext, python3
-nix flake check                   # formatting, the self-tests, projection determinism
+nix flake check                   # formatting, the self-tests, projection determinism, this repo's own layer
 nix fmt                           # treefmt: nixfmt, prettier, shfmt, ruff-format
 nix run .#snips -- --commands deny README.md          # synchronize opted-in snippets
 nix run .#snips -- --check --commands deny README.md  # check freshness only
@@ -95,8 +95,9 @@ produced them; use its projection digest with --expect-digest when several
 section calls must share one source snapshot.
 
 The self-tests establish tool correctness. This repository also carries a
-concise architectural overview in `docs/design/`; rendering and checking that
-layer exercises integration but does not replace the self-tests:
+concise architectural overview in `docs/design/`. `nix flake check` gates it —
+the PDF fresh, the links resolving, every folder contract fresh — which
+exercises integration but does not replace the self-tests:
 
 ```sh
 nix develop --command bash scripts/layer-integrity.test.sh
@@ -191,7 +192,9 @@ unenforced:
   contract is fresh, and no folder keeps a contract no unit lists. It is the
   one check that reads directories outside `docs/`, and the one tool that
   writes there, so it examines every path and every target before it writes
-  anything and writes all of them or none.
+  anything, stages every new text before it replaces any file, and writes all
+  of them or none. It also runs the projection's depth rule, because the gate
+  holds layers the projection itself cannot run on.
 
 A rule the schema declares and no home runs is worse than an undeclared one: the
 manual promises it, an author trusts it, and nothing objects.

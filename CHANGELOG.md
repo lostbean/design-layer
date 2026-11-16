@@ -6,27 +6,42 @@
   `title`, `overview`, `interface`, `invariants`, `side-effects`,
   `verification`, and `paths` — with an optional body that holds any other
   block and nested units. A missing field, a malformed or duplicate id, an
-  illegal path, and a list written inside a field fail the render; an empty
-  list renders as `None`. Units nest down to the sixth heading level — five
+  illegal path, and content in a field that is not prose — a list, a
+  footnote, a box, a heading, a `context` — fail the render; an empty list
+  renders as `None`. Units nest down to the sixth heading level — five
   directly in the root document's body, four inside a section, three inside a
   subsection, one fewer in a context document — and one deeper fails the
-  render and the projection alike.
+  render, the projection, and the gate's unit step alike.
+- A unit's body holds no `section` or `subsection`. Both keep their fixed
+  heading level, which would sit above the unit that holds them, so the
+  render, the projection, and the gate's unit step each refuse one there.
 - Added the `units` app. It writes each unit's contract into a generated region
   of `AGENTS.md` in every directory the unit lists, and links `CLAUDE.md` where
   none exists. `check` now also fails on a unit path that does not exist, a
-  stale region, and a region no unit lists, and reports the tracked directories
-  no unit path covers.
+  stale region, a region no unit lists, a unit the Markdown projection would
+  write past its sixth heading level, and a folder contract git tracks under
+  another spelling than the file system stores. It reports the tracked
+  directories no unit path covers.
 - `units` writes only what it owns. A region is recognized by its whole
   generated shape, so a marker shown in a code block is never read and any
-  other stray marker is reported with the file left as it is. Text outside the
-  region keeps its line endings and its final newline. A target that is a
-  symbolic link, a directory, or not UTF-8 text, and a unit path that is not
-  the path the file system stores, are violations. A run writes every folder
-  contract or none, each through a temporary file and a rename.
+  other stray marker is reported, with what to do about it, and the file left
+  as it is. A region a formatter touched — a space after a marker, a blank
+  line between two of its lines — is still found, reported stale, and written
+  again. Text outside the region keeps its line endings and its final newline,
+  and removing a region restores the file byte for byte: a file that was empty
+  before its region is left empty, and only a file the generator created is
+  deleted. A target that is a symbolic link, a directory, or not UTF-8 text,
+  and a unit path that is not the path the file system stores, are violations;
+  a file named `AGENTS.md` that holds no marker is never read. A run writes
+  every folder contract or none: every new text is staged in a temporary file
+  before any target is replaced.
 - `units` takes `--nested-project`, the argument `check` takes, and never
-  touches an undeclared nested project's contracts.
+  writes into a nested project: a unit path inside a directory that holds its
+  own design layer is refused whether or not the project is declared, and a
+  region found there is left in place.
 - `context` gains `--unit ID` and `--path REPO-PATH`, and the manifest lists
-  units when a layer declares them.
+  units when a layer declares them. `--unit` prints the unit's own contract,
+  body, and nested units, and stops where the unit does.
 - The foundation minimum now binds the root design document only. A context
   document may omit goals, invariants, and principles, and is not held to the
   spine order or to its `System at a glance` and `End-to-end walkthrough`
@@ -34,11 +49,16 @@
 - A foundation statement written inside a unit's body is not read as part of
   the document's foundation order or minimum.
 - A link may target a unit as `design.typ#unit-<id>`; `layer-integrity`
-  resolves it wherever `id:` stands among the unit's arguments.
+  resolves it wherever `id:` stands among the unit's arguments, and resolves
+  the link each generated folder contract carries to its unit.
 - Rendered output changes by a sub-point amount where text directly follows a
   `#section` or `#subsection` call on the same line of flow, so a host
-  re-renders its PDF on upgrade. A heading written in markup inside a section
-  or subsection body now nests below that heading.
+  re-renders its PDF on upgrade. A heading written in markup keeps its level,
+  its number, and its contents entry. One heading form does change: a heading
+  called with no level, `#heading[...]`, inside a section or subsection body
+  now takes the level below that body's heading instead of level one.
+- `nix flake check` now gates this repository's own design layer: its rendered
+  PDF, its links, and its generated folder contracts.
 - The migration is documented in [Unit contracts and folder contracts](docs/migrations/unit-contract.md).
 - The layer-integrity gate now checks every host `README.md` and `AGENTS.md`
   outside `docs/`: links into `docs/design/` and `docs/adr/` must resolve

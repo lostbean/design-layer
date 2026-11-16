@@ -81,7 +81,8 @@ violation, 2 on an error:
    home under `docs/`
 4. **unit folder contracts** — every path a unit lists is one real directory
    of the repository, every generated `AGENTS.md` region matches a fresh
-   generation, and no folder carries a region no unit lists
+   generation, no folder carries a region no unit lists, and every unit is
+   one the Markdown projection can address
 
 The same step prints a **report** of the git-tracked directories no unit path
 covers. It shows what the design does not claim and never changes the exit
@@ -101,22 +102,33 @@ compares; it never rewrites a stale region.
 touches:
 
 - Text outside the region keeps every byte, including its line endings and
-  whether the file ends with a newline.
+  whether the file ends with a newline. Removing a region restores the file it
+  was added to: a file that was empty is left empty, and only a file `units`
+  created is deleted.
 - A region is recognized by its whole generated shape. A marker shown inside a
   code block is an example and is never read; a marker line anywhere else
-  outside that shape is reported and the file is left as it is.
+  outside that shape is reported and the file is left as it is. To recover,
+  delete the region's lines and run `units` again.
+- A region a formatter touched — a space after a marker, a blank line between
+  two of its lines — is still found. `check` reports it stale and `units`
+  writes it again.
 - The target is a regular file in the listed directory. An `AGENTS.md` that is
-  a symbolic link, a directory, or not UTF-8 text is a violation.
+  a symbolic link, a directory, or not UTF-8 text is a violation. An
+  `AGENTS.md` anywhere else that holds no marker is never read.
 - A unit path is the path the file system stores. A path through a symbolic
   link, or in another letter case on a case-insensitive file system, fails
-  naming both spellings. `.git` and the layer directory are not unit paths.
+  naming both spellings. `.git` and the layer directory are not unit paths. A
+  folder contract git tracks under another spelling than the file system
+  stores is reported naming both, and is never removed.
 - A run writes every folder contract or none: one violation leaves every file
-  untouched.
+  untouched, and every new text is staged in a temporary file before any
+  target is replaced.
 
 A directory holding its own `docs/design/design.typ` is a **nested project**,
 and its folder contracts belong to its own layer. `units` never touches one by
-default; it reports a region found there and leaves it in place. Declare the
-project with the argument `check` takes:
+default: it refuses a unit path inside one, declared or not, and it reports a
+region found there and leaves it in place. Declare the project with the
+argument `check` takes:
 
 ```sh
 nix run github:lostbean/design-layer#units -- docs/design . --nested-project packages/api
@@ -195,8 +207,9 @@ layer. One thing is generated beside the source it describes: a directory a
 - **Its own design layer is not its proof of correctness.** The repository
   carries a concise layer under `docs/design/` that describes its parts as
   units, and `lib/`, `schema/`, `fixtures/`, `scripts/`, and `skills/` each
-  carry the generated folder contract. Rendering and gating that layer
-  exercises integration. Correctness is proven by the self-tests under
+  carry the generated folder contract. `nix flake check` gates that layer —
+  its PDF, its links, and its folder contracts — which exercises integration.
+  Correctness is proven by the self-tests under
   `scripts/*.test.sh` and by `fixtures/gallery.typ`, the fixture that
   exercises every function the library projects for authoring — never by a
   layer the repository would have an incentive to keep looking good.
@@ -263,12 +276,16 @@ and goes in the unit's body, where a nested `unit` is the next level down.
 ```
 
 Every field is required. An empty list is a legal answer and renders as `None`;
-a field left out fails the render. A list written inside one field fails too:
-state each point as its own item of a list field. `paths` holds exact
-repo-relative directories, and a unit that only groups other units lists none.
-A unit's heading level is its depth, down to the sixth level: five units nest
-directly in the root document's body, four inside a section, three inside a
-subsection, and one fewer in a context document. The `id` is
+a field left out fails the render. A field holds prose: text, emphasis, inline
+code, a link, a reference, mathematics, and the library's inline citations. A
+list, a footnote, a box, or a heading written inside one fails too: state each
+point as its own item of a list field, and put anything else in the body.
+`paths` holds exact repo-relative directories, and a unit that only groups
+other units lists none. A unit's heading level is its depth, down to the sixth
+level: five units nest directly in the root document's body, four inside a
+section, three inside a subsection, and one fewer in a context document. The
+body holds no `section` or `subsection`: inside a unit, a nested unit carries
+the structure. The `id` is
 unique across the layer and is the unit's stable address: the reference
 `@unit-billing-ledger`, the link fragment `design.typ#unit-billing-ledger`, and
 the selector `--unit billing-ledger`.
@@ -451,7 +468,9 @@ nix run .#context -- docs/design --unit billing-ledger
 nix run .#context -- docs/design --path src/ledger/entry.rs
 ```
 
-`--unit` prints one unit with its body and nested units. `--path` takes a
+`--unit` prints one unit: its contract, its body, and its nested units. It
+stops where the unit does, so it is shorter than `--section` at the same
+address whenever text follows the unit under the same heading. `--path` takes a
 repo-relative path and prints every unit whose `paths` contain it or a parent
 directory of it. Both accept `--output` and `--expect-digest`. When a layer
 declares units, the manifest gains a `units` list giving each unit's id,

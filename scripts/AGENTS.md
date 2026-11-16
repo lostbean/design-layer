@@ -38,6 +38,7 @@ Interface:
 - `context <layer-root>` prints the complete projection.
 - `--manifest` and `--preview` list section addresses, unit ids, sizes, and a digest.
 - `--section <address>`, `--unit <id>`, and `--path <repo-path>` print one part; `--expect-digest` refuses a part from another snapshot.
+- `--unit` prints a unit's contract, body, and nested units, and stops where the unit does.
 
 Invariants:
 
@@ -69,13 +70,14 @@ Invariants:
 - Text outside the generated region keeps every byte, its line endings and final newline included.
 - A region is recognized by its whole generated shape. A marker in a code block is never read, and any other stray marker leaves the file untouched.
 - A target is a regular file in a directory stored under the listed path. A symbolic link is never written through.
-- A run writes every folder contract or none.
+- A run writes every folder contract or none. Every new text is staged before any file is replaced.
 - An existing `CLAUDE.md` is never replaced.
-- A region no unit lists is removed, and its file only when nothing else remains in it. An undeclared nested project's region is reported and left in place.
+- A region no unit lists is removed, and its file only when the file is the region alone, as the generator created it.
+- Nothing is written into a nested project. A unit path inside one is refused, and a region found there is reported and left in place.
 
 Side effects:
 
-- Creates, replaces, or deletes `AGENTS.md` in listed directories, each through a temporary file and a rename.
+- Creates, replaces, or deletes `AGENTS.md` in listed directories, each staged in a temporary file and renamed into place.
 - Creates a `CLAUDE.md` symlink where none exists.
 - The public app refreshes the `.render` library copy of the layer and of each nested project's layer.
 
@@ -98,6 +100,7 @@ Invariants:
 
 - A stale generated artifact is reported and never rewritten.
 - A check that examined nothing does not report a pass.
+- A unit the projection cannot address fails the gate, although the gate never runs the projection.
 - The report of directories no unit covers never changes the exit code.
 
 Side effects:

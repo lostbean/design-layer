@@ -16,6 +16,7 @@ Invariants:
 
 - A value outside a declared vocabulary, an unresolved reference, and a unit missing a required field fail the compile.
 - A unit's heading level is its depth. A unit past the sixth level fails the compile, as it fails the projection.
+- A unit field holds prose only, and a unit's body holds no section. Content the projection cannot express fails the compile.
 - A guideline never reaches the page and never blocks an ordinary render.
 - Every declared block kind resolves to a callable function of the same name, and the gallery calls it.
 

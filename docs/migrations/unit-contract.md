@@ -23,12 +23,16 @@
 
 - Update the host repository's pinned design-layer input.
 - Regenerate `docs/design/design-layer.pdf` through the host's render wrapper.
-  The library now scopes a heading offset over each section and subsection
+  The library now scopes a heading style over each section and subsection
   body, which is how a nested unit finds its level. Where prose directly
   follows a `#section` or `#subsection` call without a blank line, one line of
   text moves by a fraction of a point, so the committed PDF no longer matches a
-  fresh render even when no source changed. A heading written in markup inside
-  such a body nests below its section; the library's own blocks are unaffected.
+  fresh render even when no source changed.
+- Headings keep their levels. The library's own blocks and a heading written
+  in markup — `=== Title` — render at the level, number, and contents entry
+  they had. One form changes: a heading called with no level, `#heading[...]`,
+  inside a section or subsection body takes the level below that body's
+  heading instead of level one. Give such a call its `level:` to keep it.
 - A host that gates with its own schema copy adds `design_doc.blocks.unit`,
   `design_doc.unit_contract`, `design_doc.spine_scope`, the `unit` entry under
   `design_doc.agent_context.projection.classification.projected`, and the
@@ -47,8 +51,14 @@
 - List exact repo-relative directories in `paths`. A grouping unit lists none.
   Write each path as the file system stores it: no symbolic link in it, and
   the letter case its parent directory lists.
-- Keep lists out of a field. Write each point as its own item of `interface`,
-  `invariants`, or `side-effects`.
+- Write prose in a field: text, emphasis, inline code, a link, a reference,
+  mathematics, and the library's inline citations. A list, a footnote, a box,
+  a heading, or a `context` in a field fails the render. Write each point as
+  its own item of `interface`, `invariants`, or `side-effects`, and put
+  anything else in the unit's body.
+- Keep `section` and `subsection` out of a unit's body. They are the
+  document's spine; inside a unit, a nested unit carries the structure. A
+  heading written in markup in a unit's body nests below the unit.
 - Nest at most to the sixth heading level: five units directly in the root
   document's body, four inside a section, three inside a subsection, and one
   fewer in a context document.
@@ -59,13 +69,23 @@
   nested projects passes `units` the same `--nested-project <path>` arguments
   it passes `check`; without them `units` reports a nested project's contracts
   and writes nothing.
+- List a folder of a nested project in that project's own layer. A unit path
+  inside a directory that holds its own `docs/design/design.typ` is refused,
+  whether or not the project is declared.
+- Keep git's spelling of a listed directory the same as the file system's. On
+  a file system that folds letter case, a directory renamed in case only keeps
+  its old spelling in git; the gate reports the folder contract naming both
+  spellings, and `git mv` through a temporary name makes them agree.
 - Replace an `AGENTS.md` that is a symbolic link with a regular file in each
   listed directory. `units` does not write through a link.
 - Commit each generated `AGENTS.md` and each `CLAUDE.md` symlink with the
   design change that produced them.
 - Keep a Markdown formatter away from the generated region. It is wrapped in
   `prettier-ignore` markers; a formatter that does not honor them needs the
-  listed `AGENTS.md` files excluded.
+  listed `AGENTS.md` files excluded. A region a formatter did touch is
+  reported stale, and `units` writes it again.
+- When `units` reports a malformed region, delete the region's lines, from the
+  begin marker through the end marker, and run `units` again.
 
 ## Verify
 

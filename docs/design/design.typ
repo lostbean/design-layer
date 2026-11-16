@@ -130,6 +130,8 @@
           unit missing a required field fail the compile.],
         [A unit's heading level is its depth. A unit past the sixth level
           fails the compile, as it fails the projection.],
+        [A unit field holds prose only, and a unit's body holds no section.
+          Content the projection cannot express fails the compile.],
         [A guideline never reaches the page and never blocks an ordinary
           render.],
         [Every declared block kind resolves to a callable function of the same
@@ -181,6 +183,8 @@
           and a digest.],
         [`--section <address>`, `--unit <id>`, and `--path <repo-path>` print
           one part; `--expect-digest` refuses a part from another snapshot.],
+        [`--unit` prints a unit's contract, body, and nested units, and stops
+          where the unit does.],
       ),
       invariants: (
         [A construct with no Markdown form fails the projection instead of
@@ -214,15 +218,17 @@
           untouched.],
         [A target is a regular file in a directory stored under the listed
           path. A symbolic link is never written through.],
-        [A run writes every folder contract or none.],
+        [A run writes every folder contract or none. Every new text is
+          staged before any file is replaced.],
         [An existing `CLAUDE.md` is never replaced.],
-        [A region no unit lists is removed, and its file only when nothing
-          else remains in it. An undeclared nested project's region is
-          reported and left in place.],
+        [A region no unit lists is removed, and its file only when the file
+          is the region alone, as the generator created it.],
+        [Nothing is written into a nested project. A unit path inside one is
+          refused, and a region found there is reported and left in place.],
       ),
       side-effects: (
         [Creates, replaces, or deletes `AGENTS.md` in listed directories,
-          each through a temporary file and a rename.],
+          each staged in a temporary file and renamed into place.],
         [Creates a `CLAUDE.md` symlink where none exists.],
         [The public app refreshes the `.render` library copy of the layer and
           of each nested project's layer.],
@@ -248,6 +254,8 @@
       invariants: (
         [A stale generated artifact is reported and never rewritten.],
         [A check that examined nothing does not report a pass.],
+        [A unit the projection cannot address fails the gate, although the
+          gate never runs the projection.],
         [The report of directories no unit covers never changes the exit
           code.],
       ),

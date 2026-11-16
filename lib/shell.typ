@@ -3,6 +3,7 @@
 #import "tokens.typ": *
 #import "rules.typ": *
 #import "furniture.typ": *
+#import "semantic.typ": semantic
 
 #let design-doc(eyebrow: none, hero_title: none, lede: none, footer: none, body) = {
   show: _link-rule
@@ -18,6 +19,9 @@
   show heading.where(level: 1): set text(size: 16pt, weight: "bold", fill: INK)
   show heading.where(level: 2): set text(size: 12.5pt, weight: "bold", fill: INK)
   show heading.where(level: 3): set text(size: 10.2pt, weight: "semibold", fill: INK)
+  if sys.inputs.at("review-projection", default: "0") == "1" {
+    semantic("document-shell", fields: (title: hero_title, lede: lede, eyebrow: eyebrow, footer: footer))
+  }
   if eyebrow != none {
     text(size: 7.2pt, fill: FAINT, tracking: 0.7pt, upper(eyebrow))
     linebreak()

@@ -1,0 +1,42 @@
+name: Design review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Compare the PR head with its merge base
+        id: review
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="$(git merge-base "$BASE_SHA" HEAD)"
+          mkdir -p "$RUNNER_TEMP/design-review"
+          nix run .#review -- docs/design --base "$base" --pdf \
+            -o "$RUNNER_TEMP/design-review/design-review.html"
+      - name: Upload the review
+        id: upload
+        if: ${{ !cancelled() && steps.review.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: design-review-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/design-review/
+      - name: Link the review from the check summary
+        if: ${{ !cancelled() && steps.upload.outputs.artifact-url != '' }}
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          printf '[Download the design review](%s)\n\n' "$ARTIFACT_URL" >>"$GITHUB_STEP_SUMMARY"
+          printf 'Extract the archive and open design-review.html. Keep any PDF companions beside it to follow the report links.\n' >>"$GITHUB_STEP_SUMMARY"

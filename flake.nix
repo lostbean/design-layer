@@ -462,6 +462,7 @@
           settings.formatter.ruff-format.includes = [
             "scripts/layer-integrity"
             "scripts/design-units"
+            "scripts/design-review"
           ];
           settings.global.excludes = [
             # The widget gallery is the renderer-drift TEST FIXTURE, and a
@@ -562,6 +563,7 @@
         # The ephemeral agent-context projection. It uses the same pinned
         # Typst, schema, and projected library as the renderer and gate.
         apps.context = gateApp "context" "design-context";
+        apps.review = gateApp "design-review" "design-review";
 
         # THE GUIDELINE PASS — reference, deliberately NOT a gate.
         #
@@ -635,6 +637,26 @@
 
         # `nix flake check` verifies everything is formatted.
         checks.formatting = treefmtEval.config.build.check ./.;
+        checks.design-review =
+          pkgs.runCommand "design-review-self-test"
+            {
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.python3
+                pkgs.git
+                pkgs.ripgrep
+                pkgs.poppler-utils
+                typstRenderer
+              ];
+              DESIGN_REVIEW_APP = (gateApp "design-review" "design-review").program;
+            }
+            ''
+              export HOME="$TMPDIR"
+              export GIT_CONFIG_NOSYSTEM=1
+              bash ${./scripts/design-review.test.sh} ${./.}
+              touch "$out"
+            '';
+
         checks.snips = snips;
 
         checks.workflow-lint =

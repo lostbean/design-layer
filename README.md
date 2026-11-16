@@ -499,6 +499,66 @@ the PDF remains the published rendered artifact, and the Markdown output is not
 committed. A semantic violation exits 1 without usable output; an invocation,
 runtime, digest, selection, or output-write error exits 2.
 
+### Review design changes
+
+Generate a standalone HTML report against a Git revision:
+
+```sh
+review_dir=$(mktemp -d)
+nix run .#review -- docs/design --base origin/main -o "$review_dir/design-review.html"
+```
+
+The base comes from Git, and the second revision is the current working tree.
+To compare two already available revisions, pass their layer directories
+instead of `--base`. Two standalone Typst entry points also work when they
+emit design-layer semantic records. Use `--format json` for the versioned
+`design-review/v1` result. A successful comparison exits zero even when it
+finds changes. Supply fresh output paths.
+
+Typst emits structured records for the review, including diagram IDs. Python
+compares those records directly. The Markdown projection uses the same layer
+loader and Typst query code to produce reading material.
+Diagram coordinates and decorative tints in the tested widgets are
+presentation. It compares directed edges, labels, data values, and sequence
+order. Changed native drawing code and formula bodies need manual review.
+The report includes those limits even when no projected fields changed.
+
+Add `--pdf` to write a before and an after PDF beside the HTML report. A stable,
+unique `review-id:` on `diagram` or `diagram-native` allows comparison across
+sections and adds a margin mark where a changed diagram appears. Use letters,
+digits, underscores, or hyphens in the ID. Every change still appears in the
+report if it has no PDF mark. The report evaluates each input once, sharing the
+result when both paths resolve to the same source. With `--pdf`, it compiles
+each distinct source once for the companions and reports compilation errors.
+Use the regular render command for guideline advisories.
+
+#### Review design changes in pull requests
+
+Open the PR's **Checks** tab and select **Design review**. Download the artifact
+from the job summary, extract it, and open `design-review.html`. Keep the two
+PDF companions beside the HTML so the report links work. The artifact stays
+with the workflow run and expires according to the repository's retention
+policy.
+
+For a consumer repository, copy the
+[design review workflow](.github/workflows/design-review.yml) and use the
+pinned review app forwarded by your flake, such as `.#design-gate-review`.
+Set the layer path to the location used in both revisions. Check out the exact
+PR head with full Git history and use `git merge-base` with the PR base SHA.
+With Nix installed on the runner, the review step is:
+
+```sh
+base=$(git merge-base "$BASE_SHA" HEAD)
+mkdir -p "$RUNNER_TEMP/design-review"
+nix run .#design-gate-review -- docs/design --base "$base" --pdf \
+  -o "$RUNNER_TEMP/design-review/design-review.html"
+```
+
+Set `BASE_SHA` from `github.event.pull_request.base.sha` on GitHub Actions. Omit
+`--pdf` for HTML alone, or use `--format json` for a structured report. Upload
+the output directory as one artifact and put the download link in the check
+summary. The example uses a read-only `pull_request` job.
+
 ## Development
 
 `nix develop` provides the vendored Typst renderer (a version-exact package
@@ -597,9 +657,10 @@ apps.design-gate-render = design-layer.apps.${system}.render;
 apps.design-gate-check = design-layer.apps.${system}.check;
 apps.design-gate-context = design-layer.apps.${system}.context;
 apps.design-gate-units = design-layer.apps.${system}.units;
+apps.design-gate-review = design-layer.apps.${system}.review;
 ```
 
-These apps prepare or refresh the generated `.render` library beside the root
+The render, check, and context apps prepare or refresh the generated `.render` library beside the root
 `design.typ` before using it. The selected bundle owns this operation; consumers
 need no projection wrapper or copied bootstrap script. `check` and `units` also
 prepare each validated `--nested-project` layer. `check` still reports a stale
@@ -609,3 +670,8 @@ without network access.
 `DESIGN_LIB_DIR` remains an explicit library override: preparation uses that
 library when supplied. Direct script invocation retains its existing contract
 and does not refresh a divergent layer library automatically.
+
+The review app prepares a missing projection in either revision and validates
+an existing projection against the selected renderer. A stale projection must
+be refreshed before review. When comparing with `--base`, the archived base
+uses the same selected renderer as the working tree.

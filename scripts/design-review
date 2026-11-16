@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""Review evaluated changes between two Typst design revisions."""
+
+from argparse import ArgumentParser
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from dataclasses import dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory, TemporaryFile
+from urllib.parse import quote
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+
+from design_output import write_new_output
+from design_pdf import render_layer
+from design_semantics import query_file, query_layer
+from design_source import (
+    LayerSource,
+    ProjectionError,
+    ProjectionOperationalError,
+    projection_layer,
+    renderer_library,
+)
+from review_model import compare, coverage, render_viewer
+from typst_policy import command as typst_command, environment as typst_environment
+
+
+def git(directory: Path, *args: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(directory), *args], check=True, capture_output=True
+    ).stdout
+
+
+def base_snapshot(entry: Path, revision: str, scratch: Path) -> tuple[Path, str]:
+    directory = entry if entry.is_dir() else entry.parent
+    root = Path(
+        os.fsdecode(git(directory, "rev-parse", "--show-toplevel").removesuffix(b"\n"))
+    )
+    relative = entry.relative_to(root.resolve())
+    commit = (
+        git(root, "rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}")
+        .decode()
+        .strip()
+    )
+    checkout = scratch / "base"
+    checkout.mkdir()
+    command = ["git", "-C", str(root), "archive", "--format=tar", commit]
+    # Git supplies the source snapshot. Stream the archive into its temporary
+    # checkout so a large repository never needs a second copy of the archive.
+    with (
+        TemporaryFile() as diagnostics,
+        subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=diagnostics
+        ) as process,
+    ):
+        assert process.stdout is not None
+        try:
+            with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                archive.extractall(checkout, filter="data")
+            while process.stdout.read(64 * 1024):
+                pass
+        except tarfile.ReadError:
+            # Git can fail before writing a tar header. Close the pipe before
+            # waiting in case a failed extraction left unread archive data.
+            process.stdout.close()
+            status = process.wait()
+            diagnostics.seek(0)
+            message = diagnostics.read()
+            if status and message:
+                raise subprocess.CalledProcessError(
+                    status, command, stderr=message
+                ) from None
+            raise
+        status = process.wait()
+        if status:
+            diagnostics.seek(0)
+            raise subprocess.CalledProcessError(
+                status, command, stderr=diagnostics.read()
+            )
+    return (checkout / relative).resolve(), commit[:12]
+
+
+def prepare_library(directory: Path) -> None:
+    projected = directory / ".render"
+    library = os.environ.get("DESIGN_LIB_DIR")
+    if not library or projected.exists():
+        return
+    # Publish the library as a complete directory for concurrent reviews.
+    with TemporaryDirectory(prefix=".review-render-", dir=directory) as scratch:
+        staged = Path(scratch) / "render"
+        shutil.copytree(library, staged)
+        staged.chmod(0o755)
+        try:
+            staged.rename(projected)
+        except OSError:
+            if not (projected / "designlib.typ").is_file():
+                raise
+
+
+@dataclass(frozen=True)
+class Revision:
+    entry: Path
+    source: LayerSource | None = None
+    library: Path | None = None
+
+    @classmethod
+    def prepare(cls, entry: Path) -> "Revision":
+        if entry.is_dir():
+            prepare_library(entry)
+            library = renderer_library(entry)
+            local = entry / ".render" / "designlib.typ"
+            return cls(
+                entry,
+                projection_layer(entry),
+                local.resolve() if local.is_file() else library,
+            )
+        if not entry.is_file():
+            raise ValueError(f"design source does not exist: {entry}")
+        if entry.suffix != ".typ":
+            raise ValueError(
+                f"expected a design layer directory or Typst entry point: {entry}"
+            )
+        prepare_library(entry.parent)
+        if os.environ.get("DESIGN_LIB_DIR"):
+            renderer_library(entry.parent)
+        return cls(entry)
+
+    def evaluate(self) -> list[object]:
+        if self.source is not None:
+            assert self.library is not None
+            return query_layer(self.source, self.library, review=True)
+        records = query_file(self.entry, review=True)
+        if not records:
+            raise ValueError(f"no structured design records in {self.entry}")
+        return records
+
+    def render(self, target: Path, diagrams: list[str]) -> None:
+        if self.source is not None:
+            assert self.library is not None
+            if render_layer(
+                self.source, target, False, self.library, review_diagrams=diagrams
+            ):
+                raise ValueError(f"could not render {self.entry}")
+        else:
+            subprocess.run(
+                [
+                    typst_command(),
+                    "compile",
+                    str(self.entry),
+                    str(target),
+                    "--input",
+                    "design-review-diagrams=" + ",".join(diagrams),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=typst_environment(),
+            )
+
+
+def render_companions(pool, before, after, changes, scratch):
+    diagrams = sorted(
+        {
+            change["anchor"].removeprefix("diagram/")
+            for change in changes
+            if change["anchor"] and change["kind"] != "needs-review"
+        }
+    )
+    targets = [scratch / "before.pdf", scratch / "after.pdf"]
+    if before is after:
+        before.render(targets[0], diagrams)
+        targets[1] = targets[0]
+    else:
+        list(
+            pool.map(
+                lambda revision, target: revision.render(target, diagrams),
+                (before, after),
+                targets,
+            )
+        )
+    return targets
+
+
+def publish_companions(outputs, targets):
+    links = {}
+    for (side, output), target in zip(outputs.items(), targets, strict=True):
+        with target.open("rb") as stream:
+            write_new_output(output, stream)
+        links[side] = quote(output.name)
+    return links
+
+
+def main(argv):
+    parser = ArgumentParser(description=__doc__)
+    parser.add_argument("before", type=Path)
+    parser.add_argument("after", type=Path, nargs="?")
+    parser.add_argument(
+        "--base", help="compare the working-tree path against a Git revision"
+    )
+    parser.add_argument("--format", choices=("html", "json"), default="html")
+    parser.add_argument("-o", "--output", type=Path)
+    parser.add_argument(
+        "--pdf",
+        action="store_true",
+        help="write annotated before and after PDFs beside the HTML report",
+    )
+    args = parser.parse_args(argv)
+    if (args.after is None) == (args.base is None):
+        parser.error("supply two paths or one working-tree path with --base")
+    if args.pdf and (args.output is None or args.format != "html"):
+        parser.error("--pdf requires an HTML --output path")
+
+    pdfs = {}
+    if args.pdf:
+        pdfs = {
+            side: args.output.with_name(f"{args.output.stem}-{side}.pdf")
+            for side in ("before", "after")
+        }
+    try:
+        for path in [args.output, *pdfs.values()]:
+            if path is not None and (path.exists() or path.is_symlink()):
+                raise ValueError(f"output already exists: {path}")
+
+        with ExitStack() as work:
+            scratch = None
+            if args.base is not None or pdfs:
+                scratch = Path(
+                    work.enter_context(TemporaryDirectory(prefix="design-review-"))
+                )
+            pool = work.enter_context(ThreadPoolExecutor(max_workers=2))
+            after_entry = (args.after or args.before).resolve()
+            if args.base is not None:
+                assert scratch is not None
+                before_entry, base_label = base_snapshot(
+                    after_entry, args.base, scratch
+                )
+            else:
+                before_entry, base_label = args.before.resolve(), str(args.before)
+            before = Revision.prepare(before_entry)
+            if before_entry == after_entry:
+                after = before
+                old = new = before.evaluate()
+            else:
+                after = Revision.prepare(after_entry)
+                old, new = pool.map(Revision.evaluate, (before, after))
+
+            changes = compare(old, new)
+            before_coverage = coverage(old)
+            report = {
+                "format": "design-review/v1",
+                "sources": {
+                    "before": base_label,
+                    "after": str(args.after or args.before),
+                },
+                "changes": changes,
+                "coverage": {
+                    "before": before_coverage,
+                    "after": before_coverage if old is new else coverage(new),
+                },
+            }
+            pdf_links, pdf_error = {}, None
+            if pdfs:
+                assert scratch is not None
+                try:
+                    targets = render_companions(pool, before, after, changes, scratch)
+                except (ValueError, OSError, subprocess.CalledProcessError) as error:
+                    pdf_error = f"PDF context could not be rendered: {error}"
+                    print(f"design-review: {pdf_error}", file=sys.stderr)
+                else:
+                    pdf_links = publish_companions(pdfs, targets)
+
+            output = (
+                json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+                if args.format == "json"
+                else render_viewer(report, pdf_links, pdf_error)
+            )
+            if args.output:
+                write_new_output(args.output, output.encode())
+            else:
+                sys.stdout.write(output)
+        return 2 if pdf_error else 0
+    except (
+        ValueError,
+        OSError,
+        tarfile.TarError,
+        subprocess.CalledProcessError,
+        ProjectionError,
+        ProjectionOperationalError,
+    ) as error:
+        message = getattr(error, "stderr", None) or str(error)
+        if isinstance(message, bytes):
+            message = message.decode(errors="replace")
+        print(f"design-review: {message.strip()}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

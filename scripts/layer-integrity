@@ -536,10 +536,9 @@ TYPST_SECTION_RE = re.compile(r'(?:sub)?section\(\s*title:\s*"([^"]*)"')
 # The id is a NAMED argument, so it may stand anywhere in the call, and the
 # library accepts it wherever it stands. A pattern that wanted it first would
 # index `#unit(id: "a", title: …)` and miss `#unit(title: …, id: "a")`, and a
-# link to a unit that renders would be reported as dangling. So the pattern
-# finds only where a call OPENS, and `typst_unit_ids` reads that call's own
+# link to a unit that renders would be reported as dangling. So the source is
+# walked for where a call OPENS, and `typst_unit_ids` reads that call's own
 # argument list for its `id:`.
-TYPST_UNIT_OPEN_RE = re.compile(r"(?<![\w-])unit\(")
 TYPST_UNIT_ID_ARG_RE = re.compile(r'\s*id\s*:\s*"([^"]*)"')
 _TYPST_CLOSERS = {"(": ")", "[": "]", "{": "}"}
 
@@ -572,28 +571,129 @@ def _typst_comment_end(source: str, position: int, in_content: bool) -> int:
     return -1
 
 
-def _typst_line_commented(source: str, position: int) -> bool:
-    """Whether `position` stands behind a `//` on its own line.
+_TYPST_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+# The keywords that open a statement after `#`. A statement runs to the end of
+# its line, and what it holds is code — `#let part = unit(…)` calls a unit.
+_TYPST_STATEMENTS = frozenset(
+    "let set show import include if else for while context return break "
+    "continue".split()
+)
 
-    A `//` inside a string is text, so the line is read from its start with
-    the quotes it opens and closes. A URL's `//` is not a comment either.
+
+def _typst_raw_end(source: str, position: int) -> int:
+    """Where the raw text opening at `position` — a run of backticks — ends."""
+    run = len(source) - len(source[position:].lstrip("`")) - position
+    close = source.find("`" * run, position + run)
+    return len(source) if close < 0 else close + run
+
+
+def _typst_unit_calls(source: str) -> list:
+    """Where each REAL `unit(` call opens: the position past its parenthesis.
+
+    The source is read in Typst's own modes, because only code calls a
+    function. A layer file starts in markup, where `unit(` is prose: a call
+    there is written `#unit(`. Code is what follows a `#` — one expression,
+    with its calls, fields, and trailing content blocks, or a statement such
+    as `#let` to the end of its line — and what a parenthesis or a brace opens
+    in code; a content block opens markup again. Neither mode reads a call
+    inside a comment, inside raw text, or, in code, inside a string.
     """
-    start = source.rfind("\n", 0, position) + 1
-    in_string = False
-    at = start
-    while at < position:
-        character = source[at]
-        if in_string:
+    calls = []
+    # Each entry is (mode, closer). The closer of a statement is the newline
+    # that ends it; an expression after `#` has none and ends at the first
+    # character that does not continue it.
+    stack = [("markup", "")]
+    position = 0
+
+    def ident_at(at: int) -> str:
+        match = _TYPST_IDENT.match(source, at)
+        return match.group(0) if match else ""
+
+    while position < len(source):
+        mode, closer = stack[-1]
+        character = source[position]
+        if mode == "expression":
+            # After `#name`: a call, a content block, or a field continues it.
+            if character == "(":
+                stack.append(("code", ")"))
+                position += 1
+            elif character == "[":
+                stack.append(("markup", "]"))
+                position += 1
+            elif character == "." and ident_at(position + 1):
+                name = ident_at(position + 1)
+                position += 1 + len(name)
+                if name == "unit" and source.startswith("(", position):
+                    calls.append(position + 1)
+            else:
+                stack.pop()
+            continue
+        comment_end = _typst_comment_end(source, position, mode == "markup")
+        if comment_end >= 0:
+            position = comment_end
+            continue
+        if character == "`":
+            position = _typst_raw_end(source, position)
+            continue
+        if mode == "markup":
             if character == "\\":
-                at += 1
-            elif character == '"':
-                in_string = False
-        elif character == '"':
-            in_string = True
-        elif source.startswith("//", at) and (at == start or source[at - 1] != ":"):
-            return True
-        at += 1
-    return False
+                position += 2
+            elif character == "[":
+                stack.append(("markup", "]"))
+                position += 1
+            elif character == "]" and closer == "]":
+                stack.pop()
+                position += 1
+            elif character == "#":
+                position += 1
+                name = ident_at(position)
+                if name in _TYPST_STATEMENTS:
+                    stack.append(("code", "\n"))
+                    position += len(name)
+                elif name:
+                    position += len(name)
+                    if name == "unit" and source.startswith("(", position):
+                        calls.append(position + 1)
+                    stack.append(("expression", ""))
+                elif source.startswith(("(", "{"), position):
+                    stack.append(("code", ")" if source[position] == "(" else "}"))
+                    position += 1
+                elif source.startswith("[", position):
+                    stack.append(("markup", "]"))
+                    position += 1
+            else:
+                position += 1
+            continue
+        # Code.
+        if character == '"':
+            position += 1
+            while position < len(source) and source[position] != '"':
+                position += 2 if source[position] == "\\" else 1
+            position += 1
+        elif character == closer:
+            stack.pop()
+            position += 1
+        elif character in "({":
+            stack.append(("code", ")" if character == "(" else "}"))
+            position += 1
+        elif character == "[":
+            stack.append(("markup", "]"))
+            position += 1
+        elif character in ")}]":
+            # A closer that is not this level's: the source is not well
+            # formed here, and the compile reports it. Read on.
+            position += 1
+        else:
+            name = ident_at(position)
+            if name and not (
+                position > 0 and re.match(r"[A-Za-z0-9_-]", source[position - 1])
+            ):
+                position += len(name)
+                if name == "unit" and source.startswith("(", position):
+                    calls.append(position + 1)
+            else:
+                position += 1
+    return calls
 
 
 def typst_unit_ids(source: str) -> list:
@@ -619,10 +719,7 @@ def typst_unit_ids(source: str) -> list:
     them.
     """
     ids = []
-    for opening in TYPST_UNIT_OPEN_RE.finditer(source):
-        if _typst_line_commented(source, opening.start()):
-            continue
-        position = opening.end()
+    for position in _typst_unit_calls(source):
         stack = [")"]
         at_argument_start = True
         while position < len(source) and stack:

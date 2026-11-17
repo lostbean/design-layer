@@ -21,8 +21,9 @@ jobs:
     permissions:
       contents: read
     outputs:
-      artifact-url: ${{ steps.upload.outputs.artifact-url }}
-      # The attempt that uploaded the review: re-running only the comment job
+      # The side-by-side PDF, uploaded as a file of its own.
+      report-url: ${{ steps.report.outputs.artifact-url }}
+      # The attempt that uploaded the summary: re-running only the comment job
       # starts a new attempt, and the artifact keeps the name it was given.
       artifact-name: design-review-${{ github.run_attempt }}
     steps:
@@ -39,28 +40,39 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           base="$(git merge-base "$BASE_SHA" HEAD)"
-          mkdir -p "$RUNNER_TEMP/design-review"
-          nix run .#review -- docs/design --base "$base" --pdf \
-            -o "$RUNNER_TEMP/design-review/design-review.html" \
-            --summary "$RUNNER_TEMP/design-review/summary.md"
-      - name: Upload the review
+          mkdir -p "$RUNNER_TEMP/design-review/summary"
+          nix run .#review -- docs/design --base "$base" \
+            -o "$RUNNER_TEMP/design-review/design-review-$GITHUB_RUN_ATTEMPT.pdf" \
+            --summary "$RUNNER_TEMP/design-review/summary/summary.md"
+      # The PDF is one file and is uploaded as that file, so its link leads
+      # straight to it. An unarchived artifact takes the file's name, which
+      # carries the attempt so a re-run does not collide with the first run.
+      - name: Upload the PDF
+        id: report
+        if: ${{ !cancelled() && steps.review.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ runner.temp }}/design-review/design-review-${{ github.run_attempt }}.pdf
+          archive: false
+      - name: Upload the summary
         id: upload
         if: ${{ !cancelled() && steps.review.outcome != 'skipped' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: design-review-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/design-review/
+          path: ${{ runner.temp }}/design-review/summary/
       - name: Show the review in the check summary
         if: ${{ !cancelled() && steps.upload.outputs.artifact-url != '' }}
         env:
-          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          REPORT_URL: ${{ steps.report.outputs.artifact-url }}
         run: |
-          summary="$RUNNER_TEMP/design-review/summary.md"
+          summary="$RUNNER_TEMP/design-review/summary/summary.md"
           if [ -f "$summary" ]; then
             cat "$summary" >>"$GITHUB_STEP_SUMMARY"
           fi
-          printf '\n[Download the design review](%s)\n\n' "$ARTIFACT_URL" >>"$GITHUB_STEP_SUMMARY"
-          printf 'Extract the archive and open design-review.html. Keep any PDF companions beside it to follow the report links.\n' >>"$GITHUB_STEP_SUMMARY"
+          if [ -n "$REPORT_URL" ]; then
+            printf '\n[Open the side-by-side PDF](%s). It shows each changed part with the old design on the left and the new design on the right.\n' "$REPORT_URL" >>"$GITHUB_STEP_SUMMARY"
+          fi
 
   # Writes to the pull request and runs none of its code. The summary is data:
   # it reaches the comment through a file, never through the shell.
@@ -73,7 +85,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Fetch the summary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: ${{ needs.review.outputs.artifact-name }}
@@ -83,7 +95,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-          ARTIFACT_URL: ${{ needs.review.outputs.artifact-url }}
+          REPORT_URL: ${{ needs.review.outputs.report-url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -101,8 +113,8 @@ jobs:
           if [ -f "$summary" ]; then
             changes="$(sed -n '1s/^<!-- design-review changes=\([0-9][0-9]*\) -->$/\1/p' "$summary")"
             cp "$summary" body.md
-            if [ -n "$ARTIFACT_URL" ]; then
-              printf '\n[Download the full report](%s). Extract the archive and open design-review.html.\n' "$ARTIFACT_URL" >>body.md
+            if [ -n "$REPORT_URL" ]; then
+              printf '\n[Open the side-by-side PDF](%s). It shows each changed part with the old design on the left and the new design on the right.\n' "$REPORT_URL" >>body.md
             fi
           else
             changes=unknown

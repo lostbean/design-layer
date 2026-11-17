@@ -405,7 +405,7 @@
         + "the last one. Flatten the nesting, or split the unit's subtree "
         + "into sibling units")
     }
-    [#heading(level: level)[#title]#label(anchor)]
+    [#_review-place("unit", id: id)#heading(level: level)[#title]#label(anchor)]
     _card(
       accent: _UNIT-ACCENT,
       title: text(font: "DejaVu Sans Mono", size: RENDERER-COMPACT, id),

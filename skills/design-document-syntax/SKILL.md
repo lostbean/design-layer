@@ -596,8 +596,7 @@ agreement from a component that implements it.
   independently owned units. Give that agreement a `mission:` and move its
   five fields into `answers-data(...)`, preserving the existing domain accent.
 - Keep policy and recovery subjects in `#answers`. Render the host layer and
-  run its normal gate after the change, then inspect the full-width contract
-  card and its `contract` role mark.
+  run its normal gate after the change.
 
 Before:
 
@@ -1636,25 +1635,26 @@ Use the pinned review app or its forwarded name in the host flake.
 
 ```sh
 review_dir=$(mktemp -d)
-nix run .#review -- docs/design --base origin/main --pdf \
-  -o "$review_dir/design-review.html"
+nix run .#review -- docs/design --base origin/main \
+  -o "$review_dir/design-review.pdf"
 ```
 
-Pass two layer directories or two standalone Typst files to compare explicit
-inputs. Use `--format json` for the `design-review/v1` schema. For an HTML report,
-`--pdf` adds before and after PDFs beside it. A unique, stable `review-id:` on
-`diagram` or `diagram-native` lets the report follow the diagram across sections
-and mark changed diagrams in the PDFs. IDs start with a letter or digit and
-allow letters, digits, underscores, and hyphens.
+The app writes one PDF: each changed part with the old design on the left and
+the new design on the right, after an index of the changed parts. Pass two
+layer directories or two standalone Typst files to compare explicit inputs.
+Use `--format json` for the `design-review/v1` schema, in which each change
+names the part that draws it. A unique, stable `review-id:` on `diagram` or
+`diagram-native` lets the review follow the diagram across sections. IDs start
+with a letter or digit and allow letters, digits, underscores, and hyphens.
 
 In PR CI, check out the PR head with full history, compute its merge base with
 the PR base commit, and pass that SHA to `--base`. Write the review under the
-runner's temporary directory and upload the HTML and PDFs as one artifact.
-Link the artifact from the check summary. Adapt the
+runner's temporary directory and upload the PDF as a file of its own.
+Link it from the check summary. Adapt the
 [GitHub Actions example](https://github.com/lostbean/design-layer/blob/main/.github/workflows/design-review.yml)
 to the host's pinned app and layer path. On the pull request that adopts the
-layer, the base has no layer: the report lists every record as added and
-`--pdf` writes only the after PDF.
+layer, the base has no layer: the review lists every record as added and shows
+every part beside an empty side.
 
 Passing the gate means the layer is **well-formed**. It does not mean the
 design is right.

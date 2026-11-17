@@ -87,6 +87,43 @@ Source: [docs/design/design.typ#unit-folder-contracts](../docs/design/design.typ
 
 Full unit: `nix run .#context -- docs/design --unit folder-contracts`
 
+## Design unit: Design review
+
+Overview: `design-review` shows what a change did to a layer. It compares the semantic metadata of two revisions, ties each difference to the part that draws it, and composes one PDF with the old part on the left and the new part on the right. A part is a document, a section, a subsection, a unit, a pending ledger, or the glossary.
+
+Interface:
+
+- `review <layer-root> --base <revision> -o <changes.pdf>` compares the working tree with a Git revision. `review <before> <after> -o <changes.pdf>` compares two layer roots or two Typst entry points.
+- `--summary <path>` also writes Markdown sized for one pull request comment: the counts by section and each change that needs review.
+- `--format json` writes the comparison as a `design-review/v1` report for an agent, with the part of each change, and writes no PDF.
+- The PDF opens with an index of the changed parts, each linked to its sheet. Each sheet names its part, the counts of its changes, and the page each side comes from. Both sides start level at the top of the sheet.
+- Exit 0 when the comparison ran, with or without a change, and 2 when it could not run or the PDF could not be rendered.
+
+Invariants:
+
+- The comparison of semantic metadata alone decides what changed. The PDF shows every part that holds a listed change, and no part that holds none.
+- Parts are paired by identity, never by page number: a unit by its id, a section by its title within its document, a document by its name. A part in one revision alone is shown as added or removed.
+- A record belongs to the part whose heading is the last one drawn before it. A part the rendered document does not show by itself counts in the part that encloses it.
+- An added or removed record is one change. It is shown with every part it holds, such as the sections and units of an added document.
+- Every listed change is counted on the sheet of one shown part. The counts of the PDF, the summary, and the JSON report agree.
+- Each side shows its revision as rendered. A mark is drawn over the page and moves nothing.
+- A highlight on changed words helps a reader find a listed change. It appears only inside a shown part and adds nothing to the counts.
+- A changed diagram, custom figure, or formula is boxed on each side on every page where it is drawn. Changed native drawing code and a changed formula body are listed as needing review, and the tool does not judge them.
+- A difference in presentation alone, such as a tint, a layout, or a column count, is not a change.
+- Two revisions without a change produce a one-page PDF that says so.
+
+Side effects:
+
+- Writes the PDF, and the summary or report when asked, and never over an existing file.
+- Extracts the base revision into a temporary directory, which it removes.
+- Creates the `.render` library copy of a compared layer that has none.
+
+Verification: `nix flake check`, which runs `scripts/design-review.test.sh`.
+
+Source: [docs/design/design.typ#unit-design-review](../docs/design/design.typ#unit-design-review)
+
+Full unit: `nix run .#context -- docs/design --unit design-review`
+
 ## Design unit: Document gate
 
 Overview: The `check` app decides whether a layer is well-formed. It proves the PDF fresh, checks semantic token coverage, resolves cross-artifact references, and checks every unit path and folder contract.

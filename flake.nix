@@ -164,6 +164,11 @@
         # shell gates), python3 (design-aggregate, token-coverage,
         # layer-integrity), git (layer-integrity's staleness advisory), and the
         # vendored renderer (the typst compile).
+        # The design review composes a PDF from rendered pages, which the
+        # standard library cannot do. Only that app carries the PDF library, so
+        # a host that renders and checks pays nothing for it.
+        reviewPython = pkgs.python3.withPackages (ps: [ ps.pymupdf ]);
+
         gateRuntime = [
           pkgs.bash
           pkgs.coreutils
@@ -230,7 +235,17 @@
                     done <<< "$units_layers"
                   fi
                 ''}
-                exec ${gateBundle}/scripts/${script} "$@"
+                ${
+                  if script == "design-review" then
+                    ''
+                      export DESIGN_REVIEW_FONT_DIR="''${DESIGN_REVIEW_FONT_DIR:-${pkgs.dejavu_fonts}/share/fonts}"
+                      exec ${reviewPython}/bin/python3 ${gateBundle}/scripts/${script} "$@"
+                    ''
+                  else
+                    ''
+                      exec ${gateBundle}/scripts/${script} "$@"
+                    ''
+                }
               '';
             };
           in
@@ -505,7 +520,7 @@
             # re-evaluates the flake and realises each formatter from the store.
             treefmtEval.config.build.wrapper
             pkgs.shfmt
-            pkgs.python3
+            reviewPython # python3, with the PDF library the design review uses
             pkgs.git
             pkgs.actionlint
             # the vendored renderer — the same binary CI and the gate run,
@@ -515,6 +530,7 @@
           ];
           shellHook = ''
             export DESIGN_TEST_FONT_DIR=${pkgs.dejavu_fonts}/share/fonts
+            export DESIGN_REVIEW_FONT_DIR=${pkgs.dejavu_fonts}/share/fonts
             export DESIGN_RAW_TYPST=${renderer}/bin/typst
             export DESIGN_RENDER_APP=${(gateApp "design-aggregate" "design-aggregate").program}
             export DESIGN_CHECK_APP=${checkApp.program}
@@ -660,13 +676,14 @@
             {
               nativeBuildInputs = [
                 pkgs.bash
-                pkgs.python3
+                reviewPython
                 pkgs.git
                 pkgs.ripgrep
                 pkgs.poppler-utils
                 typstRenderer
               ];
               DESIGN_REVIEW_APP = (gateApp "design-review" "design-review").program;
+              DESIGN_REVIEW_FONT_DIR = "${pkgs.dejavu_fonts}/share/fonts";
             }
             ''
               export HOME="$TMPDIR"

@@ -124,8 +124,8 @@ Walk a representative use case across the completed views. Resolve inconsistent 
 - Confirm every unit states its five sections and its paths in both PDF and Markdown, and that each optional block meets its rule in step 2. A newcomer should be able to connect consumer outcomes to the units that produce them, including significant state and failure boundaries.
 - After changing a unit, regenerate the folder contracts with the pinned tools and commit them with the design change. A listed directory's `AGENTS.md` carries the unit's contract; the gate fails when it is stale.
 - Check claims against evidence and label remaining uncertainty. Review each deeper view's named question and stopping point; remove duplicate or implementation-level detail without losing consequential meaning.
-- Render with the pinned tools and run the declared gate. Inspect affected PDF pages for legibility, clipping, and broken relationships; inspect Markdown for the same claims, directions, boundaries, and transitions. Use manifests and exact sections for large projections.
-- During a run of many small accepted deltas, save the sources after each delta and render, gate, and inspect at checkpoints: after a coherent group of deltas and before reporting. A host whose pre-commit hook requires a fresh rendered artifact needs a render before each commit.
+- Render with the pinned tools and run the declared gate. Read the Markdown projection for the claims, directions, boundaries, and transitions you changed. The PDF is generated from the same sources for a person to read: look at a rendered page only when the user reports how it looks. Use manifests and exact sections for large projections.
+- During a run of many small accepted deltas, save the sources after each delta and render and gate at checkpoints: after a coherent group of deltas and before reporting. A host whose pre-commit hook requires a fresh rendered artifact needs a render before each commit.
 - After resolving a merge conflict in `design.typ` or `CONTEXT.typ`, re-check bracket balance and entry separators around every resolved hunk, and compare term and statement counts with both sides. Cutting text at conflict markers can drop a `]` or a `),` `(`, and not every such slip fails the gate.
 - Report authored sources, rendered outputs, checks performed, and limitations. An unavailable check is not a pass; well-formed documentation neither accepts the architecture nor proves the code implements its claims.
 - On later changes, revisit affected views and their parent interactions when purpose, ownership, abstractions, constraints, or important cooperation changes. Ordinary refactoring should usually leave the layer unchanged. Keep current architecture, proposals, and history distinct through existing artifacts.
@@ -133,12 +133,13 @@ Walk a representative use case across the completed views. Resolve inconsistent 
 ## Show design changes
 
 When a reader asks what changed between revisions, run the host's forwarded
-review app with the baseline revision and a fresh temporary HTML path. Use
-`--pdf` when rendered context helps the reader inspect the change. Share the
-HTML and any PDF companions together and keep them out of commits.
+review app with the baseline revision and a fresh temporary PDF path. Share
+the PDF and keep it out of commits. The PDF is generated from the sources for
+a person to read; an agent has no reason to open or check it.
 
 For a pull request, compare the head with its merge base and link the artifact
-from the CI check. Open the report before summarizing changes for the user and
-call out native drawings and formulas marked for manual review. See
+from the CI check. Before summarizing changes for the user, read the same
+comparison as JSON, and name the native drawings and formulas it marks as
+needing review. See
 [design-document-syntax](../design-document-syntax/SKILL.md#reviewing-changes-between-revisions)
 for commands and CI setup.

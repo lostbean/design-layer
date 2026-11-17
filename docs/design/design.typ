@@ -8,8 +8,8 @@
   Design Layer helps a project explain its architecture to people and code
   agents from one authored source. It combines documentation guidance with a
   checked Typst library, a PDF renderer, a Markdown projector, a folder-contract
-  generator, and a document gate. The project being described remains
-  responsible for its architecture.
+  generator, a design review, and a document gate. The project being described
+  remains responsible for its architecture.
 
   #section(title: "Foundation", lead: "Shared understanding with explicit limits.", body: [
     #goal(title: "Orient a newcomer")[
@@ -39,8 +39,9 @@
     caption: [The host supplies authored content. The library checks it and
       exposes visual output or semantic metadata. The PDF renderer consumes the
       visual view; the Markdown projector and the folder-contract generator
-      consume the semantic one. The separate gate also checks references and
-      folder contracts across the host's artifacts.],
+      consume the semantic one. The design review reads both views of two
+      revisions. The separate gate also checks references and folder contracts
+      across the host's artifacts.],
     flow: "top-to-bottom",
     nodes: (
       (id: "source", label: "Host sources", sub: "Typst + vocabulary", kind: "external-system"),
@@ -48,12 +49,15 @@
       (id: "pdf", label: "PDF renderer", sub: "human reading", kind: "component"),
       (id: "markdown", label: "Markdown projector", sub: "agent reading", kind: "component"),
       (id: "contracts", label: "Folder contracts", sub: "AGENTS.md per code folder", kind: "component"),
+      (id: "review", label: "Design review", sub: "what a change did", kind: "component"),
     ),
     edges: (
       (from: "source", to: "library", relation: "call", label: "calls authoring functions"),
       (from: "library", to: "pdf", relation: "dataflow", label: "visual content"),
       (from: "library", to: "markdown", relation: "dataflow", label: "semantic metadata"),
       (from: "library", to: "contracts", relation: "dataflow", label: "unit contracts"),
+      (from: "library", to: "review", relation: "dataflow", label: "metadata and places"),
+      (from: "pdf", to: "review", relation: "dataflow", label: "rendered pages"),
     ),
   ), body: [
     *Host boundary.* A host owns its `design.typ`, glossary `CONTEXT.typ`, and
@@ -124,6 +128,10 @@
           contract, and the anchor patterns.],
         [The compile input `strict=1` promotes every guideline to an error;
           `context=1` switches every call to semantic metadata.],
+        [The compile input `review-places=1` makes every document, section,
+          subsection, unit, pending ledger, glossary, diagram, custom figure,
+          and formula record the page and position where it is drawn, as
+          metadata that draws nothing and moves nothing.],
       ),
       invariants: (
         [A value outside a declared vocabulary, an unresolved reference, and a
@@ -242,6 +250,69 @@
     )
 
     #unit(
+      id: "design-review",
+      title: "Design review",
+      overview: [`design-review` shows what a change did to a layer. It
+        compares the semantic metadata of two revisions, ties each difference
+        to the part that draws it, and composes one PDF with the old part on
+        the left and the new part on the right. A part is a document, a
+        section, a subsection, a unit, a pending ledger, or the glossary.],
+      interface: (
+        [`review <layer-root> --base <revision> -o <changes.pdf>` compares the
+          working tree with a Git revision. `review <before> <after> -o
+          <changes.pdf>` compares two layer roots or two Typst entry points.],
+        [`--summary <path>` also writes Markdown sized for one pull request
+          comment: the counts by section and each change that needs review.],
+        [`--format json` writes the comparison as a `design-review/v1` report
+          for an agent, with the part of each change, and writes no PDF.],
+        [The PDF opens with an index of the changed parts, each linked to its
+          sheet. Each sheet names its part, the counts of its changes, and
+          the page each side comes from. Both sides start level at the top of
+          the sheet.],
+        [Exit 0 when the comparison ran, with or without a change, and 2 when
+          it could not run or the PDF could not be rendered.],
+      ),
+      invariants: (
+        [The comparison of semantic metadata alone decides what changed. The
+          PDF shows every part that holds a listed change, and no part that
+          holds none.],
+        [Parts are paired by identity, never by page number: a unit by its id,
+          a section by its title within its document, a document by its name.
+          A part in one revision alone is shown as added or removed.],
+        [A record belongs to the part whose heading is the last one drawn
+          before it. A part the rendered document does not show by itself
+          counts in the part that encloses it.],
+        [An added or removed record is one change. It is shown with every
+          part it holds, such as the sections and units of an added
+          document.],
+        [Every listed change is counted on the sheet of one shown part. The
+          counts of the PDF, the summary, and the JSON report agree.],
+        [Each side shows its revision as rendered. A mark is drawn over the
+          page and moves nothing.],
+        [A highlight on changed words helps a reader find a listed change. It
+          appears only inside a shown part and adds nothing to the counts.],
+        [A changed diagram, custom figure, or formula is boxed on each side
+          on every page where it is drawn. Changed native drawing code and a changed formula
+          body are listed as needing review, and the tool does not judge
+          them.],
+        [A difference in presentation alone, such as a tint, a layout, or a
+          column count, is not a change.],
+        [Two revisions without a change produce a one-page PDF that says so.],
+      ),
+      side-effects: (
+        [Writes the PDF, and the summary or report when asked, and never over
+          an existing file.],
+        [Extracts the base revision into a temporary directory, which it
+          removes.],
+        [Creates the `.render` library copy of a compared layer that has
+          none.],
+      ),
+      verification: [`nix flake check`, which runs
+        `scripts/design-review.test.sh`.],
+      paths: ("scripts",),
+    )
+
+    #unit(
       id: "document-gate",
       title: "Document gate",
       overview: [The `check` app decides whether a layer is well-formed. It
@@ -294,10 +365,15 @@
       unit lists. A folder's `AGENTS.md` then names the unit, links its Typst
       source, and prints the command that loads the full unit.
 
-    *Check.* The author inspects both reading forms and runs the gate. A stale PDF
+    *Check.* The author runs the gate. A stale PDF
       fails freshness; a broken cross-artifact link fails integrity; a missing
       unit path or a stale folder contract fails the unit checks. Passing
       these checks does not establish that the host implements its claims.
+
+    *Review.* On a pull request, the review app compares the layer with its
+      merge base and writes one PDF. A reader opens it, finds each changed
+      part with the old design on the left and the new one on the right, and
+      judges the change. The review shows a change and accepts nothing.
 
     *Representation limits.* Semantic diagrams preserve nodes and relationships
     in Markdown. A custom figure with a raw `typst` body becomes a drawing in
@@ -315,6 +391,7 @@
     `schema/design-schema.json` declares the vocabulary. `scripts/design-aggregate`
     and `scripts/design-context` own the two reading outputs.
     `scripts/design-units` owns the folder contracts.
+    `scripts/design-review` owns the comparison of two revisions.
     `scripts/layer-integrity` owns cross-artifact checks. `flake.nix` assembles
     the bundle and public apps. The gallery and self-tests provide executable
     examples and failure cases.

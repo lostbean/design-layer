@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Breaking:** `review` now writes one PDF. Each changed part of the design is
+  shown with the old design on the left and the new design on the right,
+  after an index of the changed parts. The comparison of records still decides
+  what changed; a part without a listed change is left out. Parts are paired
+  by identity, a unit by its id and a section by its title in its document,
+  and never by page number. Removed and added words are highlighted, and a
+  changed diagram, custom figure, or formula is boxed on each side.
+  The HTML report, `--format html`, `--pdf`, and the two separate PDFs are
+  gone. To migrate a workflow, drop `--pdf`, give `-o` a `.pdf` path, upload
+  that file, and point readers at it. `--format json` and `--summary` are
+  unchanged, and each JSON change now names the part that draws it.
+- The library records where each part, diagram, custom figure, and formula is
+  drawn when a document is compiled with the input `review-places=1`. The
+  record is metadata that draws nothing and moves nothing, and an ordinary
+  render holds no trace of it. The margin bar the review used to draw beside a
+  changed diagram, and the input `design-review-diagrams`, are gone.
+- The design layer's own design now has a unit for the design review.
+
 - `review` accepts `--summary <path>` and writes a Markdown summary beside the
   report: the confirmed and need-review counts, the changes counted by section,
   and each change that needs review. Design text appears in it only inside code

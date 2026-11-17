@@ -7,7 +7,6 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory, TemporaryFile
-from urllib.parse import quote
 import json
 import os
 import shutil
@@ -16,7 +15,7 @@ import sys
 import tarfile
 
 from design_output import write_new_output
-from design_pdf import render_layer
+from design_pdf import query_places, render_layer
 from design_semantics import query_file, query_layer
 from design_source import (
     LayerSource,
@@ -25,7 +24,8 @@ from design_source import (
     projection_layer,
     renderer_library,
 )
-from review_model import compare, coverage, render_summary, render_viewer
+from review_model import compare, coverage, empty_notice, part_outline, render_summary
+from review_pdf import Side, compose
 from typst_policy import command as typst_command, environment as typst_environment
 
 
@@ -150,66 +150,54 @@ class Revision:
             raise ValueError(f"no structured design records in {self.entry}")
         return records
 
-    def render(self, target: Path, diagrams: list[str]) -> None:
+    def render(self, target: Path) -> list[object]:
+        """Render the revision and report where each part of it was drawn."""
+        places: list[object] = []
         if self.source is not None:
             assert self.library is not None
-            if render_layer(
-                self.source, target, False, self.library, review_diagrams=diagrams
-            ):
+            if render_layer(self.source, target, False, self.library, places=places):
                 raise ValueError(f"could not render {self.entry}")
-        else:
-            subprocess.run(
-                [
-                    typst_command(),
-                    "compile",
-                    str(self.entry),
-                    str(target),
-                    "--input",
-                    "design-review-diagrams=" + ",".join(diagrams),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=typst_environment(),
-            )
-
-
-def render_companions(pool, before, after, changes, scratch):
-    """Render a PDF for each side that has a design document."""
-    diagrams = sorted(
-        {
-            change["anchor"].removeprefix("diagram/")
-            for change in changes
-            if change["anchor"] and change["kind"] != "needs-review"
-        }
-    )
-    if before is after:
-        if before.empty:
-            return {}
-        target = scratch / "before.pdf"
-        before.render(target, diagrams)
-        return {"before": target, "after": target}
-    revisions = {
-        side: revision
-        for side, revision in (("before", before), ("after", after))
-        if not revision.empty
-    }
-    targets = {side: scratch / f"{side}.pdf" for side in revisions}
-    list(
-        pool.map(
-            lambda side: revisions[side].render(targets[side], diagrams), revisions
+            return places
+        env = typst_environment()
+        subprocess.run(
+            [
+                typst_command(),
+                "compile",
+                str(self.entry),
+                str(target),
+                "--input",
+                "review-places=1",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         )
+        return query_places(str(self.entry), None, env)
+
+
+def render_sides(pool, revisions, records, scratch):
+    """Render each side that has a design document, and read its layout."""
+    before, after = revisions["before"], revisions["after"]
+    names = ["before"] if before is after else ["before", "after"]
+    drawn = [name for name in names if not revisions[name].empty]
+    targets = {name: scratch / f"{name}.pdf" for name in drawn}
+    # Typst runs for both sides at once. The PDF library is not safe across
+    # threads, so the rendered documents are opened here, one after the other.
+    places = dict(
+        zip(drawn, pool.map(lambda name: revisions[name].render(targets[name]), drawn))
     )
-    return targets
-
-
-def publish_companions(outputs, targets):
-    links = {}
-    for side, target in targets.items():
-        with target.open("rb") as stream:
-            write_new_output(outputs[side], stream)
-        links[side] = quote(outputs[side].name)
-    return links
+    sides = {
+        name: Side.read(name, targets[name], places[name], part_outline(records[name]))
+        if name in targets
+        else Side.absent(name)
+        for name in names
+    }
+    return (
+        sides
+        if len(names) == 2
+        else {"before": sides["before"], "after": sides["before"]}
+    )
 
 
 def main(argv):
@@ -219,12 +207,17 @@ def main(argv):
     parser.add_argument(
         "--base", help="compare the working-tree path against a Git revision"
     )
-    parser.add_argument("--format", choices=("html", "json"), default="html")
-    parser.add_argument("-o", "--output", type=Path)
     parser.add_argument(
-        "--pdf",
-        action="store_true",
-        help="write annotated before and after PDFs beside the HTML report",
+        "--format",
+        choices=("pdf", "json"),
+        default="pdf",
+        help="pdf: one side-by-side PDF for a reader. json: the report for an agent",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="the PDF to write, or the file that receives the JSON report",
     )
     parser.add_argument(
         "--summary",
@@ -234,23 +227,18 @@ def main(argv):
     args = parser.parse_args(argv)
     if (args.after is None) == (args.base is None):
         parser.error("supply two paths or one working-tree path with --base")
-    if args.pdf and (args.output is None or args.format != "html"):
-        parser.error("--pdf requires an HTML --output path")
+    as_pdf = args.format == "pdf"
+    if as_pdf and args.output is None:
+        parser.error("-o names the PDF to write; --format json prints a report")
 
-    pdfs = {}
-    if args.pdf:
-        pdfs = {
-            side: args.output.with_name(f"{args.output.stem}-{side}.pdf")
-            for side in ("before", "after")
-        }
     try:
-        for path in [args.output, args.summary, *pdfs.values()]:
+        for path in [args.output, args.summary]:
             if path is not None and (path.exists() or path.is_symlink()):
                 raise ValueError(f"output already exists: {path}")
 
         with ExitStack() as work:
             scratch = None
-            if args.base is not None or pdfs:
+            if args.base is not None or as_pdf:
                 scratch = Path(
                     work.enter_context(TemporaryDirectory(prefix="design-review-"))
                 )
@@ -305,31 +293,48 @@ def main(argv):
                     "after": before_coverage if old is new else coverage(new),
                 },
             }
-            pdf_links, pdf_error = {}, None
-            if pdfs:
+            pdf_error = None
+            composed = None
+            if as_pdf:
                 assert scratch is not None
                 try:
-                    targets = render_companions(pool, before, after, changes, scratch)
-                except (ValueError, OSError, subprocess.CalledProcessError) as error:
-                    pdf_error = f"PDF context could not be rendered: {error}"
+                    drawn = render_sides(
+                        pool,
+                        {"before": before, "after": after},
+                        {"before": old, "after": new},
+                        scratch,
+                    )
+                    composed = scratch / "design-review.pdf"
+                    notices = [empty_notice(report["sources"][side]) for side in empty]
+                    if any(report["coverage"].values()):
+                        notices.append(
+                            "Native figures and mathematical equivalence "
+                            "may require manual review."
+                        )
+                    compose(report, drawn, notices, composed)
+                # Whatever stops the PDF, the summary is still owed: the
+                # comment on the pull request is written from it.
+                except Exception as error:
+                    detail = getattr(error, "stderr", None) or str(error)
+                    pdf_error = f"the side-by-side PDF could not be rendered: {detail}"
                     print(f"design-review: {pdf_error}", file=sys.stderr)
-                else:
-                    pdf_links = publish_companions(pdfs, targets)
 
-            output = (
-                json.dumps(report, indent=2, ensure_ascii=False) + "\n"
-                if args.format == "json"
-                else render_viewer(report, pdf_links, pdf_error, empty)
-            )
             if args.summary:
                 write_new_output(
                     args.summary,
                     render_summary(report, pdf_error, empty=empty).encode(),
                 )
-            if args.output:
-                write_new_output(args.output, output.encode())
+            if as_pdf:
+                if pdf_error is None:
+                    assert composed is not None
+                    with composed.open("rb") as stream:
+                        write_new_output(args.output, stream)
             else:
-                sys.stdout.write(output)
+                text = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+                if args.output:
+                    write_new_output(args.output, text.encode())
+                else:
+                    sys.stdout.write(text)
         return 2 if pdf_error else 0
     except (
         ValueError,

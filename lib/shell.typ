@@ -3,11 +3,15 @@
 #import "tokens.typ": *
 #import "rules.typ": *
 #import "furniture.typ": *
-#import "semantic.typ": semantic
+#import "semantic.typ": semantic, _review-place
+
+// One vertical page margin for both shells. The review reads it to keep the
+// running footer out of a comparison.
+#let _PAGE-MARGIN-Y = 1.9cm
 
 #let design-doc(eyebrow: none, hero_title: none, lede: none, footer: none, body) = {
   show: _link-rule
-  set page(paper: "a4", fill: PAPER, margin: (x: 2.05cm, y: 1.9cm),
+  set page(paper: "a4", fill: PAPER, margin: (x: 2.05cm, y: _PAGE-MARGIN-Y),
     footer: context {
       set text(size: 7pt, fill: FAINT)
       grid(columns: (1fr, auto), align: (left, right),
@@ -19,6 +23,7 @@
   show heading.where(level: 1): set text(size: 16pt, weight: "bold", fill: INK)
   show heading.where(level: 2): set text(size: 12.5pt, weight: "bold", fill: INK)
   show heading.where(level: 3): set text(size: 10.2pt, weight: "semibold", fill: INK)
+  _review-place("page", top: _PAGE-MARGIN-Y.pt(), bottom: _PAGE-MARGIN-Y.pt())
   if sys.inputs.at("review-projection", default: "0") == "1" {
     semantic("document-shell", fields: (title: hero_title, lede: lede, eyebrow: eyebrow, footer: footer))
   }
@@ -42,7 +47,7 @@
 // citation is an INTRA-document reference, so the compiler resolves it.
 #let aggregate-doc(title: none, subtitle: none, body) = {
   show: _link-rule
-  set page(paper: "a4", fill: PAPER, margin: (x: 2.05cm, y: 1.9cm),
+  set page(paper: "a4", fill: PAPER, margin: (x: 2.05cm, y: _PAGE-MARGIN-Y),
     footer: context {
       set text(size: 7pt, fill: FAINT)
       grid(columns: (1fr, auto), align: (left, right),
@@ -59,6 +64,7 @@
   show heading.where(level: 2): set text(size: 12.5pt, weight: "bold", fill: INK)
   show heading.where(level: 3): set text(size: 10.2pt, weight: "semibold", fill: INK)
 
+  _review-place("page", top: _PAGE-MARGIN-Y.pt(), bottom: _PAGE-MARGIN-Y.pt())
   // title page
   v(1fr)
   align(center)[

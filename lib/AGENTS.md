@@ -11,6 +11,7 @@ Interface:
 - `designlib.typ` is the one import a `design.typ` makes.
 - `schema/design-schema.json` declares every vocabulary, the unit contract, and the anchor patterns.
 - The compile input `strict=1` promotes every guideline to an error; `context=1` switches every call to semantic metadata.
+- The compile input `review-places=1` makes every document, section, unit, pending ledger, glossary, diagram, custom figure, and formula record the page and position where it is drawn, as metadata that draws nothing.
 
 Invariants:
 

@@ -134,10 +134,12 @@ Walk a representative use case across the completed views. Resolve inconsistent 
 
 When a reader asks what changed between revisions, run the host's forwarded
 review app with the baseline revision and a fresh temporary PDF path. Share
-the PDF and keep it out of commits.
+the PDF and keep it out of commits. The PDF is generated from the sources for
+a person to read; an agent has no reason to open or check it.
 
 For a pull request, compare the head with its merge base and link the artifact
-from the CI check. Open the PDF before summarizing changes for the user and
-call out native drawings and formulas boxed as needing review. See
+from the CI check. Before summarizing changes for the user, read the same
+comparison as JSON, and name the native drawings and formulas it marks as
+needing review. See
 [design-document-syntax](../design-document-syntax/SKILL.md#reviewing-changes-between-revisions)
 for commands and CI setup.

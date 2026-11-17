@@ -266,6 +266,7 @@ class Parts:
         self.inside = {}  # a record or list that opens parts -> the last one
         self.blocks = {}  # a diagram, figure, or formula -> (kind, turn in part)
         self.diagrams = {}  # a diagram's review-id -> the part that draws it
+        self.holds = {}  # a record or list -> the parts opened inside it
         self.parents = {FRONT: None}
         self.order = []  # (part, kind, id of a unit or name of a document)
         self.keys = PartKeys()
@@ -273,12 +274,14 @@ class Parts:
         self._walk(tree, FRONT, FRONT)
 
     def _walk(self, node, enclosing, flow):
+        first = len(self.order)
         if isinstance(node, list):
             entered = flow
             for item in node:
                 flow = self._walk(item, enclosing, flow)
             if flow != entered:
                 self.inside[id(node)] = flow
+            self._hold(node, first, None)
             return flow
         if not isinstance(node, dict):
             return flow
@@ -318,7 +321,13 @@ class Parts:
             flow = self._walk(child, enclosing, flow)
         if flow != entered:
             self.inside[id(node)] = flow
+        self._hold(node, first, key)
         return flow
+
+    def _hold(self, node, first, own):
+        held = [key for key, _, _ in self.order[first:] if key != own]
+        if held:
+            self.holds[id(node)] = held
 
     def after(self, node, flow):
         """The part in effect once a record is drawn: its last heading wins."""
@@ -356,6 +365,14 @@ def compare(old_records, new_records):
             "anchor": anchor,
             "part": {"before": parts[0], "after": parts[1]},
         }
+        # An added or removed record takes the parts inside it along: they
+        # have no change of their own, and they are part of this one.
+        held = (
+            old_parts.holds.get(id(old)) if isinstance(old, (dict, list)) else None,
+            new_parts.holds.get(id(new)) if isinstance(new, (dict, list)) else None,
+        )
+        if any(held):
+            change["holds"] = {"before": held[0] or [], "after": held[1] or []}
         if any(blocks):
             change["block"] = {
                 side: list(block) if block else None

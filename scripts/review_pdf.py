@@ -208,13 +208,17 @@ def read_layout(
         if start.page == mark.page:
             pieces = [(start.page, (left, start.y, right, mark.y))]
         else:
-            # A block that breaks across pages is boxed where it starts and
-            # where it ends.
-            height = document[start.page].rect.height
-            pieces = [
-                (start.page, (left, start.y, right, height - bottom)),
-                (mark.page, (left, top, right, mark.y)),
+            # A block that breaks across pages is boxed on every page it
+            # touches: from its start, across whole pages, to its end.
+            def lower(page: int) -> float:
+                return document[page].rect.height - bottom
+
+            pieces = [(start.page, (left, start.y, right, lower(start.page)))]
+            pieces += [
+                (page, (left, top, right, lower(page)))
+                for page in range(start.page + 1, mark.page)
             ]
+            pieces.append((mark.page, (left, top, right, mark.y)))
         blocks[key] += [
             Block(mark.kind, start.identity, turn, page, rect) for page, rect in pieces
         ]
@@ -248,6 +252,29 @@ class Side:
             key = self.parents.get(key)
         return key
 
+    def gathered(self, key: str, held: list[str]) -> Part | None:
+        """A part together with the parts shown with it, as one run of regions."""
+        part = self.parts.get(key)
+        if part is None or not held:
+            return part
+        order = {name: index for index, name in enumerate(self.parts)}
+        members = sorted(
+            [part, *(self.parts[name] for name in held)], key=lambda p: order[p.key]
+        )
+        regions: list[Region] = []
+        for region in (r for member in members for r in member.regions):
+            last = regions[-1] if regions else None
+            if (
+                last
+                and last.page == region.page
+                and abs(last.bottom - region.top) < 0.5
+            ):
+                regions[-1] = Region(last.page, last.top, region.bottom)
+            else:
+                regions.append(region)
+        blocks = tuple(b for member in members for b in member.blocks)
+        return Part(part.key, part.document, part.title, tuple(regions), blocks)
+
     def drawn(self, identity: str) -> tuple[str, list[Block]] | None:
         """The part that draws the diagram with this review-id, and its box."""
         for key, part in self.parts.items():
@@ -279,6 +306,10 @@ class Row:
         default_factory=lambda: {"before": {}, "after": {}}
     )
     reviews: list[dict] = field(default_factory=list)
+    # Parts inside an added or removed record, shown with this part.
+    held: dict[str, list[str]] = field(
+        default_factory=lambda: {"before": [], "after": []}
+    )
     first_sheet: int = 0
 
     def box(self, side: str, block: Block, tone: str) -> None:
@@ -291,6 +322,7 @@ class Row:
 def place_changes(changes: list[dict], sides: dict[str, Side]) -> dict[str, Row]:
     """Count every change on the row of one part, and collect its boxes."""
     rows: dict[str, Row] = {}
+    held: list[tuple[str, str, str]] = []
     for change in changes:
         tone = "needs-review" if change["kind"] == "needs-review" else "changed"
         homes: dict[str, str | None] = {}
@@ -321,6 +353,14 @@ def place_changes(changes: list[dict], sides: dict[str, Side]) -> dict[str, Row]
             rows.setdefault(other, Row(other)).elsewhere += 1
         for name, key, block in marks:
             rows.setdefault(key, Row(key)).box(name, block, tone)
+        for name, keys in (change.get("holds") or {}).items():
+            held += [(home, name, key) for key in keys]
+    # A part inside an added or removed record is shown with that record's
+    # part, unless a change of its own already gives it a row.
+    for home, name, wanted in held:
+        key = sides[name].resolve(wanted)
+        if key and key != home and key not in rows and key not in rows[home].held[name]:
+            rows[home].held[name].append(key)
     return rows
 
 
@@ -454,7 +494,9 @@ def region_of(part: Part, page: int, y: float) -> int | None:
 def draw_row(
     report, pen: Pen, row: Row, sides: dict[str, Side], page_width: float
 ) -> None:
-    parts = {name: side.parts.get(row.key) for name, side in sides.items()}
+    parts = {
+        name: side.gathered(row.key, row.held[name]) for name, side in sides.items()
+    }
     present = parts["after"] or parts["before"]
     assert present is not None
     status = (

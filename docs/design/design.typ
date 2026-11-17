@@ -282,6 +282,9 @@
         [A record belongs to the part whose heading is the last one drawn
           before it. A part the rendered document does not show by itself
           counts in the part that encloses it.],
+        [An added or removed record is one change. It is shown with every
+          part it holds, such as the sections and units of an added
+          document.],
         [Every listed change is counted on the sheet of one shown part. The
           counts of the PDF, the summary, and the JSON report agree.],
         [Each side shows its revision as rendered. A mark is drawn over the
@@ -289,7 +292,7 @@
         [A highlight on changed words helps a reader find a listed change. It
           appears only inside a shown part and adds nothing to the counts.],
         [A changed diagram, custom figure, or formula is boxed on each side
-          where it is drawn. Changed native drawing code and a changed formula
+          on every page where it is drawn. Changed native drawing code and a changed formula
           body are listed as needing review, and the tool does not judge
           them.],
         [A difference in presentation alone, such as a tint, a layout, or a

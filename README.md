@@ -532,7 +532,9 @@ labels, data values, and sequence order are compared.
 **How parts are paired.** A unit is paired by its id, a section by its title
 within its document, and a document by its name. Page numbers play no role, so
 a unit added in the middle of a design moves nothing else. A part in one
-revision alone is shown as added or removed, beside an empty side.
+revision alone is shown as added or removed, beside an empty side. It is one
+change, and it is shown with every part inside it: an added document appears
+with its sections and units.
 
 **What the marks mean.** Removed words are highlighted on the left and added
 words on the right. A highlight helps you find a listed change and adds nothing
@@ -548,7 +550,8 @@ underscores, or hyphens in the ID.
 
 Use `--format json` for the versioned `design-review/v1` report an agent reads.
 Each change names the part that draws it, in `part`, and a change inside a
-diagram, figure, or formula names that block in `block`. With `--format json`
+diagram, figure, or formula names that block in `block`. A change that adds or
+removes a record lists the parts inside that record in `holds`. With `--format json`
 no PDF is written, and the report goes to standard output or to `-o`.
 
 Add `--summary <path>` to also write a Markdown summary: the number of

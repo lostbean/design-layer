@@ -330,8 +330,18 @@ assert statuses and set(statuses) == {"added"}, statuses
 assert sum(map(int, re.findall(r"(\d+) added", index))) == len(changes), index
 for page in list(report)[1:]:
     assert "Before · not in this revision" in page.get_text(), page.get_text()
+# The one change that adds the document shows everything the document holds.
+shown = "\n".join(page.get_text() for page in list(report)[1:])
+for text in ("Adoption plan", "Compares two revisions of a layer.", "Delivery", "Publish."):
+    assert text in shown, (text, shown)
 PY
 done
+# The same holds for the document that is removed.
+"$APP" "$ADOPT_LAYER" "$EMPTY" -o "$WORK/emptied.pdf"
+pdftotext "$WORK/emptied.pdf" "$WORK/emptied.txt"
+rg -q 'After · not in this revision' "$WORK/emptied.txt"
+rg -q 'Compares two revisions of a layer\.' "$WORK/emptied.txt"
+rg -q 'Publish\.' "$WORK/emptied.txt"
 
 # A missing working-tree layer is an error, whether or not the base has one.
 if "$APP" "$ADOPT/docs/missing" --base HEAD --format json >"$WORK/missing.out" 2>"$WORK/missing.err"; then
@@ -357,7 +367,10 @@ write_paired() {
 #let title = [Paired fixture]
 #let body = [
   #section(title: [Alpha], body: [The first section says $word here.])
-  #if "$side" == "after" { section(title: [Inserted], body: [INSERTEDTEXT #lorem(1400)]) }
+  #if "$side" == "after" { section(title: [Inserted], body: [INSERTEDTEXT #lorem(1400) #unit(
+    id: "nested", title: "Nested unit", overview: [NESTEDUNITTEXT.], interface: (), invariants: (),
+    side-effects: (), verification: [None.], paths: ("scripts",),
+  )]) }
   #section(title: [Beta], body: [UNCHANGEDBETA stays as it is.])
   #section(title: [Units], body: [
     #unit(
@@ -428,6 +441,12 @@ assert any(d["rect"].intersects(new_word) for d in marks), marks
 inserted = sheet("Inserted")
 assert len(inserted) >= 2 and "ADDED" in inserted[0].get_text(), inserted[0].get_text()
 assert all("Before · not in this revision" in page.get_text() for page in inserted)
+# The added section holds a unit. The unit has no change of its own, so it is
+# shown with the section, and the section still counts once.
+added = next(row for row in changes if row["part"]["after"] == "section root/Inserted")
+assert added["holds"] == {"before": [], "after": ["unit nested"]}, added
+assert any("NESTEDUNITTEXT" in page.get_text() for page in inserted)
+assert "Nested unit" not in index and "1 added" in index, index
 
 # A unit is paired by its id: a new title is a change, not a removal and an addition.
 (unit,) = sheet("General ledger")
@@ -445,7 +464,7 @@ assert change["block"] == {"before": ["formula", 1], "after": ["formula", 1]}, c
 PY
 
 # Harder layouts, one section each: a title that holds a library call, a
-# landscape page, and a figure that breaks across two pages.
+# landscape page, and a figure that runs over three pages.
 EDGE="$WORK/edge"
 for side in before after; do
   mkdir -p "$EDGE/$side"
@@ -461,6 +480,7 @@ for side in before after; do
   #section(title: [Drawing], body: [
     #v(300pt)
     #figure-block(caption: [A tall drawing.], uses: ("cetz",))[```typst
+    #rect(width: 100pt, height: 600pt)
     #rect(width: 100pt, height: @HEIGHT@)
     ```]
   ])
@@ -499,9 +519,10 @@ assert wide.rect.width > decision.rect.width, (wide.rect, decision.rect)
 assert len(wide.search_for("FARRIGHT")) == 2, wide.get_text()
 assert marked(wide, "OLDWORD") and marked(wide, "NEWWORD")
 
-# A figure that breaks across pages is boxed on both pages, on each side.
+# A figure that runs over three pages is boxed on each of them, the middle
+# one included, on each side.
 tags = sum(len(p.search_for("figure needs review")) for p in sheet("Drawing"))
-assert tags == 4, tags
+assert tags == 6, tags
 PY
 
 # An index longer than one page: every line still leads to the sheet of its part.

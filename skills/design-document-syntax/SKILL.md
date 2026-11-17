@@ -596,8 +596,7 @@ agreement from a component that implements it.
   independently owned units. Give that agreement a `mission:` and move its
   five fields into `answers-data(...)`, preserving the existing domain accent.
 - Keep policy and recovery subjects in `#answers`. Render the host layer and
-  run its normal gate after the change, then inspect the full-width contract
-  card and its `contract` role mark.
+  run its normal gate after the change.
 
 Before:
 

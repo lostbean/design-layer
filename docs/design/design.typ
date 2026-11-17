@@ -365,7 +365,7 @@
       unit lists. A folder's `AGENTS.md` then names the unit, links its Typst
       source, and prints the command that loads the full unit.
 
-    *Check.* The author inspects both reading forms and runs the gate. A stale PDF
+    *Check.* The author runs the gate. A stale PDF
       fails freshness; a broken cross-artifact link fails integrity; a missing
       unit path or a stale folder contract fails the unit checks. Passing
       these checks does not establish that the host implements its claims.

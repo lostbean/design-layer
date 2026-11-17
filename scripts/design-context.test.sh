@@ -1014,6 +1014,112 @@ for needle in expected:
     position = found + len(needle)
 PY
 
+# A list in prose is a Markdown list. Markup items stand in a sequence one by
+# one — `- …` in a pending entry once stopped the projection of a whole layer
+# with "unsupported Typst content function 'item'" — so a run of them becomes
+# one list. A later line stays indented inside its item; bullets and numbers
+# that meet are split by a blank line; a `+` item is a bullet, because Typst
+# records it the same way as a `-` item; `list`, `enum` and `terms` calls are
+# lists too.
+list_docs="$WORK/list-docs"
+list_layer="$list_docs/design"
+mkdir -p "$list_layer/.render"
+printf '# Coverage\n\n| Part | Status |\n| --- | --- |\n| root | captured |\n' >"$list_docs/COVERAGE.md"
+cp -R "$LAYER/.render/." "$list_layer/.render/"
+cat >"$list_layer/design.typ" <<'EOF'
+#import ".render/designlib.typ": *
+#let title = [List items]
+#let body = [Lead:
+
+- *First.* one
+- two
+  - nested
++ automatic
+3. stated
+/ Term: description
+
+- first paragraph
+
+  second paragraph
+- `code` item
+
+After the list.
+#list([x], [y]) #enum(start: 3, [p], [q]) #enum(reversed: true, [r], [s]) #terms(([t], [d]))
+#notes(title: "Lone item")[- only]
+#pending-ledger(pending-entry(title: "Scope", kind: "build", since: "2026-01-01")[Its scope:
+
+  - *A.* one
+  - *B.* two
+
+  Blocking the build.])]
+EOF
+list_expected="$WORK/list-expected.md"
+cat >"$list_expected" <<'EOF'
+# List items
+
+Lead:
+
+- **First.** one
+- two
+
+  - nested
+- automatic
+
+3. stated
+
+- **Term**: description
+- first paragraph
+
+  second paragraph
+- `code` item
+
+After the list.
+
+- x
+- y
+
+3. p
+4. q
+
+2. r
+1. s
+
+- **t**: d
+
+## Notes: Lone item
+
+- only
+
+## pending-ledger
+
+### pending: Scope
+
+Kind: build
+
+Since: 2026-01-01
+
+Its scope:
+
+- **A.** one
+- **B.** two
+
+Blocking the build.
+
+<!-- source: docs/COVERAGE.md -->
+
+# Coverage
+
+| Part | Status |
+| --- | --- |
+| root | captured |
+EOF
+list_output="$WORK/list.md"
+./scripts/design-context "$list_layer" --output "$list_output"
+if ! diff -u "$list_expected" "$list_output"; then
+  echo "design-context: a list in prose is not projected as a Markdown list" >&2
+  exit 1
+fi
+
 # Hidden content is not layout: the reader never sees it, so the projection
 # neither invents it nor drops it silently.
 hidden_layer="$WORK/hidden-layer"

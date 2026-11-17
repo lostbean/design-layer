@@ -371,12 +371,55 @@ def content_text(
         children = value.get("children")
         if not isinstance(children, list):
             raise ProjectionError(f"sequence without children at {path}")
-        return "".join(
-            content_text(
-                child, f"{path}.children", term_titles, context_names, heading_level
-                , allow_clauses
+        # Markup items — `- …`, `+ …`, `1. …`, `/ Term: …` — stand in the
+        # sequence one by one, with the spaces and paragraph breaks between
+        # them; Typst groups them into a list only when it lays the page out.
+        # So the projection groups a run of them here, into one Markdown list.
+        parts: list[str] = []
+        run: list[tuple[int, dict[str, object]]] = []
+        for index, child in enumerate(children):
+            if _is_list_item(child):
+                run.append((index, child))
+                continue
+            if run and isinstance(child, dict) and child.get("func") in ("space", "parbreak"):
+                continue
+            if run:
+                parts.append(
+                    _list_markdown(run, f"{path}.children", term_titles, context_names, allow_clauses)
+                )
+                run = []
+            parts.append(
+                content_text(
+                    child, f"{path}.children", term_titles, context_names, heading_level
+                    , allow_clauses
+                )
             )
-            for child in children
+        if run:
+            parts.append(
+                _list_markdown(run, f"{path}.children", term_titles, context_names, allow_clauses)
+            )
+        return "".join(parts)
+    if function == "item":
+        return _list_markdown([(0, value)], path, term_titles, context_names, allow_clauses)
+    if function in ("list", "enum", "terms"):
+        children = value.get("children")
+        if not isinstance(children, list):
+            raise ProjectionError(f"{function} without children at {path}")
+        numbered = function == "enum"
+        start = value.get("start")
+        if start is not None and (isinstance(start, bool) or not isinstance(start, int)):
+            raise ProjectionError(f"enum start is not a number at {path}")
+        reversed_order = value.get("reversed") is True
+        if start is None:
+            start = len(children) if reversed_order else 1
+        return _list_markdown(
+            list(enumerate(children)),
+            f"{path}.children",
+            term_titles,
+            context_names,
+            allow_clauses,
+            start=start if numbered else None,
+            step=-1 if reversed_order else 1,
         )
     if function == "text":
         text = value.get("text")
@@ -537,7 +580,7 @@ def content_text(
             if child is not None
             else ""
         )
-    if function in LAYOUT_CARRIERS or function in {"list", "grid", "table"}:
+    if function in LAYOUT_CARRIERS or function in {"grid", "table"}:
         child = layout_child(value)
         return (
             content_text(
@@ -568,6 +611,85 @@ def field_text(
     return content_text(value, path, term_titles, context_names).strip()
 
 
+def _is_list_item(value: object) -> bool:
+    return isinstance(value, dict) and value.get("func") == "item"
+
+
+def _list_markdown(
+    items: list[tuple[int, object]],
+    path: str,
+    term_titles: Mapping[str, str] | None,
+    context_names: frozenset[str] | None,
+    allow_clauses: bool,
+    *,
+    start: int | None = None,
+    step: int = 1,
+) -> str:
+    """A run of list, enum, or term items as one Markdown list.
+
+    Typst's semantic tree writes a bullet item and an enum item it numbers
+    itself the same way, as an `item` with a body: `- step` and `+ step` reach
+    the projection alike. Only an item that states its number, or an item of
+    an `enum` call (`start` given), is known to be numbered. So such an item
+    is written with its number and every other one as a bullet: the order is
+    kept, and no number is printed that the source does not determine. A term
+    item is a bullet that leads with its term in bold.
+
+    An item's later lines — a nested list, a second paragraph, a code block —
+    are indented under its marker, where Markdown keeps them inside the item.
+    """
+    lines: list[str] = []
+    number = start
+    previous = "-"
+    for index, item in items:
+        item_path = f"{path}[{index}]"
+        if not _is_list_item(item):
+            # `list` and `enum` make each of their arguments an item; a child
+            # that arrives without one is that item's body.
+            item = {"func": "item", "body": item}
+        if "term" in item or "description" in item:
+            expect_keys(item, {"func", "term", "description"}, item_path)
+            term = content_text(
+                item.get("term"), f"{item_path}.term", term_titles, context_names, None, allow_clauses
+            ).strip()
+            description = content_text(
+                item.get("description"),
+                f"{item_path}.description",
+                term_titles,
+                context_names,
+                None,
+                allow_clauses,
+            )
+            marker = "-"
+            text = f"**{term}**: {description}" if term else description
+        else:
+            expect_keys(item, {"func", "body", "number"}, item_path)
+            stated = item.get("number")
+            if stated is not None and (isinstance(stated, bool) or not isinstance(stated, int)):
+                raise ProjectionError(f"enum item number is not a number at {item_path}.number")
+            current = stated if stated is not None else number
+            marker = "-" if current is None else f"{current}."
+            number = None if start is None or current is None else current + step
+            text = content_text(
+                item.get("body"), f"{item_path}.body", term_titles, context_names, None, allow_clauses
+            )
+        # A list nested in this item is guarded on its own; the whole list is
+        # guarded once, so the inner guard is dropped where it is indented.
+        text = _normalize_fragment(text).strip().replace(_GUARD_OPEN, "").replace(_GUARD_CLOSE, "")
+        first, *rest = text.split("\n")
+        indent = " " * (len(marker) + 1)
+        # Where bullets and numbers meet, a blank line starts the new list:
+        # without one, a number other than 1 would continue the paragraph of
+        # the bullet above it.
+        if lines and (marker == "-") != (previous == "-"):
+            lines.append("")
+        lines.append(
+            "\n".join([f"{marker} {first}".rstrip(), *(indent + line if line else "" for line in rest)])
+        )
+        previous = marker
+    return "\n\n" + _GUARD_OPEN + "\n".join(lines) + _GUARD_CLOSE + "\n\n"
+
+
 # A fenced code block as the projection writes one: the opening fence at the
 # start of a line, possibly indented under a list item, and a closing line of
 # at least as many backticks and nothing else.
@@ -582,7 +704,7 @@ def _normalize_fragment(value: str) -> str:
         protected.append(match.group(0))
         return f"\x00raw-{len(protected) - 1}\x00"
 
-    value = _CONTRACT_RE.sub(protect, value)
+    value = _GUARD_RE.sub(protect, value)
     value = FENCED_BLOCK_RE.sub(protect, value)
     value = re.sub(r"`[^`\n]*`", protect, value)
     value = re.sub(
@@ -849,15 +971,16 @@ _UNIT_MARK = "\x01"
 _UNIT_MARK_RE = re.compile("\x01unit-(open|close):([^\x01]*)\x01|[\x02\x03]")
 
 
-# A unit's contract is written already normalized, in the exact text its
-# folder contract carries. The pass that normalizes a whole document would
-# otherwise strip the indentation that keeps a list item's later lines inside
-# the item, and the projection would print the contract differently from the
-# folder. So the contract is guarded from that pass and the guard is taken
-# out with the unit marks.
-_CONTRACT_OPEN = "\x02"
-_CONTRACT_CLOSE = "\x03"
-_CONTRACT_RE = re.compile("\x02[^\x02\x03]*\x03")
+# A unit's contract, and a list in prose, is written already normalized —
+# the contract in the exact text its folder contract carries. The pass that
+# normalizes a whole document would otherwise strip the indentation that keeps
+# a list item's later lines inside the item, and the projection would print
+# the contract differently from the folder, and lift a nested list or a second
+# paragraph out of its item. So each is guarded from that pass and the guard
+# is taken out with the unit marks.
+_GUARD_OPEN = "\x02"
+_GUARD_CLOSE = "\x03"
+_GUARD_RE = re.compile("\x02[^\x02\x03]*\x03")
 
 
 def _unit_mark(side: str, unit_id: str) -> str:
@@ -882,7 +1005,7 @@ def strip_unit_marks(marked: str) -> tuple[str, dict[str, tuple[int, int]]]:
         position = match.end()
         side, unit_id = match.group(1), match.group(2)
         if side is None:
-            continue  # a contract's guard: it only kept normalization out
+            continue  # a guard: it only kept normalization out
         if side == "open":
             opened.setdefault(unit_id, length)
         elif unit_id in opened and unit_id not in spans:
@@ -928,7 +1051,7 @@ def design_unit_markdown(
         f"{'#' * level} unit: {title}",
         f"ID: {unit_id}",
         f"Paths: {listed}",
-        _CONTRACT_OPEN + contract + _CONTRACT_CLOSE,
+        _GUARD_OPEN + contract + _GUARD_CLOSE,
     ]
     if body:
         parts.append(body)

@@ -125,3 +125,11 @@
   run reviewed, so neither an older run finishing late nor a re-run of one
   replaces a newer summary. A repository that copied the workflow should carry
   these changes.
+- `context` projects a list in prose — a bullet item, an enum item, a term
+  item in markup, and a `list`, `enum`, or `terms` call — as a Markdown list,
+  where it used to stop on the whole layer with "unsupported Typst content
+  function 'item'". A nested list, a second paragraph, or a code block stays
+  inside its item. An item that states its number, or an item of an `enum`
+  call, keeps its number; Typst records an automatically numbered `+` item
+  the same way as a `-` item, so the projection writes it as a bullet. A
+  list in a unit field is still refused by the render.

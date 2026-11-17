@@ -129,9 +129,9 @@
         [The compile input `strict=1` promotes every guideline to an error;
           `context=1` switches every call to semantic metadata.],
         [The compile input `review-places=1` makes every document, section,
-          unit, pending ledger, glossary, diagram, custom figure, and formula
-          record the page and position where it is drawn, as metadata that
-          draws nothing.],
+          subsection, unit, pending ledger, glossary, diagram, custom figure,
+          and formula record the page and position where it is drawn, as
+          metadata that draws nothing and moves nothing.],
       ),
       invariants: (
         [A value outside a declared vocabulary, an unresolved reference, and a
@@ -256,7 +256,7 @@
         compares the semantic metadata of two revisions, ties each difference
         to the part that draws it, and composes one PDF with the old part on
         the left and the new part on the right. A part is a document, a
-        section, a unit, a pending ledger, or the glossary.],
+        section, a subsection, a unit, a pending ledger, or the glossary.],
       interface: (
         [`review <layer-root> --base <revision> -o <changes.pdf>` compares the
           working tree with a Git revision. `review <before> <after> -o
@@ -265,11 +265,12 @@
           comment: the counts by section and each change that needs review.],
         [`--format json` writes the comparison as a `design-review/v1` report
           for an agent, with the part of each change, and writes no PDF.],
-        [The PDF opens with an index of the changed parts. Each later sheet
-          names its part, the counts of its changes, and the page each side
-          comes from.],
+        [The PDF opens with an index of the changed parts, each linked to its
+          sheet. Each sheet names its part, the counts of its changes, and
+          the page each side comes from. Both sides start level at the top of
+          the sheet.],
         [Exit 0 when the comparison ran, with or without a change, and 2 when
-          it could not run.],
+          it could not run or the PDF could not be rendered.],
       ),
       invariants: (
         [The comparison of semantic metadata alone decides what changed. The
@@ -278,6 +279,9 @@
         [Parts are paired by identity, never by page number: a unit by its id,
           a section by its title within its document, a document by its name.
           A part in one revision alone is shown as added or removed.],
+        [A record belongs to the part whose heading is the last one drawn
+          before it. A part the rendered document does not show by itself
+          counts in the part that encloses it.],
         [Every listed change is counted on the sheet of one shown part. The
           counts of the PDF, the summary, and the JSON report agree.],
         [Each side shows its revision as rendered. A mark is drawn over the

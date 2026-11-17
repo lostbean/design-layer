@@ -56,6 +56,7 @@
     radius: 2pt,
     inset: (x: 10pt, y: 8pt),
   )[
+    #_review-corner("formula", inset: (x: 10pt, y: 8pt))
     #grid(
       columns: (1fr, auto),
       align: (left, right),
@@ -96,6 +97,7 @@
       #v(7pt)
       #text(size: 7.5pt, fill: MUTED, style: "italic")[#caption]
     ]
+    #_review-corner("formula", edge: "end", inset: (x: 10pt, y: 8pt))
   ]
 
   if id == none {

@@ -501,59 +501,82 @@ runtime, digest, selection, or output-write error exits 2.
 
 ### Review design changes
 
-Generate a standalone HTML report against a Git revision:
+Write one PDF that shows what a change did to the design, against a Git
+revision:
 
 ```sh
 review_dir=$(mktemp -d)
-nix run .#review -- docs/design --base origin/main -o "$review_dir/design-review.html"
+nix run .#review -- docs/design --base origin/main -o "$review_dir/design-review.pdf"
 ```
+
+The PDF shows each changed part with the old design on the left and the new
+design on the right. A part is a document, a section, a subsection, a unit, a
+pending ledger, or the glossary. Its first pages list the changed parts with
+their counts, and each line links to the sheet of its part. Parts without a
+change are left out. Two revisions without a change produce a one-page PDF
+that says so.
 
 The base comes from Git, and the second revision is the current working tree.
 To compare two already available revisions, pass their layer directories
 instead of `--base`. Two standalone Typst entry points also work when they
-emit design-layer semantic records. Use `--format json` for the versioned
-`design-review/v1` result. A successful comparison exits zero even when it
-finds changes. Supply fresh output paths.
+emit design-layer semantic records. A successful comparison exits zero even
+when it finds changes. Supply fresh output paths.
 
-Typst emits structured records for the review, including diagram IDs. Python
-compares those records directly. The Markdown projection uses the same layer
-loader and Typst query code to produce reading material.
-Diagram coordinates and decorative tints in the tested widgets are
-presentation. It compares directed edges, labels, data values, and sequence
-order. Changed native drawing code and formula bodies need manual review.
-The report includes those limits even when no projected fields changed.
+**What decides a change.** Typst emits structured records for the review, and
+Python compares those records. The Markdown projection uses the same layer
+loader and Typst query code. That comparison alone decides what changed, so a
+part appears in the PDF only when it holds a listed change. Diagram coordinates
+and decorative tints are presentation and are not changes. Directed edges,
+labels, data values, and sequence order are compared.
 
-Add `--pdf` to write a before and an after PDF beside the HTML report. A stable,
-unique `review-id:` on `diagram` or `diagram-native` allows comparison across
-sections and adds a margin mark where a changed diagram appears. Use letters,
-digits, underscores, or hyphens in the ID. Every change still appears in the
-report if it has no PDF mark. The report evaluates each input once, sharing the
-result when both paths resolve to the same source. With `--pdf`, it compiles
-each distinct source once for the companions and reports compilation errors.
-Use the regular render command for guideline advisories.
+**How parts are paired.** A unit is paired by its id, a section by its title
+within its document, and a document by its name. Page numbers play no role, so
+a unit added in the middle of a design moves nothing else. A part in one
+revision alone is shown as added or removed, beside an empty side.
+
+**What the marks mean.** Removed words are highlighted on the left and added
+words on the right. A highlight helps you find a listed change and adds nothing
+to the counts. A changed diagram, custom figure, or formula is boxed on each
+side. Changed native drawing code and a changed formula body are boxed as
+"needs review": the tool cannot judge them, so compare the two sides yourself.
+Inside a part, the pages of each side are shown in order, one pair to a
+sheet. When a change makes a part longer, a later sheet can show old text
+beside new text from a little further on.
+A stable, unique `review-id:` on `diagram` or `diagram-native` lets the review
+follow a diagram that moves to another section. Use letters, digits,
+underscores, or hyphens in the ID.
+
+Use `--format json` for the versioned `design-review/v1` report an agent reads.
+Each change names the part that draws it, in `part`, and a change inside a
+diagram, figure, or formula names that block in `block`. With `--format json`
+no PDF is written, and the report goes to standard output or to `-o`.
 
 Add `--summary <path>` to also write a Markdown summary: the number of
 confirmed changes and of changes that need review, the changes counted by
 section, and each change that needs review. It is sized for one pull request
 comment, and design text appears in it only inside code spans. Its first line
-is `<!-- design-review changes=N -->`.
+is `<!-- design-review changes=N -->`. The PDF, the summary, and the JSON
+report carry the same counts.
+
+The review reports render errors. When the PDF cannot be rendered it still
+writes the summary, says so in it, and exits 2. Use the regular render command for
+guideline advisories.
 
 A layer with no design documents counts as an empty layer, and so does a
 `--base` revision with nothing at the layer path, such as the base of the pull
-request that adopts the layer. Against an empty base, the report lists every
-record in the working tree as added. The HTML report and the summary name the
-empty side, and `--pdf` writes no PDF for it. A layer path missing from the working tree, or an
-explicit before path that does not exist, is still an error.
+request that adopts the layer. Against an empty base, the review lists every
+record in the working tree as added and shows every part beside an empty side.
+The PDF and the summary name the empty side. A layer path missing from the
+working tree, or an explicit before path that does not exist, is still an
+error.
 
 #### Review design changes in pull requests
 
 A pull request that changes the design gets one comment from the **Design
 review** workflow, and each push updates that comment. It holds the summary
-and a link to the full report. A pull request that changes no design gets no
-comment. Download the artifact from that link or from the job summary, extract
-it, and open `design-review.html`. Keep the two PDF companions beside the HTML
-so the report links work. The artifact stays with the workflow run and expires
-according to the repository's retention policy.
+and a link to the PDF. A pull request that changes no design gets no comment.
+Open the PDF from that link or from the job summary. The PDF stays with the
+workflow run and expires according to the repository's retention policy.
 
 For a consumer repository, copy the
 [design review workflow](.github/workflows/design-review.yml) and use the
@@ -564,16 +587,15 @@ With Nix installed on the runner, the review step is:
 
 ```sh
 base=$(git merge-base "$BASE_SHA" HEAD)
-mkdir -p "$RUNNER_TEMP/design-review"
-nix run .#design-gate-review -- docs/design --base "$base" --pdf \
-  -o "$RUNNER_TEMP/design-review/design-review.html" \
-  --summary "$RUNNER_TEMP/design-review/summary.md"
+mkdir -p "$RUNNER_TEMP/design-review/summary"
+nix run .#design-gate-review -- docs/design --base "$base" \
+  -o "$RUNNER_TEMP/design-review/design-review-$GITHUB_RUN_ATTEMPT.pdf" \
+  --summary "$RUNNER_TEMP/design-review/summary/summary.md"
 ```
 
-Set `BASE_SHA` from `github.event.pull_request.base.sha` on GitHub Actions. Omit
-`--pdf` for HTML alone, or use `--format json` for a structured report. Upload
-the output directory as one artifact and put the download link in the check
-summary.
+Set `BASE_SHA` from `github.event.pull_request.base.sha` on GitHub Actions.
+Upload the PDF as a file of its own, not inside an archive, so its link leads
+straight to it. Upload the summary as a second artifact for the comment job.
 
 The workflow has two jobs, and their checks are named **Design review** and
 **Design review comment**. The `review` job runs the pull request's code with
@@ -694,7 +716,8 @@ without network access.
 library when supplied. Direct script invocation retains its existing contract
 and does not refresh a divergent layer library automatically.
 
-The review app prepares a missing projection in either revision and validates
+The review app carries a PDF library that the other apps do not need. It
+prepares a missing projection in either revision and validates
 an existing projection against the selected renderer. A stale projection must
 be refreshed before review. When comparing with `--base`, the archived base
 uses the same selected renderer as the working tree.

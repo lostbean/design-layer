@@ -108,12 +108,14 @@
   block(width: 100%, inset: 8pt, radius: 3pt,
         stroke: (paint: FAINT, thickness: 0.6pt, dash: "dashed"),
     [
+      #_review-corner("figure-block", inset: (x: 8pt, y: 8pt))
       #text(size: 6.5pt, fill: MUTED, weight: "bold", tracking: 0.4pt,
             "NATIVE FIGURE · " + uses.join(", "))
       #v(4pt)
       #align(center, drawing)
       #v(4pt)
       #text(size: 7.5pt, fill: MUTED, style: "italic", caption)
+      #_review-corner("figure-block", edge: "end", inset: (x: 8pt, y: 8pt))
     ])
   v(0.45em)
 }

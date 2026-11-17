@@ -144,8 +144,12 @@ def report_guidelines(found, report):
     )
 
 
-def render_layer(layer: LayerSource, out_pdf, check, lib, *, review_diagrams=None):
+def render_layer(layer: LayerSource, out_pdf, check, lib, *, places=None):
     """Assemble the layer into the one rendered document.
+
+    A design review passes a list as `places`. The document is then compiled
+    with the review places switched on, and the list receives the record of
+    where each part and each marked block was drawn.
 
     There is no conversion step: each context's design.typ is imported as a
     Typst module and its `body` is placed under the chapter heading. Nothing
@@ -259,6 +263,9 @@ def render_layer(layer: LayerSource, out_pdf, check, lib, *, review_diagrams=Non
             '#let _t = if "title" in _m { _m.title } else { %s }'
             % typst_string(stem + " context")
         )
+        # Under review each chapter records where it starts. The mark is `none`
+        # in an ordinary render, so the document is the same without it.
+        L.append('#_review-place("document", id: %s)' % typst_string(stem))
         L.append(
             "#chapter-page(_t, kind: %s)"
             % typst_string("root design" if stem == "root" else "context")
@@ -299,6 +306,7 @@ def render_layer(layer: LayerSource, out_pdf, check, lib, *, review_diagrams=Non
     L.append("")
 
     if terms:
+        L.append('#_review-place("glossary")')
         L.append("#heading(level: 1, numbering: none)[Glossary] <glossary>")
         L.append("Every term the layer declares, with the context that owns it.")
         L.append("")
@@ -351,7 +359,7 @@ def render_layer(layer: LayerSource, out_pdf, check, lib, *, review_diagrams=Non
             lib,
             len(docs),
             len(terms),
-            review_diagrams,
+            places,
         )
 
 
@@ -366,12 +374,46 @@ def _splice(src):
     return "#" + src
 
 
-def compile_and_verify(
-    agg, root, out_pdf, check, lib, n_contexts, n_terms, review_diagrams
-):
+REVIEW_PLACES = ("--input", "review-places=1")
+
+
+def query_places(source, root, env, inputs=()):
+    """Read where a compiled document drew each part and each marked block.
+
+    The query is a second compile of the same source with the same inputs, so
+    the places it reports are the places in the PDF.
+    """
+    proc = subprocess.run(
+        [
+            typst_command(),
+            "query",
+            source,
+            "<design-review-place>",
+            "--field",
+            "value",
+            *REVIEW_PLACES,
+            *inputs,
+            *(["--root", root] if root else []),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if proc.returncode:
+        raise ValueError(proc.stderr.strip() or "the review places could not be read")
+    found = json.loads(proc.stdout or "[]")
+    if not isinstance(found, list):
+        raise ValueError("the review places are not a list")
+    return found
+
+
+def compile_and_verify(agg, root, out_pdf, check, lib, n_contexts, n_terms, places):
     """Compile the visual document and retain the render and freshness checks."""
     env = typst_environment()
     strict = ["--input", "strict=1"] if os.environ.get("DESIGN_STRICT") else []
+    compile_root = os.path.commonpath(
+        [os.path.abspath(os.path.join(root, "..", "..")), os.path.abspath(lib)]
+    )
     with ExitStack() as scratch:
         target = os.path.abspath(out_pdf)
         if check:
@@ -386,18 +428,9 @@ def compile_and_verify(
                 agg,
                 target,
                 *strict,
-                *(
-                    ["--input", "design-review-diagrams=" + ",".join(review_diagrams)]
-                    if review_diagrams
-                    else []
-                ),
+                *(REVIEW_PLACES if places is not None else ()),
                 "--root",
-                os.path.commonpath(
-                    [
-                        os.path.abspath(os.path.join(root, "..", "..")),
-                        os.path.abspath(lib),
-                    ]
-                ),
+                compile_root,
             ],
             capture_output=True,
             text=True,
@@ -408,9 +441,10 @@ def compile_and_verify(
             return 1
         if warns(proc.stderr, out_pdf, report=sys.stderr.write):
             return 1
-        if review_diagrams is not None:
-            # Review prints a change report. The compiled companions still
-            # enforce render diagnostics and strict mode.
+        if places is not None:
+            # A review shows a change and judges nothing, so it skips the
+            # guideline trail. Render diagnostics and strict mode still apply.
+            places.extend(query_places(agg, compile_root, env, strict))
             return 0
 
         found = [] if strict else guidelines(typst_command(), agg, root, lib, env)

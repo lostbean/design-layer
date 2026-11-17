@@ -143,9 +143,10 @@
 // differently from content written in place — enough to shift the drawing
 // below it by a fraction of a point. Taking content keeps every caller's
 // output identical to the markup it replaced.
-#let _drawing-frame(tint: none, kind: none, title: none, caption: none, body) = {
+#let _drawing-frame(tint: none, kind: none, title: none, caption: none, review: none, body) = {
   let c = if tint == none { luma(120) } else { tint }
   block(width: 100%, breakable: false)[
+    #if review != none { _review-corner(review.kind, id: review.id) }
     #block(width: 100%, inset: (x: 8pt, y: 4.5pt), fill: c.lighten(94%),
            stroke: (top: 1.35pt + c, rest: 0.4pt + c.lighten(58%)),
            radius: 2pt)[
@@ -162,6 +163,7 @@
         #text(size: 7.5pt, fill: MUTED, style: "italic")[#caption]
       ]
     ]
+    #if review != none { _review-corner(review.kind, id: review.id, edge: "end") }
   ]
   v(0.55em)
 }
@@ -298,7 +300,7 @@
     _refuse-in-unit("section")
     if visual != none {
       block(width: 100%, breakable: false)[
-        #heading(level: 2)[#title]
+        #_review-place("section")#heading(level: 2)[#title]
         #if lead != none [
           #block(width: 92%, text(size: 9.4pt, fill: MUTED)[#lead])
           #v(0.45em)
@@ -306,6 +308,7 @@
         #visual
       ]
     } else {
+      _review-place("section")
       heading(level: 2)[#title]
       if lead != none {
         block(width: 92%, text(size: 9.4pt, fill: MUTED)[#lead]); v(0.45em)
@@ -322,6 +325,7 @@
   _need("subsection", "title", title)
   let visual = {
     _refuse-in-unit("subsection")
+    _review-place("subsection")
     heading(level: 3)[#title]
     _hosted(3, body)
   }
@@ -1135,11 +1139,9 @@
     ).map(edge => edge.relation))
     [#graph #_diagram-legend(groups, nodes, used-relations, accent)]
   } else { none }
-  if review-id != none and review-id in sys.inputs.at("design-review-diagrams", default: "").split(",") {
-    place(left, dx: -12pt, rect(width: 3pt, height: 14pt, fill: rgb("#2870a6"), stroke: none))
-  }
   _drawing-frame(
     tint: ac,
+    review: (kind: "diagram", id: review-id),
     kind: if viewpoint != none and altitude == none [
       VIEWPOINT #upper(viewpoint) · ALTITUDE #upper(_alt-name(altitude))
     ] else if viewpoint != none [
@@ -1572,7 +1574,7 @@
   // A longer ledger remains breakable; otherwise a real backlog could overflow
   // the page merely to avoid one page turn.
   block(width: 100%, breakable: es.len() > 3)[
-    #heading(level: 2)[Pending updates]
+    #_review-place("pending-ledger")#heading(level: 2)[Pending updates]
     #v(0.3em)
     // An entry with no date sorts to the front rather than crashing the sort:
     // `since` is a guideline now, so the ledger has to be able to draw a row that

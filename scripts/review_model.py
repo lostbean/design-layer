@@ -192,30 +192,180 @@ def edge_name(edge):
     return edge.get("label") or f"{edge.get('from', '?')} → {edge.get('to', '?')}"
 
 
+# ---- the part of the document that draws a record ---------------------------
+# A part is what a reader finds by its heading: a document, a section, a
+# subsection, a unit, a pending ledger, or the glossary. Its key is its
+# identity across revisions. The same key is built from the places the
+# renderer reports, so a change and the page region that shows it meet by key.
+FRONT = "front matter"
+GLOSSARY = "glossary"
+BLOCK_KINDS = {
+    "diagram": "diagram",
+    "diagram-native": "diagram",
+    "figure-block": "figure-block",
+    "formula": "formula",
+}
+
+
+def plain(value):
+    """The text of a content tree, as a reader sees it."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(map(plain, value))
+    if isinstance(value, dict):
+        if value.get("func") == "space":
+            return " "
+        for field in ("text", "children", "body", "child"):
+            if field in value:
+                return plain(value[field])
+    return ""
+
+
+class PartKeys:
+    """Names parts in document order, from records or from rendered places.
+
+    A unit is known by its id and a document by its name. A section is known
+    by its title within its document, and a repeated title by its turn.
+    """
+
+    def __init__(self):
+        self.document = ""
+        self.document_title = ""
+        self.turns = Counter()
+        self.titles = {}
+
+    def open(self, kind, name=None, title=None):
+        label = " ".join(plain(title).split()) if title is not None else ""
+        if kind == "document":
+            self.document = name or ""
+            self.document_title = label or self.document
+            key = f"document {self.document}"
+        elif kind == "unit":
+            key = f"unit {name}"
+        elif kind in ("glossary", "term"):
+            key, label = GLOSSARY, "Glossary"
+        elif kind in ("section", "subsection", "pending-ledger"):
+            if kind == "pending-ledger":
+                label = "Pending updates"
+            base = f"{kind} {self.document}/{label}"
+            self.turns[base] += 1
+            turn = self.turns[base]
+            key = base if turn == 1 else f"{base} #{turn}"
+        else:
+            return None
+        self.titles.setdefault(key, (self.document_title, label or key))
+        return key
+
+
+class Parts:
+    """Where each record of one revision is drawn, by object identity."""
+
+    def __init__(self, tree):
+        self.opened = {}  # a record that opens a part -> the part
+        self.inside = {}  # a record or list that opens parts -> the last one
+        self.blocks = {}  # a diagram, figure, or formula -> (kind, turn in part)
+        self.diagrams = {}  # a diagram's review-id -> the part that draws it
+        self.parents = {FRONT: None}
+        self.order = []  # (part, kind, id of a unit or name of a document)
+        self.keys = PartKeys()
+        self._turns = Counter()
+        self._walk(tree, FRONT, FRONT)
+
+    def _walk(self, node, enclosing, flow):
+        if isinstance(node, list):
+            entered = flow
+            for item in node:
+                flow = self._walk(item, enclosing, flow)
+            if flow != entered:
+                self.inside[id(node)] = flow
+            return flow
+        if not isinstance(node, dict):
+            return flow
+        kind = None if node.get("func") else node.get("kind")
+        key = None
+        if kind == "term":
+            key = self.keys.open("term")
+        elif kind == "document":
+            key = self.keys.open(kind, node.get("name"), node.get("title"))
+        elif kind == "unit":
+            key = self.keys.open(kind, node.get("id"), node.get("title"))
+        elif kind in ("section", "subsection", "pending-ledger"):
+            key = self.keys.open(kind, title=node.get("title"))
+        entered = flow
+        if key:
+            self.opened[id(node)] = key
+            if key not in self.parents:
+                self.parents[key] = enclosing
+                named = node.get("name") if kind == "document" else node.get("id")
+                self.order.append(
+                    (
+                        key,
+                        "glossary" if kind == "term" else kind,
+                        named if kind in ("document", "unit") else None,
+                    )
+                )
+            enclosing = flow = key
+        elif kind in BLOCK_KINDS:
+            identity = node.get("review-id")
+            if isinstance(identity, str):
+                self.diagrams.setdefault(identity, flow)
+            else:
+                turn = (flow, BLOCK_KINDS[kind])
+                self._turns[turn] += 1
+                self.blocks[id(node)] = (BLOCK_KINDS[kind], self._turns[turn])
+        for child in node.values():
+            flow = self._walk(child, enclosing, flow)
+        if flow != entered:
+            self.inside[id(node)] = flow
+        return flow
+
+    def after(self, node, flow):
+        """The part in effect once a record is drawn: its last heading wins."""
+        if isinstance(node, (dict, list)):
+            return self.inside.get(id(node), flow)
+        return flow
+
+
+def part_outline(records):
+    """The parts of a revision in the order they are drawn, with their titles."""
+    return Parts(normalize(records, {}))
+
+
 def compare(old_records, new_records):
     changes = []
+    old_diagrams, new_diagrams = {}, {}
+    old_tree = normalize(old_records, old_diagrams)
+    new_tree = normalize(new_records, new_diagrams)
+    old_parts, new_parts = Parts(old_tree), Parts(new_tree)
 
-    def note(path, old, new, anchor, reason=None):
-        changes.append(
-            {
-                "kind": "needs-review"
-                if reason
-                else (
-                    "added"
-                    if old is MISSING
-                    else "removed"
-                    if new is MISSING
-                    else "changed"
-                ),
-                "path": path,
-                "before": None if old is MISSING else old,
-                "after": None if new is MISSING else new,
-                "anchor": anchor,
-                **({"reason": reason} if reason else {}),
+    def note(path, old, new, anchor, parts, blocks=(None, None), reason=None):
+        change = {
+            "kind": "needs-review"
+            if reason
+            else (
+                "added"
+                if old is MISSING
+                else "removed"
+                if new is MISSING
+                else "changed"
+            ),
+            "path": path,
+            "before": None if old is MISSING else old,
+            "after": None if new is MISSING else new,
+            "anchor": anchor,
+            "part": {"before": parts[0], "after": parts[1]},
+        }
+        if any(blocks):
+            change["block"] = {
+                side: list(block) if block else None
+                for side, block in zip(("before", "after"), blocks)
             }
-        )
+        if reason:
+            change["reason"] = reason
+        changes.append(change)
 
-    def edge_edits(a, b, path, anchor):
+    def edge_edits(a, b, path, anchor, parts, blocks):
         old = a.copy()
         new = b.copy()
         for edge in a:
@@ -232,19 +382,29 @@ def compare(old_records, new_records):
                 token = identity(before)
                 if old_counts[token] == new_counts[token] == 1:
                     after = next(edge for edge in new if identity(edge) == token)
-                    note(path + [edge_name(before)], before, after, anchor)
+                    note(
+                        path + [edge_name(before)], before, after, anchor, parts, blocks
+                    )
                     old.remove(before)
                     new.remove(after)
         for before in old:
-            note(path + [edge_name(before)], before, MISSING, anchor)
+            note(path + [edge_name(before)], before, MISSING, anchor, parts, blocks)
         for after in new:
-            note(path + [edge_name(after)], MISSING, after, anchor)
+            note(path + [edge_name(after)], MISSING, after, anchor, parts, blocks)
 
-    def visit(a, b, path, anchor=None):
+    def visit(a, b, path, anchor, parts, blocks):
         if a == b:
             return
         if isinstance(a, dict) and isinstance(b, dict):
             kind = a.get("kind")
+            parts = (
+                old_parts.opened.get(id(a), parts[0]),
+                new_parts.opened.get(id(b), parts[1]),
+            )
+            blocks = (
+                old_parts.blocks.get(id(a), blocks[0]),
+                new_parts.blocks.get(id(b), blocks[1]),
+            )
             if kind == b.get("kind") and (name := scope_name(a)):
                 path = path + [name]
                 if (
@@ -264,6 +424,8 @@ def compare(old_records, new_records):
                         left,
                         right,
                         anchor,
+                        parts,
+                        blocks,
                         "Native drawing code changed. Its meaning needs review.",
                     )
                 elif kind == "formula" and field == "body":
@@ -272,13 +434,22 @@ def compare(old_records, new_records):
                         left,
                         right,
                         anchor,
+                        parts,
+                        blocks,
                         "Formula notation changed. Mathematical equivalence needs review.",
                     )
                 elif kind in ("diagram", "diagram-native") and field == "edges":
-                    edge_edits(left, right, child, anchor)
+                    edge_edits(left, right, child, anchor, parts, blocks)
                 else:
-                    visit(left, right, child, anchor)
+                    visit(left, right, child, anchor, parts, blocks)
         elif isinstance(a, list) and isinstance(b, list):
+            # A record is drawn under the last heading before it, so each item
+            # starts in the part its earlier siblings left open.
+            old_flow, new_flow = [parts[0]], [parts[1]]
+            for item in a:
+                old_flow.append(old_parts.after(item, old_flow[-1]))
+            for item in b:
+                new_flow.append(new_parts.after(item, new_flow[-1]))
             match = SequenceMatcher(
                 a=list(map(item_key, a)), b=list(map(item_key, b)), autojunk=False
             )
@@ -289,30 +460,50 @@ def compare(old_records, new_records):
                     and j - i == l - k
                     and all(compatible(left, right) for left, right in candidates)
                 ):
-                    for index, (left, right) in enumerate(zip(a[i:j], b[k:l]), i):
-                        visit(left, right, path + [str(index + 1)], anchor)
+                    for offset, (left, right) in enumerate(candidates):
+                        visit(
+                            left,
+                            right,
+                            path + [str(i + offset + 1)],
+                            anchor,
+                            (old_flow[i + offset], new_flow[k + offset]),
+                            blocks,
+                        )
                 else:
-                    for left in a[i:j]:
-                        note(path + [scope_name(left) or "item"], left, MISSING, anchor)
-                    for right in b[k:l]:
+                    for offset, left in enumerate(a[i:j], i):
                         note(
-                            path + [scope_name(right) or "item"], MISSING, right, anchor
+                            path + [scope_name(left) or "item"],
+                            left,
+                            MISSING,
+                            anchor,
+                            (old_parts.opened.get(id(left), old_flow[offset]), None),
+                            (old_parts.blocks.get(id(left), blocks[0]), None),
+                        )
+                    for offset, right in enumerate(b[k:l], k):
+                        note(
+                            path + [scope_name(right) or "item"],
+                            MISSING,
+                            right,
+                            anchor,
+                            (None, new_parts.opened.get(id(right), new_flow[offset])),
+                            (None, new_parts.blocks.get(id(right), blocks[1])),
                         )
         else:
-            note(path, a, b, anchor)
+            note(path, a, b, anchor, parts, blocks)
 
-    old_diagrams, new_diagrams = {}, {}
-    visit(
-        normalize(old_records, old_diagrams), normalize(new_records, new_diagrams), []
-    )
+    visit(old_tree, new_tree, [], None, (FRONT, FRONT), (None, None))
+    # A diagram with a review-id is compared by that id wherever it is drawn,
+    # so its part comes from the records as they stood before it was set aside.
+    old_drawn, new_drawn = Parts(old_records).diagrams, Parts(new_records).diagrams
     for identity in sorted(old_diagrams.keys() | new_diagrams.keys()):
         before = old_diagrams.get(identity, MISSING)
         after = new_diagrams.get(identity, MISSING)
         anchor = f"diagram/{identity}"
+        parts = (old_drawn.get(identity), new_drawn.get(identity))
         if before is MISSING or after is MISSING:
-            note([f"diagram {identity}"], before, after, anchor)
+            note([f"diagram {identity}"], before, after, anchor, parts)
         else:
-            visit(before, after, [], anchor)
+            visit(before, after, [], anchor, parts, (None, None))
     return changes
 
 
@@ -324,14 +515,6 @@ def shorten(path):
         if part not in decorations
         and not (part.isdecimal() and (i == 0 or path[i - 1] == "children"))
     )
-
-
-def display(value):
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict) and {"from", "to", "label"} <= value.keys():
-        return f"{value['from']} → {value['to']} ({value['label']})"
-    return key(value)
 
 
 SUMMARY_ROWS = 40
@@ -382,7 +565,7 @@ def render_summary(report, pdf_error=None, limit=SUMMARY_ROWS, empty=()):
     for side in empty:
         lines += ["", empty_notice(code_span(source[side]))]
     if pdf_error:
-        lines += ["", "The before and after PDFs could not be rendered."]
+        lines += ["", "The side-by-side PDF could not be rendered."]
     if changes:
         sections = {}
         for change in changes:
@@ -399,7 +582,7 @@ def render_summary(report, pdf_error=None, limit=SUMMARY_ROWS, empty=()):
         if len(sections) > limit:
             lines += [
                 "",
-                f"{len(sections) - limit} more sections are in the full report.",
+                f"{len(sections) - limit} more sections are in the PDF.",
             ]
     else:
         lines += ["", "No changes in the projected fields."]
@@ -410,120 +593,10 @@ def render_summary(report, pdf_error=None, limit=SUMMARY_ROWS, empty=()):
             for item in uncertain[:limit]
         ]
         if len(uncertain) > limit:
-            lines += ["", f"{len(uncertain) - limit} more are in the full report."]
+            lines += ["", f"{len(uncertain) - limit} more are in the PDF."]
     if any(report["coverage"].values()):
         lines += [
             "",
             "Native figures and mathematical equivalence may require manual review.",
         ]
     return "\n".join(lines) + "\n"
-
-
-def render_viewer(report, pdf_links, pdf_error, empty=()):
-    """A portable HTML report with escaped data and no remote assets."""
-    from html import escape
-
-    changes = report["changes"]
-    counts = Counter(item["kind"] for item in changes)
-    links = "".join(
-        f'<a href="{escape(link, quote=True)}">{side.title()} PDF</a>'
-        for side, link in pdf_links.items()
-    )
-    groups = {}
-    for change in changes:
-        heading = escape(shorten(change["path"]))
-        status = change["kind"].replace("-", " ").capitalize()
-        anchor = (
-            "<small>Diagram marked where it appears</small>"
-            if change["anchor"] and pdf_links and change["kind"] != "needs-review"
-            else ""
-        )
-        if change["kind"] == "needs-review":
-            values = f"<p>{escape(change['reason'])}</p>"
-        else:
-            values = (
-                '<div class="values">'
-                + "".join(
-                    f"<div><h4>{side.title()}</h4><pre>{escape(display(change[side]) if change[side] is not None else '—')}</pre></div>"
-                    for side in ("before", "after")
-                )
-                + "</div>"
-            )
-        groups.setdefault(section_of(change), []).append(
-            f'<article class="{change["kind"]}"><p class="status">{status}</p><h3>{heading}</h3>{values}{anchor}</article>'
-        )
-    body = (
-        "".join(
-            f'<section class="group"><h2>{escape(section)}</h2>{"".join(entries)}</section>'
-            for section, entries in groups.items()
-        )
-        or "<p>No changes in the projected fields.</p>"
-    )
-    search = (
-        '<label id="filter-label" hidden>Filter changes <input id="filter" type="search"></label>'
-        if changes
-        else ""
-    )
-    source = report["sources"]
-    warning = "".join(
-        f'<p role="status">{escape(message)}</p>'
-        for message in (
-            *(empty_notice(source[side]) for side in empty),
-            pdf_error,
-        )
-        if message
-    )
-    limitation = ""
-    if any(report["coverage"].values()):
-        limitation = "<p>Native figures and mathematical equivalence may require manual review.</p>"
-    return f"""<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Design review</title>
-<style>
-:root {{ color-scheme: light; font: 1rem system-ui, sans-serif; color: #172126; background: #fbfbf8; }}
-body {{ margin: 0 auto; max-width: 66rem; padding: 1.5rem clamp(1rem, 5vw, 4rem); }}
-header {{ border-bottom: 1px solid #d7ddda; margin-bottom: 1.5rem; padding-bottom: 1rem; }}
-h1 {{ font-family: Georgia, serif; font-size: 2.4rem; margin: 0 0 .5rem; }}
-h2 {{ font-family: Georgia, serif; font-size: 1.35rem; margin: 1.5rem 0 .7rem; }}
-h3 {{ font-size: 1rem; margin: .25rem 0 .9rem; overflow-wrap: anywhere; }}
-h4, .status {{ font-size: .8rem; margin: 0; color: #58656b; }}
-#filter-label {{ margin-top: 1rem; }}
-#filter {{ font: inherit; padding: .4rem .55rem; margin: 0 .4rem; border: 1px solid #8f9a95; border-radius: .2rem; max-width: 60%; }}
-[hidden] {{ display: none; }}
-header p {{ color: #58656b; overflow-wrap: anywhere; }}
-nav {{ display: flex; gap: 1.25rem; flex-wrap: wrap; }}
-a {{ color: #235b83; }}
-article {{ padding: 1rem 1.2rem; margin: 0 0 .75rem; border: 1px solid #d7ddda; border-left: .25rem solid #2870a6; background: white; }}
-article.added {{ border-left-color: #087f79; }} article.removed {{ border-left-color: #a8492a; }}
-article.needs-review {{ border-left-color: #a86408; }}
-.values {{ display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 1rem; }}
-pre {{ font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0; }}
-small {{ color: #58656b; }}
-@media (max-width: 40rem) {{ .values {{ grid-template-columns: 1fr; }} }}
-</style></head>
-<body><header><h1>Design review</h1>
-<p>{escape(source["before"])} → {escape(source["after"])}</p>
-<p>{len(changes) - counts["needs-review"]} confirmed · {counts["needs-review"]} need review</p>
-<nav aria-label="PDF context">{links}</nav>{search}</header>
-<main>{warning}{limitation}{body}<p id="empty-filter" role="status" hidden>No matching changes.</p></main>
-<script>
-const filter = document.getElementById("filter");
-if (filter) {{
-  document.getElementById("filter-label").hidden = false;
-  filter.addEventListener("input", () => {{
-    const query = filter.value.trim().toLowerCase();
-    let visible = false;
-    for (const group of document.querySelectorAll(".group")) {{
-      let matched = false;
-      for (const entry of group.querySelectorAll("article")) {{
-        entry.hidden = !entry.textContent.toLowerCase().includes(query);
-        matched ||= !entry.hidden;
-      }}
-      group.hidden = !matched;
-      visible ||= matched;
-    }}
-    document.getElementById("empty-filter").hidden = visible;
-  }});
-}}
-</script></body></html>
-"""

@@ -264,12 +264,17 @@
               text = ''
                 if [ "$#" -lt 1 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
                   cat >&2 <<'USAGE'
-                usage: design-check <layer-root> [repo-root] [--nested-project <repo-relative-project-root>]...
+                usage: design-check <layer-root> [repo-root] [--no-rendered-file] [--nested-project <repo-relative-project-root>]...
 
                   <layer-root>  the directory holding the root design.typ and the
                                 per-context subdirectories (e.g. docs/design)
                   [repo-root]   the repo whose cross-links are checked; defaults
                                 to the layer's enclosing git repo, else a fallback
+                  --no-rendered-file
+                                the layer keeps no committed PDF: it must still
+                                compile, but a missing or stale design-layer.pdf
+                                is not a violation. Explicit only; a missing
+                                PDF never implies it.
                   --nested-project
                                 repeatable exact repo-relative project root;
                                 its layer is <project>/docs/design
@@ -295,6 +300,7 @@
                 repo_arg=""
                 repo_set=0
                 nested_values=()
+                aggregate_flags=()
                 while [ "$#" -gt 0 ]; do
                   case "$1" in
                     --nested-project)
@@ -304,6 +310,10 @@
                       fi
                       nested_values+=("$2")
                       shift 2
+                      ;;
+                    --no-rendered-file)
+                      aggregate_flags+=(--no-rendered-file)
+                      shift
                       ;;
                     --help|-h)
                       echo "design-check: error: --help must be the first argument" >&2
@@ -430,7 +440,8 @@
                 done
 
                 ${gateBundle}/scripts/design-aggregate \
-                  "$layer_root" "$layer_root/design-layer.pdf" --check
+                  "$layer_root" "$layer_root/design-layer.pdf" --check \
+                  "''${aggregate_flags[@]}"
                 ${gateBundle}/scripts/token-coverage "$layer_root"
                 integrity_args=("$repo_root")
                 for nested_relpath in "''${nested_relpaths[@]}"; do
@@ -452,7 +463,8 @@
                 for nested_project in "''${nested_projects[@]}"; do
                   nested_layer="$nested_project/docs/design"
                   ${gateBundle}/scripts/design-aggregate \
-                    "$nested_layer" "$nested_layer/design-layer.pdf" --check
+                    "$nested_layer" "$nested_layer/design-layer.pdf" --check \
+                    "''${aggregate_flags[@]}"
                   ${gateBundle}/scripts/token-coverage "$nested_layer"
                   ${gateBundle}/scripts/layer-integrity "$nested_project"
                   ${gateBundle}/scripts/design-units \

@@ -163,6 +163,10 @@
         [`render <layer-root> <out.pdf>` writes the document.],
         [`render <layer-root> <out.pdf> --check` regenerates and compares, and
           writes nothing.],
+        [`--no-rendered-file`, given with `--check`, is the explicit opt-out
+          for a layer that keeps no committed PDF: the layer is still
+          compiled, and the missing-or-stale comparison is skipped. It is
+          never inferred from the file's absence.],
         [`project <schema> <out-dir>` assembles a library directory.],
       ),
       invariants: (
@@ -323,11 +327,15 @@
         [`check <layer-root> [repo-root]` exits 0 when clean, 1 on a violation,
           and 2 on an error. `--nested-project <path>` adds an independently
           checked project.],
+        [`--no-rendered-file` is the explicit opt-out for a layer that keeps no
+          committed PDF. The layer is still compiled, and only the
+          missing-or-stale comparison is skipped.],
         [`lint <layer-root>` reports the first guideline as an error. It is
           never part of `check`.],
       ),
       invariants: (
-        [A stale generated artifact is reported and never rewritten.],
+        [A stale generated artifact is reported and never rewritten. Without
+          `--no-rendered-file`, a missing PDF is a violation.],
         [A check that examined nothing does not report a pass.],
         [A unit the projection cannot address fails the gate, although the
           gate never runs the projection.],

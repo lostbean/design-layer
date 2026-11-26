@@ -72,7 +72,10 @@ alphabetized glossary closes the document as an unnumbered reference chapter.
 violation, 2 on an error:
 
 1. **freshness** — regenerate the aggregate and byte-compare it against the
-   committed PDF, so a stale render is caught, not trusted
+   committed PDF, so a stale render is caught, not trusted. A repo that does
+   not commit the PDF passes `--no-rendered-file`: the layer is still
+   compiled, and only the missing-or-stale comparison is skipped. The flag
+   is never inferred from the file's absence
 2. **token coverage** — every semantic token a block renderer references
    (a lens color, a tint, an enforcement badge) is actually defined
 3. **layer integrity** — every cross-link resolves (a term citation, an ADR

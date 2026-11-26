@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `design-check` and `design-aggregate --check` accept `--no-rendered-file`
+  for a host that does not commit `docs/design/design-layer.pdf`. The layer is
+  still compiled, so one that does not render fails and guidelines are still
+  reported; only the missing-or-stale PDF comparison is skipped. The flag is
+  explicit and never inferred from the file's absence, and `design-aggregate`
+  refuses it without `--check`. Without the flag nothing changes.
 - **Breaking:** `review` now writes one PDF. Each changed part of the design is
   shown with the old design on the left and the new design on the right,
   after an index of the changed parts. The comparison of records still decides

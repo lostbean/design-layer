@@ -144,7 +144,9 @@ def report_guidelines(found, report):
     )
 
 
-def render_layer(layer: LayerSource, out_pdf, check, lib, *, places=None):
+def render_layer(
+    layer: LayerSource, out_pdf, check, lib, *, places=None, rendered_file=True
+):
     """Assemble the layer into the one rendered document.
 
     A design review passes a list as `places`. The document is then compiled
@@ -360,6 +362,7 @@ def render_layer(layer: LayerSource, out_pdf, check, lib, *, places=None):
             len(docs),
             len(terms),
             places,
+            rendered_file,
         )
 
 
@@ -407,7 +410,9 @@ def query_places(source, root, env, inputs=()):
     return found
 
 
-def compile_and_verify(agg, root, out_pdf, check, lib, n_contexts, n_terms, places):
+def compile_and_verify(
+    agg, root, out_pdf, check, lib, n_contexts, n_terms, places, rendered_file=True
+):
     """Compile the visual document and retain the render and freshness checks."""
     env = typst_environment()
     strict = ["--input", "strict=1"] if os.environ.get("DESIGN_STRICT") else []
@@ -449,7 +454,7 @@ def compile_and_verify(agg, root, out_pdf, check, lib, n_contexts, n_terms, plac
 
         found = [] if strict else guidelines(typst_command(), agg, root, lib, env)
         report_guidelines(found, sys.stderr.write)
-        if check:
+        if check and rendered_file:
             if not os.path.exists(out_pdf):
                 sys.stderr.write(
                     "design-aggregate: %s is missing (the layer has "
@@ -463,7 +468,10 @@ def compile_and_verify(agg, root, out_pdf, check, lib, n_contexts, n_terms, plac
                 )
                 return 1
 
-        verb = f"{out_pdf} is fresh" if check else f"wrote {out_pdf}"
+        if check and not rendered_file:
+            verb = "compiles (no rendered file is kept)"
+        else:
+            verb = f"{out_pdf} is fresh" if check else f"wrote {out_pdf}"
         sys.stdout.write(
             f"design-aggregate: {verb} ({n_contexts} context(s), {n_terms} term(s))\n"
         )
@@ -471,10 +479,21 @@ def compile_and_verify(agg, root, out_pdf, check, lib, n_contexts, n_terms, plac
 
 
 def main():
-    args = [a for a in sys.argv[1:] if a != "--check"]
+    flags = ("--check", "--no-rendered-file")
+    args = [a for a in sys.argv[1:] if a not in flags]
     check = "--check" in sys.argv[1:]
+    rendered_file = "--no-rendered-file" not in sys.argv[1:]
     if len(args) != 2:
-        sys.stderr.write("usage: design-aggregate <layer-root> <out.pdf> [--check]\n")
+        sys.stderr.write(
+            "usage: design-aggregate <layer-root> <out.pdf> "
+            "[--check [--no-rendered-file]]\n"
+        )
+        return 2
+    if not rendered_file and not check:
+        sys.stderr.write(
+            "design-aggregate: error: --no-rendered-file only applies to --check "
+            "(a build writes the PDF)\n"
+        )
         return 2
     root, out_pdf = args
     if not os.path.isdir(root):
@@ -503,7 +522,7 @@ def main():
         return 2
 
     try:
-        return render_layer(layer, out_pdf, check, lib)
+        return render_layer(layer, out_pdf, check, lib, rendered_file=rendered_file)
     except TermParseError as exc:
         sys.stderr.write("design-aggregate: error: %s\n" % exc)
         return 2

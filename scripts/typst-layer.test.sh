@@ -306,6 +306,53 @@ else
   fail_line "a freshly built Typst layer was reported stale"
 fi
 
+# --- 2b. --no-rendered-file: an explicit opt-out of the committed PDF ---------
+# Only the missing/stale comparison is skipped. Compilation still runs, so a
+# layer that does not render fails either way. Without the flag nothing changes.
+NRF="$WORK/nrf"
+mkdir -p "$NRF"
+cp "$LAYER/design-layer.pdf" "$NRF/good.pdf"
+rm -f "$LAYER/design-layer.pdf"
+if python3 ./scripts/design-aggregate "$LAYER" "$LAYER/design-layer.pdf" --check >"$NRF/m.out" 2>&1; then
+  fail_line "a missing PDF passed --check without the opt-out"
+elif grep -q "is missing" "$NRF/m.out"; then
+  pass_line "a missing PDF still fails --check without the opt-out"
+else
+  fail_line "a missing PDF failed --check for the wrong reason"
+fi
+if python3 ./scripts/design-aggregate "$LAYER" "$LAYER/design-layer.pdf" --check --no-rendered-file >"$NRF/n.out" 2>&1 &&
+  [ ! -e "$LAYER/design-layer.pdf" ]; then
+  pass_line "--no-rendered-file passes with no PDF and writes none"
+else
+  fail_line "--no-rendered-file did not pass a layer without a PDF"
+  sed 's/^/       /' "$NRF/n.out" | head -4
+fi
+python3 ./scripts/design-aggregate "$LAYER" "$LAYER/design-layer.pdf" --no-rendered-file >"$NRF/b.out" 2>&1
+rc=$?
+if [ "$rc" -eq 2 ] && [ ! -e "$LAYER/design-layer.pdf" ]; then
+  pass_line "--no-rendered-file without --check is a usage error and writes nothing"
+else
+  fail_line "--no-rendered-file without --check exited $rc or wrote a PDF"
+fi
+cp "$NRF/good.pdf" "$LAYER/design-layer.pdf"
+printf '\n%% stale-marker\n' >>"$LAYER/design-layer.pdf"
+if python3 ./scripts/design-aggregate "$LAYER" "$LAYER/design-layer.pdf" --check >"$NRF/s.out" 2>&1; then
+  fail_line "a stale PDF passed --check without the opt-out"
+elif grep -q "is stale" "$NRF/s.out"; then
+  pass_line "a stale PDF still fails --check without the opt-out"
+else
+  fail_line "a stale PDF failed --check for the wrong reason"
+fi
+cp "$NRF/good.pdf" "$LAYER/design-layer.pdf"
+cp "$LAYER/beta/design.typ" "$NRF/beta.orig"
+printf '#let body = [#undefined-nrf-name]\n' >"$LAYER/beta/design.typ"
+if python3 ./scripts/design-aggregate "$LAYER" "$LAYER/design-layer.pdf" --check --no-rendered-file >/dev/null 2>&1; then
+  fail_line "--no-rendered-file passed a layer that does not compile"
+else
+  pass_line "--no-rendered-file still fails a layer that does not compile"
+fi
+cp "$NRF/beta.orig" "$LAYER/beta/design.typ"
+
 # --- 3. A LEGACY MARKDOWN LAYER IS REFUSED, naming what to migrate ------------
 # Markdown authoring was removed. A layer still carrying a design.md is refused
 # by name rather than walked past: ignoring it would render a document silently
@@ -1246,6 +1293,21 @@ EOF
       pass_line "the public check app detects stale bytes without rewriting"
     else
       fail_line "the public check app did not report the stale PDF correctly"
+    fi
+
+    rm -f "$FONT_LAYER/design-layer.pdf"
+    if "${public_env[@]}" "$PUBLIC_CHECK" "$FONT_LAYER" "$FONT_REPO" \
+      >/dev/null 2>&1; then
+      fail_line "the public check app accepted a missing PDF without the opt-out"
+    else
+      pass_line "the public check app rejects a missing PDF by default"
+    fi
+    if "${public_env[@]}" "$PUBLIC_CHECK" "$FONT_LAYER" "$FONT_REPO" \
+      --no-rendered-file >/dev/null 2>&1 &&
+      [ ! -e "$FONT_LAYER/design-layer.pdf" ]; then
+      pass_line "the public check app accepts a missing PDF with --no-rendered-file"
+    else
+      fail_line "the public check app rejected --no-rendered-file on a PDF-less layer"
     fi
     cp "$FONT_LAYER/public-good.pdf" "$FONT_LAYER/design-layer.pdf"
 
